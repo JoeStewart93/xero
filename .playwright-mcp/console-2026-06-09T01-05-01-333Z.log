@@ -1,0 +1,5 @@
+[  161369ms] [VERBOSE] [DOM] Input elements should have autocomplete attributes (suggested: "username"): (More info: https://goo.gl/9p2vKq) %o @ http://localhost:13000/settings:0
+[  202564ms] [VERBOSE] [DOM] Input elements should have autocomplete attributes (suggested: "username"): (More info: https://goo.gl/9p2vKq) %o @ http://localhost:13000/settings:0
+[  246422ms] [VERBOSE] [DOM] Input elements should have autocomplete attributes (suggested: "username"): (More info: https://goo.gl/9p2vKq) %o @ http://localhost:13000/settings:0
+[  630252ms] [VERBOSE] [DOM] Input elements should have autocomplete attributes (suggested: "username"): (More info: https://goo.gl/9p2vKq) %o @ http://localhost:13000/settings:0
+[53697640ms] [WARNING] WebSocket connection to 'ws://localhost:18001/ws/operator' failed: WebSocket is closed before the connection is established. @ http://localhost:13000/assets/index-jnz31Wnp.js:10

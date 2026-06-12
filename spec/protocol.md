@@ -84,6 +84,23 @@ F0014 task ACKs are encrypted `ACK` frames with `acknowledged_message_type="TASK
 }
 ```
 
-`TASK_RESULT` frames may include `task_id` and `status` values `running`, `completed`, `failed`, `ok`, or `error`. Known task IDs update task lifecycle state; unknown task IDs still produce protocol receipts for backward compatibility. stdout, stderr, exit codes, chunks, and downloadable result bodies are not persisted until F0017.
+`TASK_RESULT` frames may include `task_id` and `status` values `running`, `completed`, `failed`, `ok`, or `error`. Known task IDs update task lifecycle state; unknown task IDs still produce protocol receipts for backward compatibility.
+
+F0015 Go beacons send shell execution fields in `TASK_RESULT`:
+
+```json
+{
+  "beacon_id": "beacon uuid",
+  "task_id": "task uuid",
+  "status": "completed",
+  "stdout": "capped stdout text",
+  "stderr": "capped stderr text",
+  "exit_code": 0,
+  "timed_out": false,
+  "truncated": false
+}
+```
+
+C2 intentionally stores only task lifecycle state and protocol receipts for these frames. stdout, stderr, exit codes, chunks, and downloadable result bodies are not persisted until F0017.
 
 `GET /api/v1/transport` is C2-token protected and reports active WebSocket beacon connections plus configured queue, timeout, ping, and max-message limits. Public `/health` and `/ready` remain container health contracts.

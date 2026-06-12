@@ -3,66 +3,121 @@
 ## Metadata
 | Field | Value |
 |---|---|
-| ID | F0015 |
+| Feature Number | F0015 |
+| Description | Implement a real Go beacon with binary protocol transports, shell task execution, and deploy-build workflow. |
+| Summary | Adds `platform/beacons/go/`, WebSocket primary transport, long-poll fallback, shell task execution, C2 build APIs, artifact metadata, and the Beacons Deploy wizard. |
+| Value | Operators can build and run a real lab beacon that registers through the F0011 protocol, receives F0014 shell tasks, and reports lifecycle status without waiting for later result-storage features. |
+| Story Points | 8 |
 | Priority | P0 |
-| Status | Planned |
+| Status | Complete |
 | MVP Phase | 2 |
-| Depends on | F0011, F0012, F0013, F0014 |
+| Dependencies | F0011, F0012, F0013, F0014 |
 
-## Summary
-MVP Go beacon binary under `platform/beacons/go/` that registers with the Xero C2 backend or assigned handler, maintains heartbeat, polls for tasks, executes built-in handlers, and returns results over the binary protocol.
+## Use Cases
+- An operator builds a Linux or Windows amd64 Go beacon from Beacons > Deploy.
+- A lab beacon registers over `/ws/beacon`, receives a shell task from the Command queue, and returns `running` then `completed` or `failed`.
+- A registered beacon falls back to long-poll when WebSocket transport is unavailable.
+- A reviewer validates protocol compatibility with Go unit tests and C2 fake-build tests without requiring local Go.
 
-## Requirements
-- FR-16: Support custom profiles (sleep, jitter, user-agent)
-- Cross-compile for Windows amd64 and Linux amd64
-- Embedded config via compile-time or config file
-- Integrate protocol codec, WS transport, and long-poll fallback
-- Minimal footprint target under 10MB binary size
+## Assumptions
+- No stealth, persistence, privilege escalation, service install, or auto-start behavior is included.
+- C2 stores task lifecycle and protocol receipts only; stdout, stderr, exit codes, chunks, downloads, and result UI remain F0017.
+- Direct C2 transport is required in F0015. Handler URL compatibility is config-shaped only; handler tunneling remains F0038/F0039.
+- Build APIs are disabled by default outside explicitly enabled development/test configurations.
+- Local Go is optional because CI commands fall back to Docker `golang:1.26`.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  UI["Beacons Deploy wizard"] --> API["C2 build API"]
+  API --> DB["beacon_builds metadata"]
+  API --> Builder["Go or Docker builder"]
+  Builder --> Artifact["ignored artifacts/beacons"]
+  Beacon["Go beacon"] --> WS["/ws/beacon"]
+  Beacon --> LP["/api/v1/beacons/{id}/poll + /frame"]
+  WS --> Protocol["F0011 protocol processing"]
+  LP --> Protocol
+  Protocol --> Tasks["F0014 task queue"]
+```
 
 ## Stages
 
-### Stage 1: Beacon scaffold
-**Goal:** Create Go module with main loop and config loading.
+### Stage 1: Beacon Scaffold And Config
+**Scope:** Go module, config precedence, runtime metadata, runtime state, graceful main entrypoint.
+
 **Acceptance Criteria:**
-- [ ] platform/beacons/go/ builds with go build
-- [ ] Config specifies C2/handler URL, sleep, jitter, profile ID
-- [ ] Graceful shutdown on SIGINT/SIGTERM
+- [x] `platform/beacons/go` builds and tests through local Go or Docker fallback.
+- [x] Config precedence is compile-time defaults, JSON file, then environment overrides.
+- [x] Runtime state stores `beacon_id` and token separately with restrictive file permissions.
+- [x] SIGINT/SIGTERM cancel the beacon loop cleanly.
 
-### Stage 2: C2 loop
-**Goal:** Implement register -> heartbeat -> poll -> execute -> result cycle.
+### Stage 2: Protocol And Transports
+**Scope:** Protocol client, WebSocket register/reconnect, long-poll fallback, REST cold-start fallback only when configured.
+
 **Acceptance Criteria:**
-- [ ] Beacon registers on startup and enters main loop
-- [ ] Sleep with jitter between poll cycles
-- [ ] Task received triggers module dispatch and result upload
+- [x] New beacons register over WebSocket with encrypted `REGISTER`.
+- [x] Existing beacons reconnect with saved `beacon_id` plus token.
+- [x] WebSocket failure after registration can fall back to long-poll.
+- [x] Protocol ACK/TASK frames decode through the shared Go protocol package.
 
-### Stage 3: Cross-compile and packaging
-**Goal:** Build scripts for target platforms.
+### Stage 3: Shell Task Execution
+**Scope:** Shell-shaped task runner and `TASK_RESULT` lifecycle frames.
+
 **Acceptance Criteria:**
-- [ ] Makefile targets windows/amd64 and linux/amd64
-- [ ] CI builds beacon artifacts on tagged releases
-- [ ] README documents authorized lab deployment only
+- [x] `auto`, `cmd`, `powershell`, and `bash` shell types are mapped.
+- [x] Beacon sends `running` before execution and terminal status after execution.
+- [x] `TASK_RESULT` includes stdout, stderr, exit code, timed out, and truncated fields.
+- [x] Output is capped per stream, defaulting to 64 KiB.
+- [x] C2 updates task status only and does not persist result bodies before F0017.
 
-## Feature Acceptance Criteria
+### Stage 4: Build API And Deploy Wizard
+**Scope:** C2 build metadata/API, controlled build execution, ignored artifacts, and Beacons Deploy wizard.
 
-- [ ] Go beacon registers, heartbeats, and completes echo task in lab
-- [ ] Beacon survives C2 restart and re-registers automatically
-- [ ] Cross-compiled binaries run on Windows and Linux test VMs
+**Acceptance Criteria:**
+- [x] C2 exposes authenticated build targets, list, create, detail, and artifact download endpoints.
+- [x] Test mode uses a deterministic fake builder; enabled development uses local Go or Docker `golang:1.26`.
+- [x] Build metadata is persisted in `beacon_builds`.
+- [x] Deploy wizard supports target, profile, connection, config-mode review, status, failures, and artifact download.
+
+### Stage 5: Validation And Completion
+**Scope:** OpenAPI, docs, CI, frontend, Go compatibility, Docker, Playwright/browser validation.
+
+**Acceptance Criteria:**
+- [x] Backend lint/unit/behave/integration pass.
+- [x] OpenAPI export/check pass.
+- [x] Go protocol and Go beacon test/build commands pass.
+- [x] Frontend lint/unit/build pass.
+- [x] Docker BFF and C2 config/build sanity pass.
+- [x] Playwright/browser deploy wizard and beacon tasking sanity pass.
 
 ## Test Plan
 
-### Unit Tests
-- [ ] test_beacon_config_parse
-- [ ] test_sleep_jitter_within_bounds
-- [ ] test_protocol_register_message_encode
-- [ ] test_task_dispatch_to_module_router
-- [ ] test_result_frame_encode
+### Go Unit Tests
+- [x] Config precedence.
+- [x] State persistence.
+- [x] Jitter bounds.
+- [x] Protocol register/heartbeat/task/result encoding.
+- [x] WebSocket reconnect and long-poll fallback.
+- [x] Shell success, timeout, output truncation, and unsupported shell.
 
-### System / Integration Tests
-- [ ] Start compose stack; run Go beacon; appears in beacon list
-- [ ] Dispatch echo command; result returned within 30s
-- [ ] Kill WS proxy; beacon falls back to long-poll and completes task
+### Backend Unit Tests
+- [x] Build API auth and validation.
+- [x] Disabled-build behavior.
+- [x] Fake builder success/failure and artifact download auth.
+- [x] Build metadata persistence.
+- [x] C2 task lifecycle remains status-only despite result output fields.
 
-### Playwright Tests
-- [ ] Generate beacon dialog shows download links for win/linux builds
-- [ ] New Go beacon appears in UI after first check-in
-- [ ] Beacon profile sleep/jitter values visible in beacon detail
+### Integration Tests
+- [x] Compose C2 registers Go beacon.
+- [x] Queued shell task completes within one sleep cycle.
+- [x] C2 restart triggers reconnect or re-register.
+- [x] WebSocket failure falls back to long-poll.
+- [x] Build API creates artifacts or uses a test fake where Docker is unavailable.
+
+### Frontend And E2E Tests
+- [x] Deploy wizard loading, error, building, success, and failure states.
+- [x] Target/profile/config validation.
+- [x] Artifact download action.
+- [x] Beacons detail continues showing sleep, jitter, profile, protocol, and transport values.
+- [x] Playwright covers login/connect C2, deploy build, beacon register, task queue, and responsive wizard sanity.

@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import uuid
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 from secrets import compare_digest
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from xero_common.database import session_factory_for_settings
@@ -27,6 +28,14 @@ from xero_common.security import (
 )
 
 from xero_c2.beacon_auth import beacon_auth_exception, bearer_token
+from xero_c2.beacon_builds import (
+    SUPPORTED_TARGETS,
+    create_beacon_build,
+    public_beacon_build,
+    recent_builds,
+    run_build_job,
+    run_fake_build,
+)
 from xero_c2.beacon_liveness import (
     BEACON_EVENT_REASON_HEARTBEAT,
     BEACON_STATUS_ONLINE,
@@ -59,7 +68,7 @@ from xero_c2.infrastructure_workers import (
     record_worker_event,
     run_worker_stale_monitor,
 )
-from xero_c2.models import Beacon, InfrastructureWorker, ProtocolSecurityEvent, Task
+from xero_c2.models import Beacon, BeaconBuild, InfrastructureWorker, ProtocolSecurityEvent, Task
 from xero_c2.protocol import (
     ACK,
     CURRENT_PROTOCOL_VERSION,
@@ -96,6 +105,11 @@ from xero_c2.realtime import (
     websocket_origin_allowed,
 )
 from xero_c2.schemas import (
+    BeaconBuildCreateRequest,
+    BeaconBuildListResponse,
+    BeaconBuildResponse,
+    BeaconBuildTargetListResponse,
+    BeaconBuildTargetResponse,
     BeaconHeartbeatRequest,
     BeaconHeartbeatResponse,
     BeaconListResponse,
@@ -214,6 +228,13 @@ def public_protocol_security_event(event: ProtocolSecurityEvent) -> dict:
         "nonce": event.nonce,
         "occurred_at": event.occurred_at.isoformat(),
     }
+
+
+def beacon_build_artifact_path(build: BeaconBuild) -> Path | None:
+    if not build.artifact_path:
+        return None
+    path = Path(build.artifact_path)
+    return path if path.exists() and path.is_file() else None
 
 
 async def publish_task_event(app: FastAPI, settings, event_type: str, task_payload: dict) -> None:
@@ -538,6 +559,93 @@ def create_app() -> FastAPI:
         ).scalars()
         return ProtocolSecurityEventListResponse(
             items=[ProtocolSecurityEventResponse(**public_protocol_security_event(event)) for event in events]
+        )
+
+    @api_router.get(
+        "/beacon-builds/targets",
+        response_model=BeaconBuildTargetListResponse,
+        tags=["beacon-builds"],
+    )
+    def list_beacon_build_targets(
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> BeaconBuildTargetListResponse:
+        authorize_c2_token(settings, authorization)
+        return BeaconBuildTargetListResponse(
+            items=[BeaconBuildTargetResponse(**target) for target in SUPPORTED_TARGETS]
+        )
+
+    @api_router.get("/beacon-builds", response_model=BeaconBuildListResponse, tags=["beacon-builds"])
+    def list_beacon_builds(
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 25,
+    ) -> BeaconBuildListResponse:
+        authorize_c2_token(settings, authorization)
+        return BeaconBuildListResponse(
+            items=[BeaconBuildResponse(**public_beacon_build(build)) for build in recent_builds(session, limit)]
+        )
+
+    @api_router.post("/beacon-builds", response_model=BeaconBuildResponse, tags=["beacon-builds"])
+    async def create_go_beacon_build(
+        payload: BeaconBuildCreateRequest,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> BeaconBuildResponse:
+        authorize_c2_token(settings, authorization)
+        if not settings.beacon_builds_enabled:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Beacon builds are disabled")
+
+        private_key = c2_protocol_private_key(settings)
+        build = create_beacon_build(
+            session,
+            payload,
+            c2_public_key_b64=private_key_public_b64(private_key),
+        )
+        session.commit()
+        session.refresh(build)
+
+        if settings.app_env.lower() == "test":
+            run_fake_build(session, settings, build, output_name=payload.output_name)
+            session.commit()
+            session.refresh(build)
+        else:
+            build_id = build.id
+            output_name = payload.output_name
+            asyncio.create_task(asyncio.to_thread(run_build_job, settings, build_id, output_name=output_name))
+
+        return BeaconBuildResponse(**public_beacon_build(build))
+
+    @api_router.get("/beacon-builds/{build_id}", response_model=BeaconBuildResponse, tags=["beacon-builds"])
+    def get_beacon_build(
+        build_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> BeaconBuildResponse:
+        authorize_c2_token(settings, authorization)
+        build = session.get(BeaconBuild, build_id)
+        if build is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon build not found")
+        return BeaconBuildResponse(**public_beacon_build(build))
+
+    @api_router.get("/beacon-builds/{build_id}/artifact", response_model=None, tags=["beacon-builds"])
+    def download_beacon_build_artifact(
+        build_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> FileResponse:
+        authorize_c2_token(settings, authorization)
+        build = session.get(BeaconBuild, build_id)
+        if build is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon build not found")
+        if build.status != "succeeded":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Beacon build artifact is not ready")
+        artifact_path = beacon_build_artifact_path(build)
+        if artifact_path is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon build artifact not found")
+        return FileResponse(
+            artifact_path,
+            media_type="application/octet-stream",
+            filename=build.artifact_filename or artifact_path.name,
         )
 
     @api_router.post("/protocol/frames", response_model=None, tags=["protocol"])

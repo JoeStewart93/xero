@@ -156,6 +156,10 @@ export interface TransportStatus {
 export type TaskPriority = 'high' | 'low' | 'normal' | 'urgent';
 export type TaskStatus = 'cancelled' | 'completed' | 'dispatched' | 'failed' | 'queued' | 'running';
 export type ShellType = 'auto' | 'bash' | 'cmd' | 'powershell';
+export type BeaconBuildStatus = 'building' | 'failed' | 'queued' | 'succeeded';
+export type BeaconBuildTargetOS = 'linux' | 'windows';
+export type BeaconBuildTargetArch = 'amd64';
+export type BeaconBuildConfigMode = 'all' | 'env' | 'file' | 'ldflags';
 
 export interface ShellTaskArgs {
   command: string;
@@ -181,6 +185,53 @@ export interface Task {
 
 export interface TaskListResponse {
   items: Task[];
+}
+
+export interface BeaconBuildTarget {
+  arch: BeaconBuildTargetArch;
+  extension: string;
+  label: string;
+  os: BeaconBuildTargetOS;
+}
+
+export interface BeaconBuildTargetListResponse {
+  items: BeaconBuildTarget[];
+}
+
+export interface BeaconBuildCreateRequest {
+  c2_url: string;
+  config_mode?: BeaconBuildConfigMode;
+  fallback_longpoll_enabled?: boolean;
+  jitter?: number;
+  output_limit_bytes?: number;
+  output_name?: string;
+  profile_name?: string;
+  sleep_seconds?: number;
+  target_arch: BeaconBuildTargetArch;
+  target_os: BeaconBuildTargetOS;
+  user_agent?: string | null;
+}
+
+export interface BeaconBuild {
+  artifact_filename: string | null;
+  artifact_sha256: string | null;
+  artifact_size: number | null;
+  completed_at: string | null;
+  config: Record<string, unknown>;
+  created_at: string;
+  error_message: string | null;
+  id: string;
+  logs_tail: string | null;
+  profile_name: string;
+  started_at: string | null;
+  status: BeaconBuildStatus;
+  target_arch: BeaconBuildTargetArch;
+  target_os: BeaconBuildTargetOS;
+  updated_at: string;
+}
+
+export interface BeaconBuildListResponse {
+  items: BeaconBuild[];
 }
 
 export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/$/, '');
@@ -397,4 +448,34 @@ export async function cancelTask(baseUrl: string, accessToken: string, taskId: s
   return c2Fetch<Task>(baseUrl, accessToken, `/api/v1/tasks/${taskId}`, {
     method: 'DELETE',
   });
+}
+
+export async function getBeaconBuildTargets(baseUrl: string, accessToken: string): Promise<BeaconBuildTargetListResponse> {
+  return c2Fetch<BeaconBuildTargetListResponse>(baseUrl, accessToken, '/api/v1/beacon-builds/targets');
+}
+
+export async function getBeaconBuilds(baseUrl: string, accessToken: string, limit = 25): Promise<BeaconBuildListResponse> {
+  return c2Fetch<BeaconBuildListResponse>(baseUrl, accessToken, `/api/v1/beacon-builds?limit=${limit}`);
+}
+
+export async function createBeaconBuild(
+  baseUrl: string,
+  accessToken: string,
+  payload: BeaconBuildCreateRequest,
+): Promise<BeaconBuild> {
+  return c2Fetch<BeaconBuild>(baseUrl, accessToken, '/api/v1/beacon-builds', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function downloadBeaconBuildArtifact(baseUrl: string, accessToken: string, buildId: string): Promise<Blob> {
+  const headers = new Headers();
+  headers.set('Authorization', `Bearer ${accessToken}`);
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/beacon-builds/${buildId}/artifact`, { headers });
+  if (!response.ok) {
+    const payload = await parseResponseJson<Record<string, string>>(response);
+    throw new Error(payload.detail || 'Artifact download failed');
+  }
+  return response.blob();
 }

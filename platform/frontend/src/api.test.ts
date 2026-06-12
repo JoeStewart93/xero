@@ -7,8 +7,12 @@ import {
 } from './authStorage';
 import {
   cancelTask,
+  createBeaconBuild,
   createShellTask,
   createWorkerPairingToken,
+  downloadBeaconBuildArtifact,
+  getBeaconBuilds,
+  getBeaconBuildTargets,
   getCurrentOperator,
   getProtocolInfo,
   getProtocolSecurityEvents,
@@ -283,5 +287,53 @@ describe('api client', () => {
     });
     expect(fetchMock.mock.calls[2][0]).toBe('http://c2.local:8001/api/v1/tasks/task-one');
     expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe('DELETE');
+  });
+
+  it('calls C2 beacon build endpoints and downloads artifacts with bearer auth', async () => {
+    const buildPayload = {
+      artifact_filename: 'xero-beacon-linux-amd64',
+      artifact_sha256: 'abc123',
+      artifact_size: 42,
+      completed_at: new Date().toISOString(),
+      config: { c2_url: 'http://c2.local:8001' },
+      created_at: new Date().toISOString(),
+      error_message: null,
+      id: 'build-one',
+      logs_tail: 'ok',
+      profile_name: 'default',
+      started_at: new Date().toISOString(),
+      status: 'succeeded',
+      target_arch: 'amd64',
+      target_os: 'linux',
+      updated_at: new Date().toISOString(),
+    };
+    const artifact = new Blob(['artifact']);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ arch: 'amd64', extension: '', label: 'Linux amd64', os: 'linux' }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [buildPayload] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(buildPayload), { status: 200 }))
+      .mockResolvedValueOnce(new Response(artifact, { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getBeaconBuildTargets('http://c2.local:8001/', 'c2-token');
+    await getBeaconBuilds('http://c2.local:8001/', 'c2-token', 5);
+    await createBeaconBuild('http://c2.local:8001/', 'c2-token', {
+      c2_url: 'http://c2.local:8001',
+      target_arch: 'amd64',
+      target_os: 'linux',
+    });
+    await downloadBeaconBuildArtifact('http://c2.local:8001/', 'c2-token', 'build-one');
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://c2.local:8001/api/v1/beacon-builds/targets');
+    expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
+    expect(fetchMock.mock.calls[1][0]).toBe('http://c2.local:8001/api/v1/beacon-builds?limit=5');
+    expect(fetchMock.mock.calls[2][0]).toBe('http://c2.local:8001/api/v1/beacon-builds');
+    expect(JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string)).toEqual({
+      c2_url: 'http://c2.local:8001',
+      target_arch: 'amd64',
+      target_os: 'linux',
+    });
+    expect(fetchMock.mock.calls[3][0]).toBe('http://c2.local:8001/api/v1/beacon-builds/build-one/artifact');
   });
 });

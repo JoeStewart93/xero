@@ -124,6 +124,74 @@ def command_go_protocol_test() -> int:
     )
 
 
+def command_go_beacon_test() -> int:
+    beacon_root = PLATFORM_ROOT / "beacons" / "go"
+    if shutil.which("go"):
+        return run(["go", "test", "./..."], cwd=beacon_root)
+    docker = shutil.which("docker")
+    if not docker:
+        print("Go toolchain and Docker fallback are unavailable.", file=sys.stderr)
+        return 1
+    return run(
+        [
+            docker,
+            "run",
+            "--rm",
+            "-v",
+            f"{PLATFORM_ROOT}:/workspace/platform",
+            "-w",
+            "/workspace/platform/beacons/go",
+            "golang:1.26",
+            "go",
+            "test",
+            "./...",
+        ]
+    )
+
+
+def command_go_beacon_build() -> int:
+    beacon_root = PLATFORM_ROOT / "beacons" / "go"
+    build_script = (
+        "go test ./... && "
+        "CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /tmp/xero-beacon-linux-amd64 . && "
+        "CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o /tmp/xero-beacon-windows-amd64.exe ."
+    )
+    if shutil.which("go"):
+        return run(["sh", "-c", build_script], cwd=beacon_root) if os.name != "nt" else run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "go test ./...; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
+                "$env:CGO_ENABLED='0'; $env:GOOS='linux'; $env:GOARCH='amd64'; "
+                "go build -trimpath -o $env:TEMP\\xero-beacon-linux-amd64 .; "
+                "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
+                "$env:GOOS='windows'; $env:GOARCH='amd64'; "
+                "go build -trimpath -o $env:TEMP\\xero-beacon-windows-amd64.exe .",
+            ],
+            cwd=beacon_root,
+        )
+    docker = shutil.which("docker")
+    if not docker:
+        print("Go toolchain and Docker fallback are unavailable.", file=sys.stderr)
+        return 1
+    return run(
+        [
+            docker,
+            "run",
+            "--rm",
+            "-v",
+            f"{PLATFORM_ROOT}:/workspace/platform",
+            "-w",
+            "/workspace/platform/beacons/go",
+            "golang:1.26",
+            "sh",
+            "-c",
+            build_script,
+        ]
+    )
+
+
 def command_fail_probe() -> int:
     return 1
 
@@ -137,6 +205,8 @@ COMMANDS = {
     "openapi-check": command_openapi_check,
     "frontend-lint": command_frontend_lint,
     "frontend-test": command_frontend_test,
+    "go-beacon-build": command_go_beacon_build,
+    "go-beacon-test": command_go_beacon_test,
     "go-protocol-test": command_go_protocol_test,
     "frontend-build": command_frontend_build,
     "playwright": command_playwright,

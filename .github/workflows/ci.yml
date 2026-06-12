@@ -58,6 +58,12 @@ jobs:
       - name: Run Go protocol compatibility tests
         run: python scripts/ci.py go-protocol-test
 
+      - name: Run Go beacon tests
+        run: python scripts/ci.py go-beacon-test
+
+      - name: Build Go beacon targets
+        run: python scripts/ci.py go-beacon-build
+
       - name: Run backend behave tests
         run: python scripts/ci.py backend-behave
 

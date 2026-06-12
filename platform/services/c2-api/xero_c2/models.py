@@ -164,3 +164,21 @@ class Task(BaseModel):
     running_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class BeaconBuild(BaseModel):
+    __tablename__ = "beacon_builds"
+
+    target_os: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    target_arch: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False, index=True)
+    profile_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    artifact_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    artifact_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    artifact_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    artifact_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    logs_tail: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

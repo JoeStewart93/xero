@@ -2,6 +2,7 @@ import { ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import { HealthPage } from './pages/HealthPage';
+import { BeaconsDeployPage } from './pages/BeaconsDeployPage';
 import { BeaconsPage } from './pages/BeaconsPage';
 import { C2SettingsPage } from './pages/C2SettingsPage';
 import { HomePage } from './pages/HomePage';
@@ -153,7 +154,7 @@ export function App() {
         path="/beacons/deploy"
         element={
           <ProtectedRoute>
-            <StubSectionPage section="beacons" tabId="deploy" />
+            <BeaconsDeployPage />
           </ProtectedRoute>
         }
       />

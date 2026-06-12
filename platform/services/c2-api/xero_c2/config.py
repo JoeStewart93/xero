@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     task_default_timeout_seconds: int = Field(default=60, gt=0, alias="C2_TASK_DEFAULT_TIMEOUT_SECONDS")
     task_max_timeout_seconds: int = Field(default=3600, gt=0, alias="C2_TASK_MAX_TIMEOUT_SECONDS")
     task_retention_days: int = Field(default=30, gt=0, alias="C2_TASK_RETENTION_DAYS")
+    beacon_builds_enabled: bool = Field(default=False, alias="C2_BEACON_BUILDS_ENABLED")
+    beacon_build_artifact_dir: str = Field(default="artifacts/beacons", alias="C2_BEACON_BUILD_ARTIFACT_DIR")
+    beacon_build_timeout_seconds: int = Field(default=180, gt=0, alias="C2_BEACON_BUILD_TIMEOUT_SECONDS")
+    beacon_build_go_image: str = Field(default="golang:1.26", alias="C2_BEACON_BUILD_GO_IMAGE")
 
     @field_validator("api_v1_prefix")
     @classmethod
@@ -111,6 +115,8 @@ class Settings(BaseSettings):
         "provisioning_project_prefix",
         "protocol_private_key_b64",
         "protocol_supported_versions",
+        "beacon_build_artifact_dir",
+        "beacon_build_go_image",
     )
     @classmethod
     def reject_blank_secret_values(cls, value: str) -> str:

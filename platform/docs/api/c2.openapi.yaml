@@ -177,6 +177,173 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/beacon-builds/targets:
+    get:
+      tags:
+      - beacon-builds
+      summary: List Beacon Build Targets
+      operationId: list_beacon_build_targets_api_v1_beacon_builds_targets_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeaconBuildTargetListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/beacon-builds:
+    get:
+      tags:
+      - beacon-builds
+      summary: List Beacon Builds
+      operationId: list_beacon_builds_api_v1_beacon_builds_get
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 25
+          title: Limit
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeaconBuildListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - beacon-builds
+      summary: Create Go Beacon Build
+      operationId: create_go_beacon_build_api_v1_beacon_builds_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BeaconBuildCreateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeaconBuildResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/beacon-builds/{build_id}:
+    get:
+      tags:
+      - beacon-builds
+      summary: Get Beacon Build
+      operationId: get_beacon_build_api_v1_beacon_builds__build_id__get
+      parameters:
+      - name: build_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Build Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeaconBuildResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/beacon-builds/{build_id}/artifact:
+    get:
+      tags:
+      - beacon-builds
+      summary: Download Beacon Build Artifact
+      operationId: download_beacon_build_artifact_api_v1_beacon_builds__build_id__artifact_get
+      parameters:
+      - name: build_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Build Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/protocol/frames:
     post:
       tags:
@@ -781,6 +948,207 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
+    BeaconBuildCreateRequest:
+      properties:
+        target_os:
+          type: string
+          enum:
+          - linux
+          - windows
+          title: Target Os
+          default: linux
+        target_arch:
+          type: string
+          const: amd64
+          title: Target Arch
+          default: amd64
+        c2_url:
+          type: string
+          maxLength: 512
+          minLength: 8
+          title: C2 Url
+        profile_name:
+          type: string
+          maxLength: 128
+          minLength: 1
+          title: Profile Name
+          default: default
+        sleep_seconds:
+          type: integer
+          maximum: 86400.0
+          minimum: 1.0
+          title: Sleep Seconds
+          default: 30
+        jitter:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Jitter
+          default: 0.1
+        user_agent:
+          anyOf:
+          - type: string
+            maxLength: 255
+          - type: 'null'
+          title: User Agent
+        config_mode:
+          type: string
+          enum:
+          - all
+          - env
+          - file
+          - ldflags
+          title: Config Mode
+          default: all
+        fallback_longpoll_enabled:
+          type: boolean
+          title: Fallback Longpoll Enabled
+          default: true
+        output_limit_bytes:
+          type: integer
+          maximum: 1048576.0
+          minimum: 1024.0
+          title: Output Limit Bytes
+          default: 65536
+        output_name:
+          anyOf:
+          - type: string
+            maxLength: 128
+          - type: 'null'
+          title: Output Name
+      type: object
+      required:
+      - c2_url
+      title: BeaconBuildCreateRequest
+    BeaconBuildListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/BeaconBuildResponse'
+          type: array
+          title: Items
+      type: object
+      title: BeaconBuildListResponse
+    BeaconBuildResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        target_os:
+          type: string
+          enum:
+          - linux
+          - windows
+          title: Target Os
+        target_arch:
+          type: string
+          const: amd64
+          title: Target Arch
+        status:
+          type: string
+          enum:
+          - building
+          - failed
+          - queued
+          - succeeded
+          title: Status
+        profile_name:
+          type: string
+          title: Profile Name
+        config:
+          additionalProperties: true
+          type: object
+          title: Config
+        artifact_filename:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Artifact Filename
+        artifact_sha256:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Artifact Sha256
+        artifact_size:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Artifact Size
+        logs_tail:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Logs Tail
+        error_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Message
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+        started_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Started At
+        completed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Completed At
+      type: object
+      required:
+      - id
+      - target_os
+      - target_arch
+      - status
+      - profile_name
+      - config
+      - created_at
+      - updated_at
+      title: BeaconBuildResponse
+    BeaconBuildTargetListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/BeaconBuildTargetResponse'
+          type: array
+          title: Items
+      type: object
+      title: BeaconBuildTargetListResponse
+    BeaconBuildTargetResponse:
+      properties:
+        os:
+          type: string
+          enum:
+          - linux
+          - windows
+          title: Os
+        arch:
+          type: string
+          const: amd64
+          title: Arch
+        extension:
+          type: string
+          title: Extension
+        label:
+          type: string
+          title: Label
+      type: object
+      required:
+      - os
+      - arch
+      - extension
+      - label
+      title: BeaconBuildTargetResponse
     BeaconHeartbeatRequest:
       properties:
         hostname:

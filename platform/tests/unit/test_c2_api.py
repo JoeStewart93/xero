@@ -16,6 +16,7 @@ from xero_c2.infrastructure_workers import mark_stale_workers
 from xero_c2.models import (
     Base,
     Beacon,
+    BeaconBuild,
     BeaconEvent,
     InfrastructureWorker,
     ProtocolFrameReceipt,
@@ -74,6 +75,26 @@ def longpoll_c2_client(monkeypatch, tmp_path, make_c2_client):
     return make_c2_client(
         C2_DATABASE_URL=database_url,
         C2_BEACON_LONGPOLL_TIMEOUT_SECONDS="1",
+    )
+
+
+@pytest.fixture
+def beacon_build_c2_client(monkeypatch, tmp_path, make_c2_client):
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'build-c2.db'}"
+    artifact_dir = tmp_path / "artifacts"
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("C2_DATABASE_URL", database_url)
+    monkeypatch.setenv("C2_CONNECT_PASSWORD", "connect-me")
+    monkeypatch.setenv("C2_JWT_SECRET_KEY", "test-c2-jwt-secret-with-enough-length")
+    monkeypatch.setenv("C2_BEACON_BUILDS_ENABLED", "true")
+    monkeypatch.setenv("C2_BEACON_BUILD_ARTIFACT_DIR", str(artifact_dir))
+    get_settings.cache_clear()
+    clear_database_caches()
+    Base.metadata.create_all(bind=get_engine(database_url))
+    return make_c2_client(
+        C2_DATABASE_URL=database_url,
+        C2_BEACON_BUILDS_ENABLED="true",
+        C2_BEACON_BUILD_ARTIFACT_DIR=str(artifact_dir),
     )
 
 
@@ -157,6 +178,75 @@ def test_protocol_frame_harness_is_disabled_by_default(c2_client):
     )
 
     assert response.status_code == 403
+
+
+def test_beacon_build_targets_require_auth_and_list_supported_targets(c2_client):
+    unauthenticated = c2_client.get("/api/v1/beacon-builds/targets")
+    token = connect_c2(c2_client)
+    response = c2_client.get("/api/v1/beacon-builds/targets", headers={"Authorization": f"Bearer {token}"})
+
+    assert unauthenticated.status_code == 401
+    assert response.status_code == 200
+    assert response.json()["items"] == [
+        {"os": "linux", "arch": "amd64", "extension": "", "label": "Linux amd64"},
+        {"os": "windows", "arch": "amd64", "extension": ".exe", "label": "Windows amd64"},
+    ]
+
+
+def test_beacon_build_creation_is_disabled_by_default(c2_client):
+    token = connect_c2(c2_client)
+    response = c2_client.post(
+        "/api/v1/beacon-builds",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"target_os": "linux", "target_arch": "amd64", "c2_url": "http://c2.local:8001"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Beacon builds are disabled"
+
+
+def test_beacon_build_api_creates_fake_artifact_and_requires_auth_for_download(beacon_build_c2_client):
+    token = connect_c2(beacon_build_c2_client)
+    created = beacon_build_c2_client.post(
+        "/api/v1/beacon-builds",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "target_os": "windows",
+            "target_arch": "amd64",
+            "c2_url": "http://c2.local:8001",
+            "profile_name": "ops",
+            "sleep_seconds": 15,
+            "jitter": 0.2,
+            "output_name": "ops-beacon",
+        },
+    )
+    payload = created.json()
+    unauthenticated_download = beacon_build_c2_client.get(f"/api/v1/beacon-builds/{payload['id']}/artifact")
+    downloaded = beacon_build_c2_client.get(
+        f"/api/v1/beacon-builds/{payload['id']}/artifact",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    listed = beacon_build_c2_client.get("/api/v1/beacon-builds", headers={"Authorization": f"Bearer {token}"})
+
+    assert created.status_code == 200
+    assert payload["status"] == "succeeded"
+    assert payload["artifact_filename"] == "ops-beacon.exe"
+    assert payload["artifact_sha256"]
+    assert payload["artifact_size"] > 0
+    assert payload["config"]["profile_name"] == "ops"
+    assert payload["config"]["c2_public_key_b64"]
+    assert unauthenticated_download.status_code == 401
+    assert downloaded.status_code == 200
+    assert b"test fake beacon artifact" in downloaded.content
+    assert listed.json()["items"][0]["id"] == payload["id"]
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        build = session.get(BeaconBuild, uuid.UUID(payload["id"]))
+
+    assert build is not None
+    assert build.status == "succeeded"
 
 
 def test_protocol_register_frame_updates_beacon_metadata_and_returns_ack(protocol_c2_client):
@@ -335,9 +425,11 @@ def test_task_result_updates_known_task_status(protocol_c2_client):
     assert result_response.status_code == 200
     assert ack["receipt"] == "stored"
     assert ack["task"]["status"] == "completed"
+    assert "stdout" not in ack["task"]
     assert stored is not None
     assert stored.status == "completed"
     assert stored.completed_at is not None
+    assert "stdout" not in stored.args
 
 
 def test_cancel_dispatched_task_returns_conflict(protocol_c2_client):

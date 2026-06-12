@@ -12,7 +12,7 @@ from xero_c2.config import Settings as C2Settings
 from xero_c2.config import get_settings as get_c2_settings
 from xero_c2.manage import alembic_config as c2_alembic_config
 from xero_c2.models import Base as C2Base
-from xero_c2.models import Beacon
+from xero_c2.models import Beacon, BeaconBuild
 from xero_common import crud
 from xero_common.database import (
     clear_database_caches,
@@ -106,6 +106,7 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert "protocol_security_events" in inspector.get_table_names()
     assert "protocol_frame_receipts" in inspector.get_table_names()
     assert "tasks" in inspector.get_table_names()
+    assert "beacon_builds" in inspector.get_table_names()
     assert "protocol_version" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "protocol_peer_public_key_b64" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "transport_mode" in {column["name"] for column in inspector.get_columns("beacons")}
@@ -114,9 +115,13 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert {"beacon_id", "module", "args", "status", "priority", "dispatched_at", "cancelled_at"}.issubset(
         task_columns
     )
+    build_columns = {column["name"] for column in inspector.get_columns("beacon_builds")}
+    assert {"target_os", "target_arch", "status", "config", "artifact_path", "artifact_sha256"}.issubset(
+        build_columns
+    )
     with engine.connect() as connection:
         context = MigrationContext.configure(connection, opts={"version_table": "c2_alembic_version"})
-        assert context.get_current_heads() == ("c2_0007_task_queue",)
+        assert context.get_current_heads() == ("c2_0008_beacon_builds",)
 
 
 def test_generic_crud_helpers_work_with_service_models(tmp_path):
@@ -139,8 +144,20 @@ def test_generic_crud_helpers_work_with_service_models(tmp_path):
                 beacon_token_hash="sha256:hash",
             ),
         )
+        build = crud.create(
+            session,
+            BeaconBuild(
+                target_os="linux",
+                target_arch="amd64",
+                status="queued",
+                profile_name="default",
+                config={"c2_url": "http://c2.local:8001"},
+            ),
+        )
         beacon_id = beacon.id
+        build_id = build.id
         assert crud.read(session, Beacon, beacon_id) is not None
+        assert crud.read(session, BeaconBuild, build_id) is not None
         assert crud.update(session, beacon, hostname="crud-renamed").hostname == "crud-renamed"
         crud.delete(session, beacon)
 

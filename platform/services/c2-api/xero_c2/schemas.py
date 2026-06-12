@@ -169,6 +169,10 @@ class TransportStatusResponse(BaseModel):
 TaskPriority = Literal["high", "low", "normal", "urgent"]
 TaskStatus = Literal["cancelled", "completed", "dispatched", "failed", "queued", "running"]
 ShellType = Literal["auto", "bash", "cmd", "powershell"]
+BeaconBuildStatus = Literal["building", "failed", "queued", "succeeded"]
+BeaconBuildTargetOS = Literal["linux", "windows"]
+BeaconBuildTargetArch = Literal["amd64"]
+BeaconBuildConfigMode = Literal["all", "env", "file", "ldflags"]
 
 
 class ShellTaskArgs(BaseModel):
@@ -216,6 +220,71 @@ class TaskResponse(BaseModel):
 
 class TaskListResponse(BaseModel):
     items: list[TaskResponse] = Field(default_factory=list)
+
+
+class BeaconBuildTargetResponse(BaseModel):
+    os: BeaconBuildTargetOS
+    arch: BeaconBuildTargetArch
+    extension: str
+    label: str
+
+
+class BeaconBuildTargetListResponse(BaseModel):
+    items: list[BeaconBuildTargetResponse] = Field(default_factory=list)
+
+
+class BeaconBuildCreateRequest(BaseModel):
+    target_os: BeaconBuildTargetOS = "linux"
+    target_arch: BeaconBuildTargetArch = "amd64"
+    c2_url: str = Field(min_length=8, max_length=512)
+    profile_name: str = Field(default="default", min_length=1, max_length=128)
+    sleep_seconds: int = Field(default=30, ge=1, le=86400)
+    jitter: float = Field(default=0.1, ge=0, le=1)
+    user_agent: str | None = Field(default=None, max_length=255)
+    config_mode: BeaconBuildConfigMode = "all"
+    fallback_longpoll_enabled: bool = True
+    output_limit_bytes: int = Field(default=65536, ge=1024, le=1_048_576)
+    output_name: str | None = Field(default=None, max_length=128)
+
+    @field_validator("c2_url")
+    @classmethod
+    def normalize_c2_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        if not normalized.startswith(("http://", "https://")):
+            raise ValueError("c2_url must start with http:// or https://")
+        return normalized
+
+    @field_validator("profile_name", "output_name", mode="after")
+    @classmethod
+    def normalize_optional_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Name cannot be blank")
+        return normalized
+
+
+class BeaconBuildResponse(BaseModel):
+    id: str
+    target_os: BeaconBuildTargetOS
+    target_arch: BeaconBuildTargetArch
+    status: BeaconBuildStatus
+    profile_name: str
+    config: dict
+    artifact_filename: str | None = None
+    artifact_sha256: str | None = None
+    artifact_size: int | None = None
+    logs_tail: str | None = None
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class BeaconBuildListResponse(BaseModel):
+    items: list[BeaconBuildResponse] = Field(default_factory=list)
 
 
 WorkerKind = Literal["beacon-handler", "scanner"]

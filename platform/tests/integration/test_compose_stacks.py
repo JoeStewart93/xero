@@ -116,6 +116,52 @@ def list_c2_tasks(token: str, beacon_id: str) -> list[dict]:
     return response.json()["items"]
 
 
+def c2_url_for_docker() -> str:
+    parsed = C2_URL.rstrip("/")
+    for host in ("localhost", "127.0.0.1"):
+        parsed = parsed.replace(f"://{host}:", "://host.docker.internal:")
+    return parsed
+
+
+def run_go_beacon_once(tmp_path: Path, *, protocol: dict, fingerprint: str) -> subprocess.CompletedProcess[str]:
+    state_dir = tmp_path / "go-beacon-state"
+    state_dir.mkdir(exist_ok=True)
+    return subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--add-host=host.docker.internal:host-gateway",
+            "-v",
+            f"{PLATFORM_ROOT}:/workspace/platform",
+            "-v",
+            f"{state_dir}:/state",
+            "-w",
+            "/workspace/platform/beacons/go",
+            "-e",
+            f"XERO_BEACON_C2_URL={c2_url_for_docker()}",
+            "-e",
+            f"XERO_BEACON_C2_PUBLIC_KEY_B64={protocol['c2_public_key_b64']}",
+            "-e",
+            "XERO_BEACON_STATE_PATH=/state/beacon-state.json",
+            "-e",
+            f"XERO_BEACON_MACHINE_FINGERPRINT_HASH={fingerprint}",
+            "-e",
+            "XERO_BEACON_SLEEP_SECONDS=1",
+            "golang:1.26",
+            "go",
+            "run",
+            ".",
+            "-once",
+        ],
+        cwd=PLATFORM_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+        timeout=180,
+    )
+
+
 def register_c2_beacon(hostname: str) -> dict:
     response = httpx.post(
         f"{C2_URL}/api/v1/beacons/register",
@@ -477,6 +523,34 @@ def test_c2_stack_websocket_task_queue_priority_and_history():
     tasks = {task["id"]: task for task in list_c2_tasks(c2_token, beacon_id)}
     assert tasks[urgent["id"]]["status"] == "completed"
     assert tasks[normal["id"]]["status"] == "queued"
+
+
+def test_c2_stack_go_beacon_registers_and_completes_shell_task(tmp_path):
+    require_url(C2_URL, "C2")
+    wait_for_service_health("docker-compose.c2.yml", "c2-api")
+
+    c2_token = c2_access_token()
+    protocol = protocol_metadata(c2_token)
+    fingerprint = f"integration-go-beacon-{time.time_ns()}"
+
+    first = run_go_beacon_once(tmp_path, protocol=protocol, fingerprint=fingerprint)
+    assert first.returncode == 0
+    state_file = tmp_path / "go-beacon-state" / "beacon-state.json"
+    runtime_state = json.loads(state_file.read_text(encoding="utf-8"))
+    beacon_id = runtime_state["beacon_id"]
+
+    task = create_c2_task(c2_token, beacon_id, command="printf f0015-go-beacon", priority="urgent")
+    second = run_go_beacon_once(tmp_path, protocol=protocol, fingerprint=fingerprint)
+    assert second.returncode == 0
+
+    tasks = {item["id"]: item for item in list_c2_tasks(c2_token, beacon_id)}
+    assert tasks[task["id"]]["status"] == "completed"
+
+    listed = httpx.get(f"{C2_URL}/api/v1/beacons/{beacon_id}", headers=c2_auth_headers(c2_token), timeout=10)
+    listed.raise_for_status()
+    beacon = listed.json()
+    assert beacon["transport_mode"] == "websocket"
+    assert beacon["protocol_version"] == 1
 
 
 def test_c2_stack_cancelled_task_is_skipped_by_beacon_poll():

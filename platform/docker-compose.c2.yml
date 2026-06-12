@@ -85,6 +85,7 @@ services:
       - "${C2_BACKEND_PORT:-8001}:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - xero_c2_beacon_artifacts:/app/artifacts/beacons
       - .:/workspace/platform:ro
     depends_on:
       c2-postgres:
@@ -109,5 +110,6 @@ networks:
     driver: bridge
 
 volumes:
+  xero_c2_beacon_artifacts:
   xero_c2_postgres_data:
   xero_c2_redis_data:

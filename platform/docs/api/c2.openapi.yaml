@@ -1074,6 +1074,10 @@ components:
           - type: integer
           - type: 'null'
           title: Artifact Size
+        artifact_available:
+          type: boolean
+          title: Artifact Available
+          default: false
         logs_tail:
           anyOf:
           - type: string

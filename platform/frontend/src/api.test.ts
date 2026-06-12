@@ -291,6 +291,7 @@ describe('api client', () => {
 
   it('calls C2 beacon build endpoints and downloads artifacts with bearer auth', async () => {
     const buildPayload = {
+      artifact_available: true,
       artifact_filename: 'xero-beacon-linux-amd64',
       artifact_sha256: 'abc123',
       artifact_size: 42,

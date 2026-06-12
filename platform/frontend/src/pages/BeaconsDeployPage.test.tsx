@@ -44,6 +44,7 @@ function renderPage() {
 }
 
 const succeededBuild = {
+  artifact_available: true,
   artifact_filename: 'xero-beacon-linux-amd64',
   artifact_sha256: 'abc123',
   artifact_size: 2048,
@@ -168,5 +169,20 @@ describe('BeaconsDeployPage', () => {
 
     await waitFor(() => expect(apiMocks.downloadBeaconBuildArtifact).toHaveBeenCalledWith('http://localhost:8001', 'c2-token', 'build-one'));
     expect(anchorClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks succeeded builds without a local artifact as unavailable', async () => {
+    apiMocks.getBeaconBuilds.mockResolvedValue({
+      items: [{ ...succeededBuild, artifact_available: false }],
+    });
+    renderPage();
+
+    expect(await screen.findByText('Artifact missing')).toBeTruthy();
+    expect(screen.getByText('Artifact is missing from local C2 storage. Rebuild to recreate it.')).toBeTruthy();
+    const downloadButton = screen.getByRole('button', { name: 'Download xero-beacon-linux-amd64' }) as HTMLButtonElement;
+    expect(downloadButton.disabled).toBe(true);
+    fireEvent.click(downloadButton);
+
+    expect(apiMocks.downloadBeaconBuildArtifact).not.toHaveBeenCalled();
   });
 });

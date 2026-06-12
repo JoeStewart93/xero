@@ -21,6 +21,24 @@ function buildStatusLabel(status: string): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
+function buildCanDownload(build: BeaconBuild): boolean {
+  return build.status === 'succeeded' && build.artifact_available;
+}
+
+function buildStatusDisplay(build: BeaconBuild): string {
+  if (build.status === 'succeeded' && !build.artifact_available) {
+    return 'Artifact missing';
+  }
+  return buildStatusLabel(build.status);
+}
+
+function buildStatusClass(build: BeaconBuild): string {
+  if (build.status === 'succeeded' && !build.artifact_available) {
+    return 'missing';
+  }
+  return build.status;
+}
+
 function formatBytes(value: number | null): string {
   if (value === null) {
     return '-';
@@ -140,6 +158,10 @@ export function BeaconsDeployPage() {
 
   async function handleDownload(build: BeaconBuild) {
     if (!connection) {
+      return;
+    }
+    if (!buildCanDownload(build)) {
+      setError('Beacon build artifact is missing from C2 storage. Rebuild the beacon to recreate it.');
       return;
     }
     setDownloadingBuildId(build.id);
@@ -279,15 +301,19 @@ export function BeaconsDeployPage() {
                     <div>
                       <strong>{build.artifact_filename ?? `${build.target_os}/${build.target_arch}`}</strong>
                       <span>{build.profile_name} / {formatBytes(build.artifact_size)}</span>
+                      {build.status === 'succeeded' && !build.artifact_available ? (
+                        <small>Artifact is missing from local C2 storage. Rebuild to recreate it.</small>
+                      ) : null}
                       {build.error_message ? <small>{build.error_message}</small> : null}
                     </div>
                     <div>
-                      <span className={`build-status build-status--${build.status}`}>{buildStatusLabel(build.status)}</span>
+                      <span className={`build-status build-status--${buildStatusClass(build)}`}>{buildStatusDisplay(build)}</span>
                       <button
                         aria-label={`Download ${build.artifact_filename ?? build.id}`}
                         className="icon-button"
-                        disabled={build.status !== 'succeeded' || downloadingBuildId === build.id}
+                        disabled={!buildCanDownload(build) || downloadingBuildId === build.id}
                         onClick={() => void handleDownload(build)}
+                        title={buildCanDownload(build) ? 'Download beacon artifact' : 'Artifact is missing from C2 storage. Rebuild to recreate it.'}
                         type="button"
                       >
                         <Download aria-hidden="true" size={15} strokeWidth={2.1} />

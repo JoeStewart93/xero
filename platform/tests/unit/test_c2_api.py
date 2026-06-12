@@ -5,6 +5,7 @@ import threading
 import time
 import uuid
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 from sqlalchemy import select
@@ -233,12 +234,14 @@ def test_beacon_build_api_creates_fake_artifact_and_requires_auth_for_download(b
     assert payload["artifact_filename"] == "ops-beacon.exe"
     assert payload["artifact_sha256"]
     assert payload["artifact_size"] > 0
+    assert payload["artifact_available"] is True
     assert payload["config"]["profile_name"] == "ops"
     assert payload["config"]["c2_public_key_b64"]
     assert unauthenticated_download.status_code == 401
     assert downloaded.status_code == 200
     assert b"test fake beacon artifact" in downloaded.content
     assert listed.json()["items"][0]["id"] == payload["id"]
+    assert listed.json()["items"][0]["artifact_available"] is True
 
     settings = get_settings()
     SessionFactory = get_session_factory(settings.database_url)
@@ -247,6 +250,41 @@ def test_beacon_build_api_creates_fake_artifact_and_requires_auth_for_download(b
 
     assert build is not None
     assert build.status == "succeeded"
+
+
+def test_beacon_build_api_reports_missing_artifact(beacon_build_c2_client):
+    token = connect_c2(beacon_build_c2_client)
+    created = beacon_build_c2_client.post(
+        "/api/v1/beacon-builds",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"target_os": "linux", "target_arch": "amd64", "c2_url": "http://c2.local:8001"},
+    )
+    payload = created.json()
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        build = session.get(BeaconBuild, uuid.UUID(payload["id"]))
+        assert build is not None
+        assert build.artifact_path is not None
+        artifact_path = Path(build.artifact_path)
+    artifact_path.unlink()
+
+    detail = beacon_build_c2_client.get(
+        f"/api/v1/beacon-builds/{payload['id']}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    listed = beacon_build_c2_client.get("/api/v1/beacon-builds", headers={"Authorization": f"Bearer {token}"})
+    downloaded = beacon_build_c2_client.get(
+        f"/api/v1/beacon-builds/{payload['id']}/artifact",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert detail.status_code == 200
+    assert detail.json()["artifact_available"] is False
+    assert listed.json()["items"][0]["artifact_available"] is False
+    assert downloaded.status_code == 404
+    assert downloaded.json()["detail"] == "Beacon build artifact not found"
 
 
 def test_protocol_register_frame_updates_beacon_metadata_and_returns_ack(protocol_c2_client):

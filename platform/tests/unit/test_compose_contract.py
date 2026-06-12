@@ -67,7 +67,8 @@ def test_c2_compose_defines_c2_api_stack_without_bff_seed_env():
     assert env["C2_BEACON_WS_MAX_MESSAGE_BYTES"] == "${C2_BEACON_WS_MAX_MESSAGE_BYTES:-1048576}"
     assert env["C2_WORKER_CONNECT_URL"] == "${C2_WORKER_CONNECT_URL:-http://host.docker.internal:8001}"
     assert "/var/run/docker.sock:/var/run/docker.sock" in compose["services"]["c2-api"]["volumes"]
-    assert set(compose["volumes"]) == {"xero_c2_postgres_data", "xero_c2_redis_data"}
+    assert "xero_c2_beacon_artifacts:/app/artifacts/beacons" in compose["services"]["c2-api"]["volumes"]
+    assert set(compose["volumes"]) == {"xero_c2_beacon_artifacts", "xero_c2_postgres_data", "xero_c2_redis_data"}
 
 
 def test_handler_and_scanner_compose_files_define_scaffold_services():
@@ -137,6 +138,10 @@ def test_env_example_contains_variables_consumed_by_split_compose_files():
         "C2_WORKER_CONNECT_URL",
         "C2_PROVISIONING_PLATFORM_ROOT",
         "C2_PROVISIONING_PROJECT_PREFIX",
+        "C2_BEACON_BUILDS_ENABLED",
+        "C2_BEACON_BUILD_ARTIFACT_DIR",
+        "C2_BEACON_BUILD_TIMEOUT_SECONDS",
+        "C2_BEACON_BUILD_GO_IMAGE",
         "HANDLER_SERVICE_NAME",
         "HANDLER_PORT",
         "SCANNER_SERVICE_NAME",

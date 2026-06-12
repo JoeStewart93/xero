@@ -49,6 +49,7 @@ def public_beacon_build(build: BeaconBuild) -> dict:
         "artifact_filename": build.artifact_filename,
         "artifact_sha256": build.artifact_sha256,
         "artifact_size": build.artifact_size,
+        "artifact_available": artifact_available(build),
         "logs_tail": build.logs_tail,
         "error_message": build.error_message,
         "created_at": build.created_at.isoformat(),
@@ -56,6 +57,10 @@ def public_beacon_build(build: BeaconBuild) -> dict:
         "started_at": build.started_at.isoformat() if build.started_at else None,
         "completed_at": build.completed_at.isoformat() if build.completed_at else None,
     }
+
+
+def artifact_available(build: BeaconBuild) -> bool:
+    return bool(build.artifact_path and Path(build.artifact_path).is_file())
 
 
 def build_config(payload: BeaconBuildCreateRequest, *, c2_public_key_b64: str) -> dict:

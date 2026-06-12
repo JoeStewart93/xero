@@ -4193,6 +4193,11 @@ h2 {
   color: #ff8da2;
 }
 
+.build-status--missing {
+  background: rgba(255, 183, 77, 0.16);
+  color: #ffd58d;
+}
+
 .build-status--building,
 .build-status--queued {
   background: rgba(0, 231, 255, 0.14);

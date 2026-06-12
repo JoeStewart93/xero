@@ -213,6 +213,7 @@ export interface BeaconBuildCreateRequest {
 }
 
 export interface BeaconBuild {
+  artifact_available: boolean;
   artifact_filename: string | null;
   artifact_sha256: string | null;
   artifact_size: number | null;

@@ -275,6 +275,7 @@ class BeaconBuildResponse(BaseModel):
     artifact_filename: str | None = None
     artifact_sha256: str | None = None
     artifact_size: int | None = None
+    artifact_available: bool = False
     logs_tail: str | None = None
     error_message: str | None = None
     created_at: datetime

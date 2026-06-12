@@ -25,6 +25,8 @@
 - Direct C2 transport is required in F0015. Handler URL compatibility is config-shaped only; handler tunneling remains F0038/F0039.
 - Build APIs are disabled by default outside explicitly enabled development/test configurations.
 - Local Go is optional because CI commands fall back to Docker `golang:1.26`.
+- Build metadata is stored in C2 Postgres and local artifacts are stored in the `xero_c2_beacon_artifacts` Docker volume mounted at `/app/artifacts/beacons`.
+- F0015 does not add local S3-compatible object storage. A shared MinIO/S3-compatible artifact store remains a future platform concern for beacon builds, reports, loot, and result blobs.
 
 ## Architecture
 
@@ -33,7 +35,7 @@ flowchart LR
   UI["Beacons Deploy wizard"] --> API["C2 build API"]
   API --> DB["beacon_builds metadata"]
   API --> Builder["Go or Docker builder"]
-  Builder --> Artifact["ignored artifacts/beacons"]
+  Builder --> Artifact["xero_c2_beacon_artifacts volume"]
   Beacon["Go beacon"] --> WS["/ws/beacon"]
   Beacon --> LP["/api/v1/beacons/{id}/poll + /frame"]
   WS --> Protocol["F0011 protocol processing"]
@@ -78,6 +80,7 @@ flowchart LR
 - [x] C2 exposes authenticated build targets, list, create, detail, and artifact download endpoints.
 - [x] Test mode uses a deterministic fake builder; enabled development uses local Go or Docker `golang:1.26`.
 - [x] Build metadata is persisted in `beacon_builds`.
+- [x] Docker C2 persists build artifacts in a named volume and reports missing artifacts separately from succeeded metadata.
 - [x] Deploy wizard supports target, profile, connection, config-mode review, status, failures, and artifact download.
 
 ### Stage 5: Validation And Completion

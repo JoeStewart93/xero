@@ -22,7 +22,16 @@ from xero_c2.beacon_transport import (
     parse_websocket_subprotocols,
 )
 from xero_c2.models import Beacon
-from xero_c2.protocol import ACK, PROTOCOL_ERROR, REGISTER, TASK_POLL, DecodedFrame, ProtocolError, decode_frame
+from xero_c2.protocol import (
+    ACK,
+    PROTOCOL_ERROR,
+    REGISTER,
+    SESSION_DATA,
+    TASK_POLL,
+    DecodedFrame,
+    ProtocolError,
+    decode_frame,
+)
 from xero_c2.protocol_processing import (
     c2_protocol_private_key,
     encrypted_protocol_frame,
@@ -34,6 +43,7 @@ from xero_c2.protocol_processing import (
     record_protocol_error,
 )
 from xero_c2.realtime import close_forbidden, websocket_origin_allowed
+from xero_c2.sessions import apply_beacon_session_data, publish_session_payload_event
 from xero_c2.task_queue import (
     TaskQueueUnavailable,
     dispatch_next_task,
@@ -195,6 +205,7 @@ async def run_beacon_websocket(websocket: WebSocket, *, settings, public_beacon:
             event_type: str | None = None
             task_events: list[tuple[str, dict]] = []
             task_result_events: list[tuple[str, dict]] = []
+            session_data_outcome = None
             with SessionFactory() as session:
                 try:
                     ensure_nonce_not_replayed(session, metadata)
@@ -239,6 +250,12 @@ async def run_beacon_websocket(websocket: WebSocket, *, settings, public_beacon:
                             task_payload = public_task(task)
                             ack_payload["task"] = task_delivery_payload(task)
                             task_events.append((task_event_type(task_payload["status"]), task_payload))
+                    if decoded.message_type == SESSION_DATA and beacon_id is not None:
+                        session_data_outcome = apply_beacon_session_data(
+                            session,
+                            beacon_id=beacon_id,
+                            payload=decoded.payload,
+                        )
                     record_frame_receipt(session, decoded, beacon_id=beacon_id)
                     session.commit()
 
@@ -304,6 +321,19 @@ async def run_beacon_websocket(websocket: WebSocket, *, settings, public_beacon:
                     task_result_event_type_value,
                     task_result_payload,
                 )
+            if session_data_outcome is not None:
+                if session_data_outcome.operator_message is not None:
+                    await websocket.app.state.session_relay_manager.deliver(
+                        session_data_outcome.session_id,
+                        session_data_outcome.operator_message,
+                    )
+                if session_data_outcome.event_type is not None:
+                    await publish_session_payload_event(
+                        websocket.app,
+                        settings,
+                        session_data_outcome.event_type,
+                        session_data_outcome.session_payload,
+                    )
     finally:
         if bound_beacon_id is not None and connection is not None:
             removed = await manager.unregister(bound_beacon_id, connection.id)

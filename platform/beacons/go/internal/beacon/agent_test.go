@@ -51,11 +51,16 @@ func testProtocolKeys(t *testing.T) ([]byte, []byte) {
 
 func ackFrame(t *testing.T, privateKey []byte, decoded *xeroprotocol.DecodedFrame, payload map[string]any) []byte {
 	t.Helper()
+	return protocolFrame(t, privateKey, decoded, "ACK", payload)
+}
+
+func protocolFrame(t *testing.T, privateKey []byte, decoded *xeroprotocol.DecodedFrame, messageType string, payload map[string]any) []byte {
+	t.Helper()
 	nonce := make([]byte, 12)
 	if _, err := rand.Read(nonce); err != nil {
 		t.Fatal(err)
 	}
-	frame, err := xeroprotocol.Encode(privateKey, decoded.PublicKey, "ACK", payload, decoded.SessionID, nonce)
+	frame, err := xeroprotocol.Encode(privateKey, decoded.PublicKey, messageType, payload, decoded.SessionID, nonce)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,6 +184,77 @@ func TestRunOnceReconnectsExistingWebSocketBeacon(t *testing.T) {
 	}
 	if first, second := <-received, <-received; first != "HEARTBEAT" || second != "TASK_POLL" {
 		t.Fatalf("unexpected reconnect sequence: %s, %s", first, second)
+	}
+}
+
+func TestRunOnceHandlesSessionDataOverWebSocket(t *testing.T) {
+	serverPrivate, serverPublic := testProtocolKeys(t)
+	sessionID := "00000000-0000-0000-0000-000000000018"
+	responsePayload := make(chan map[string]any, 1)
+	upgrader := websocket.Upgrader{Subprotocols: []string{"xero.beacon.v1"}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade failed: %v", err)
+			return
+		}
+		defer conn.Close()
+		var lastDecoded *xeroprotocol.DecodedFrame
+		for range 2 {
+			_, raw, err := conn.ReadMessage()
+			if err != nil {
+				t.Errorf("read failed: %v", err)
+				return
+			}
+			decoded, err := xeroprotocol.Decode(raw, serverPrivate)
+			if err != nil {
+				t.Errorf("decode failed: %v", err)
+				return
+			}
+			lastDecoded = decoded
+			if err := conn.WriteMessage(websocket.BinaryMessage, ackFrame(t, serverPrivate, decoded, map[string]any{"task": nil})); err != nil {
+				t.Errorf("write ack failed: %v", err)
+				return
+			}
+		}
+		payload := map[string]any{"session_id": sessionID, "op": "open", "shell_type": "unsupported-shell", "rows": float64(24), "cols": float64(80)}
+		if err := conn.WriteMessage(websocket.BinaryMessage, protocolFrame(t, serverPrivate, lastDecoded, "SESSION_DATA", payload)); err != nil {
+			t.Errorf("write session data failed: %v", err)
+			return
+		}
+		_, raw, err := conn.ReadMessage()
+		if err != nil {
+			t.Errorf("read session response failed: %v", err)
+			return
+		}
+		decoded, err := xeroprotocol.Decode(raw, serverPrivate)
+		if err != nil {
+			t.Errorf("decode session response failed: %v", err)
+			return
+		}
+		if decoded.MessageType != "SESSION_DATA" {
+			t.Errorf("expected SESSION_DATA response, got %s", decoded.MessageType)
+			return
+		}
+		responsePayload <- decoded.Payload
+	}))
+	defer server.Close()
+
+	cfg := testAgentConfig(t, server.URL, serverPublic)
+	if err := state.Save(cfg.StatePath, state.RuntimeState{BeaconID: "beacon-existing", BeaconToken: "token-existing"}); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := <-responsePayload
+	if payload["session_id"] != sessionID || payload["op"] != "error" {
+		t.Fatalf("unexpected session response payload: %#v", payload)
 	}
 }
 

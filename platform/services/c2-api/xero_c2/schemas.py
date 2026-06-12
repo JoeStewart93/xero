@@ -169,6 +169,7 @@ class TransportStatusResponse(BaseModel):
 TaskPriority = Literal["high", "low", "normal", "urgent"]
 TaskStatus = Literal["cancelled", "completed", "dispatched", "failed", "queued", "running"]
 ShellType = Literal["auto", "bash", "cmd", "powershell"]
+ShellSessionStatus = Literal["closed", "closing", "detached", "failed", "open", "opening"]
 BeaconBuildStatus = Literal["building", "failed", "queued", "succeeded"]
 BeaconBuildTargetOS = Literal["linux", "windows"]
 BeaconBuildTargetArch = Literal["amd64"]
@@ -283,6 +284,31 @@ class TaskResultResponse(BaseModel):
 class TaskResultListResponse(BaseModel):
     items: list[TaskResultResponse] = Field(default_factory=list)
     next_cursor: datetime | None = None
+
+
+class ShellSessionCreateRequest(BaseModel):
+    beacon_id: str
+    shell_type: ShellType = "auto"
+    rows: int = Field(default=32, ge=5, le=80)
+    cols: int = Field(default=120, ge=20, le=300)
+
+
+class ShellSessionResponse(BaseModel):
+    id: str
+    beacon_id: str
+    session_type: Literal["shell"]
+    shell_type: ShellType
+    status: ShellSessionStatus
+    actor_subject: str
+    opened_at: datetime
+    last_activity_at: datetime
+    detached_at: datetime | None = None
+    closed_at: datetime | None = None
+    close_reason: str | None = None
+    rows: int
+    cols: int
+    created_at: datetime
+    updated_at: datetime
 
 
 class BeaconBuildTargetResponse(BaseModel):

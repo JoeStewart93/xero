@@ -14,19 +14,63 @@ const mocks = vi.hoisted(() => ({
 
 const apiMocks = vi.hoisted(() => ({
   cancelTask: vi.fn(),
+  closeShellSession: vi.fn(),
+  createShellSession: vi.fn(),
   createShellTask: vi.fn(),
   downloadTaskResultText: vi.fn(),
   getTaskResult: vi.fn(),
   getTasks: vi.fn(),
 }));
 
+const terminalMocks = vi.hoisted(() => ({
+  terminals: [] as Array<{ emitData: (data: string) => void }>,
+  writes: [] as string[],
+}));
+
 vi.mock('../api', async (importOriginal) => ({
   ...((await importOriginal()) as object),
   cancelTask: apiMocks.cancelTask,
+  closeShellSession: apiMocks.closeShellSession,
+  createShellSession: apiMocks.createShellSession,
   createShellTask: apiMocks.createShellTask,
   downloadTaskResultText: apiMocks.downloadTaskResultText,
   getTaskResult: apiMocks.getTaskResult,
   getTasks: apiMocks.getTasks,
+}));
+
+vi.mock('@xterm/xterm', () => ({
+  Terminal: class {
+    cols = 120;
+    rows = 32;
+    private onDataCallback: ((data: string) => void) | null = null;
+
+    constructor() {
+      terminalMocks.terminals.push(this);
+    }
+
+    dispose() {}
+    loadAddon() {}
+    open() {}
+    reset() {
+      terminalMocks.writes = [];
+    }
+    write(value: string) {
+      terminalMocks.writes.push(value);
+    }
+    onData(callback: (data: string) => void) {
+      this.onDataCallback = callback;
+      return { dispose() {} };
+    }
+    emitData(data: string) {
+      this.onDataCallback?.(data);
+    }
+  },
+}));
+
+vi.mock('@xterm/addon-fit', () => ({
+  FitAddon: class {
+    fit() {}
+  },
 }));
 
 vi.mock('../useAuth', () => ({
@@ -91,6 +135,46 @@ const beaconThree: Beacon = {
   transport_mode: 'long-poll',
 };
 
+class FakeWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+  static instances: FakeWebSocket[] = [];
+
+  onclose: ((event: CloseEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onopen: ((event: Event) => void) | null = null;
+  readyState = FakeWebSocket.CONNECTING;
+  sent: string[] = [];
+
+  constructor(
+    public readonly url: string,
+    public readonly protocols?: string | string[],
+  ) {
+    FakeWebSocket.instances.push(this);
+  }
+
+  open(): void {
+    this.readyState = FakeWebSocket.OPEN;
+    this.onopen?.(new Event('open'));
+  }
+
+  send(payload: string): void {
+    this.sent.push(payload);
+  }
+
+  receive(payload: string): void {
+    this.onmessage?.({ data: payload } as MessageEvent);
+  }
+
+  close(code = 1000): void {
+    this.readyState = FakeWebSocket.CLOSED;
+    this.onclose?.({ code } as CloseEvent);
+  }
+}
+
 const queuedTask = {
   args: { command: 'whoami', shell_type: 'auto', timeout_seconds: 60 },
   beacon_id: beaconOne.id,
@@ -107,6 +191,24 @@ const queuedTask = {
   updated_at: '2026-06-08T14:08:00Z',
 } as const;
 
+const shellSession = {
+  actor_subject: 'operator-1',
+  beacon_id: beaconOne.id,
+  close_reason: null,
+  closed_at: null,
+  cols: 120,
+  created_at: '2026-06-08T14:10:00Z',
+  detached_at: null,
+  id: '99999999-9999-9999-9999-999999999999',
+  last_activity_at: '2026-06-08T14:10:00Z',
+  opened_at: '2026-06-08T14:10:00Z',
+  rows: 32,
+  session_type: 'shell',
+  shell_type: 'powershell',
+  status: 'opening',
+  updated_at: '2026-06-08T14:10:00Z',
+} as const;
+
 function renderBeaconsPage() {
   return render(
     <MemoryRouter>
@@ -118,6 +220,10 @@ function renderBeaconsPage() {
 describe('BeaconsPage', () => {
   beforeEach(() => {
     vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-06-08T14:10:00Z').getTime());
+    FakeWebSocket.instances = [];
+    terminalMocks.terminals = [];
+    terminalMocks.writes = [];
+    vi.stubGlobal('WebSocket', FakeWebSocket);
     mocks.useAuth.mockReturnValue({
       logout: vi.fn(),
       session: {
@@ -153,6 +259,8 @@ describe('BeaconsPage', () => {
       status: 'connected',
     });
     apiMocks.getTasks.mockResolvedValue({ items: [] });
+    apiMocks.createShellSession.mockResolvedValue(shellSession);
+    apiMocks.closeShellSession.mockResolvedValue({ ...shellSession, close_reason: 'operator', closed_at: '2026-06-08T14:11:00Z', status: 'closed' });
     apiMocks.createShellTask.mockResolvedValue(queuedTask);
     apiMocks.cancelTask.mockResolvedValue({ ...queuedTask, cancelled_at: '2026-06-08T14:09:00Z', status: 'cancelled' });
     apiMocks.getTaskResult.mockResolvedValue({
@@ -184,6 +292,7 @@ describe('BeaconsPage', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('shows the C2 required panel while disconnected', () => {
@@ -314,6 +423,52 @@ describe('BeaconsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close host operations' }));
 
     expect(screen.queryByRole('dialog', { name: 'Host operations for beacon-alpha' })).toBeNull();
+  });
+
+  it('opens an interactive shell session and streams terminal data', async () => {
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 1,
+      beacons: [beaconOne],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 0,
+      status: 'connected',
+    });
+
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    fireEvent.click(screen.getByRole('button', { name: /Interactive session/ }));
+    fireEvent.change(screen.getByLabelText('Interactive shell type'), { target: { value: 'powershell' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+
+    await waitFor(() => {
+      expect(apiMocks.createShellSession).toHaveBeenCalledWith('http://localhost:18001', 'c2-token', {
+        beacon_id: beaconOne.id,
+        cols: 120,
+        rows: 32,
+        shell_type: 'powershell',
+      });
+    });
+
+    expect(FakeWebSocket.instances[0].url).toBe(`ws://localhost:18001/ws/sessions/${shellSession.id}`);
+    expect(FakeWebSocket.instances[0].protocols).toEqual(['xero.session.v1', 'bearer.c2-token']);
+
+    FakeWebSocket.instances[0].open();
+    FakeWebSocket.instances[0].receive(JSON.stringify({ op: 'attached', session: shellSession }));
+    FakeWebSocket.instances[0].receive(JSON.stringify({ op: 'opened', session: { ...shellSession, status: 'open' } }));
+    FakeWebSocket.instances[0].receive(JSON.stringify({ data: 'PS> whoami\r\nadmin\r\n', op: 'stdout' }));
+
+    expect(await screen.findByText('open')).toBeTruthy();
+    expect(screen.getByTestId('shell-session-transcript').textContent).toContain('admin');
+    expect(terminalMocks.writes.join('')).toContain('PS> whoami');
+
+    terminalMocks.terminals[0].emitData('whoami\r');
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual({ data: 'whoami\r', op: 'stdin' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual({ op: 'close' });
   });
 
   it('queues a shell task from the command queue modal', async () => {

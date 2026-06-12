@@ -112,6 +112,7 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert "task_result_artifacts" in inspector.get_table_names()
     assert "artifacts" in inspector.get_table_names()
     assert "beacon_builds" in inspector.get_table_names()
+    assert "sessions" in inspector.get_table_names()
     assert "protocol_version" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "protocol_peer_public_key_b64" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "transport_mode" in {column["name"] for column in inspector.get_columns("beacons")}
@@ -174,9 +175,23 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     }.issubset(result_chunk_columns)
     task_result_artifact_columns = {column["name"] for column in inspector.get_columns("task_result_artifacts")}
     assert {"task_result_id", "artifact_id", "role"}.issubset(task_result_artifact_columns)
+    interactive_session_columns = {column["name"] for column in inspector.get_columns("sessions")}
+    assert {
+        "beacon_id",
+        "session_type",
+        "shell_type",
+        "status",
+        "actor_subject",
+        "opened_at",
+        "last_activity_at",
+        "detached_at",
+        "closed_at",
+        "rows",
+        "cols",
+    }.issubset(interactive_session_columns)
     with engine.connect() as connection:
         context = MigrationContext.configure(connection, opts={"version_table": "c2_alembic_version"})
-        assert context.get_current_heads() == ("c2_0011_task_results",)
+        assert context.get_current_heads() == ("c2_0012_interactive_sessions",)
 
 
 def test_generic_crud_helpers_work_with_service_models(tmp_path):

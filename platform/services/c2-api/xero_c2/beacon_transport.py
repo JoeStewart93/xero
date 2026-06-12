@@ -80,6 +80,13 @@ class BeaconTransportManager:
     def active_count(self) -> int:
         return len(self._connections)
 
+    async def send_to_beacon(self, beacon_id: uuid.UUID, payload: bytes) -> bool:
+        async with self._lock:
+            connection = self._connections.get(beacon_id)
+        if connection is None:
+            return False
+        return await connection.enqueue(payload)
+
     async def register(self, websocket: WebSocket, beacon_id: uuid.UUID) -> ManagedBeaconConnection:
         connection = ManagedBeaconConnection(websocket, beacon_id, queue_size=self.queue_size)
         old_connection: ManagedBeaconConnection | None = None

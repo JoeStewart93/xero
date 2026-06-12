@@ -222,6 +222,26 @@ class TaskListResponse(BaseModel):
     items: list[TaskResponse] = Field(default_factory=list)
 
 
+class TaskAuditEventResponse(BaseModel):
+    id: str
+    task_id: str
+    beacon_id: str
+    module: str
+    command: str | None = None
+    actor_subject: str
+    event_type: str
+    task_status: TaskStatus | None = None
+    message: str | None = None
+    metadata: dict = Field(default_factory=dict)
+    occurred_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskAuditEventListResponse(BaseModel):
+    items: list[TaskAuditEventResponse] = Field(default_factory=list)
+
+
 class BeaconBuildTargetResponse(BaseModel):
     os: BeaconBuildTargetOS
     arch: BeaconBuildTargetArch

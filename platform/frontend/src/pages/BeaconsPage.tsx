@@ -31,6 +31,7 @@ import type {
   ShellType,
   Task,
   TaskPriority,
+  TaskStatus,
 } from '../api';
 import { AppShell } from '../components/AppShell';
 import { C2RequiredPanel } from '../components/C2RequiredPanel';
@@ -104,6 +105,7 @@ type HostOperationKey = (typeof hostOperations)[number]['key'];
 
 const taskPriorities: TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
 const shellTypes: ShellType[] = ['auto', 'cmd', 'powershell', 'bash'];
+const taskStatusFilters: Array<TaskStatus | 'all'> = ['all', 'queued', 'dispatched', 'running', 'completed', 'failed', 'cancelled'];
 
 function taskStatusLabel(status: string): string {
   return status.replace(/-/g, ' ');
@@ -120,6 +122,11 @@ function taskMeta(task: Task): string {
   const shell = typeof shellType === 'string' ? shellType : 'auto';
   const timeoutLabel = typeof timeout === 'number' ? `${timeout}s` : 'default';
   return `${shell} / ${task.priority} / ${timeoutLabel}`;
+}
+
+function taskLifecycleTime(task: Task): string {
+  const timestamp = task.completed_at ?? task.cancelled_at ?? task.running_at ?? task.dispatched_at ?? task.queued_at;
+  return `${taskStatusLabel(task.status)} ${formatRelativeTime(timestamp)}`;
 }
 
 function BeaconOperationsModal({
@@ -139,6 +146,8 @@ function BeaconOperationsModal({
   const [shellType, setShellType] = useState<ShellType>('auto');
   const [priority, setPriority] = useState<TaskPriority>('normal');
   const [timeoutSeconds, setTimeoutSeconds] = useState('60');
+  const [taskSearchQuery, setTaskSearchQuery] = useState('');
+  const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatus | 'all'>('all');
   const [taskError, setTaskError] = useState('');
   const [isLoadingTasks, setIsLoadingTasks] = useState(false);
   const [isSubmittingTask, setIsSubmittingTask] = useState(false);
@@ -150,7 +159,13 @@ function BeaconOperationsModal({
   const loadTasks = useCallback(async () => {
     setIsLoadingTasks(true);
     try {
-      const response = await getTasks(connection.baseUrl, connection.accessToken, { beaconId: beacon.id, limit: 20 });
+      const commandFilter = taskSearchQuery.trim();
+      const response = await getTasks(connection.baseUrl, connection.accessToken, {
+        beaconId: beacon.id,
+        command: commandFilter || undefined,
+        limit: 20,
+        status: taskStatusFilter === 'all' ? undefined : taskStatusFilter,
+      });
       setTasks(response.items);
       setTaskError('');
     } catch (caught) {
@@ -159,7 +174,7 @@ function BeaconOperationsModal({
     } finally {
       setIsLoadingTasks(false);
     }
-  }, [beacon.id, connection.accessToken, connection.baseUrl]);
+  }, [beacon.id, connection.accessToken, connection.baseUrl, taskSearchQuery, taskStatusFilter]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => void loadTasks(), 0);
@@ -333,10 +348,31 @@ function BeaconOperationsModal({
                 </form>
 
                 <div className="task-queue-toolbar">
-                  <div>
+                  <div className="task-history-count">
                     <strong>{queuedTaskCount}</strong>
                     <span>queued</span>
                   </div>
+                  <label className="task-history-search">
+                    <Search aria-hidden="true" size={14} strokeWidth={2} />
+                    <input
+                      aria-label="Search command history"
+                      onChange={(event) => setTaskSearchQuery(event.target.value)}
+                      placeholder="Search commands"
+                      value={taskSearchQuery}
+                    />
+                  </label>
+                  <select
+                    aria-label="Filter task status"
+                    className="task-status-filter"
+                    onChange={(event) => setTaskStatusFilter(event.target.value as TaskStatus | 'all')}
+                    value={taskStatusFilter}
+                  >
+                    {taskStatusFilters.map((item) => (
+                      <option key={item} value={item}>
+                        {item === 'all' ? 'All statuses' : taskStatusLabel(item)}
+                      </option>
+                    ))}
+                  </select>
                   <button className="secondary-button" onClick={() => void loadTasks()} type="button">
                     <RefreshCw aria-hidden="true" size={15} strokeWidth={2.1} />
                     <span>Refresh</span>
@@ -356,6 +392,7 @@ function BeaconOperationsModal({
                         <div>
                           <strong>{taskCommand(task)}</strong>
                           <span>{taskMeta(task)}</span>
+                          <span>{taskLifecycleTime(task)}</span>
                         </div>
                         <div>
                           <span className={`task-status task-status--${task.status}`}>{taskStatusLabel(task.status)}</span>

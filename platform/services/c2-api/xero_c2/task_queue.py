@@ -14,6 +14,7 @@ from xero_common.models import utc_now
 
 from xero_c2.models import Beacon, Task
 from xero_c2.protocol import ACK, TASK_POLL, ProtocolError, encode_frame, load_private_key
+from xero_c2.task_audit import TASK_AUDIT_ACTOR_C2, record_task_audit_event
 
 TASK_STATUS_QUEUED = "queued"
 TASK_STATUS_DISPATCHED = "dispatched"
@@ -44,7 +45,6 @@ RESULT_STATUS_MAP = {
     "running": TASK_STATUS_RUNNING,
     "error": TASK_STATUS_FAILED,
 }
-
 
 class TaskQueueUnavailable(RuntimeError):
     pass
@@ -177,6 +177,13 @@ async def dispatch_next_task(
             task.status = TASK_STATUS_DISPATCHED
             task.dispatched_at = now
             session.add(task)
+            record_task_audit_event(
+                session,
+                task,
+                actor_subject=TASK_AUDIT_ACTOR_C2,
+                event_type="task.dispatched",
+                message="Task dispatched to beacon.",
+            )
             session.flush()
             return task
     return None
@@ -191,6 +198,13 @@ async def requeue_dispatched_task(
     task.status = TASK_STATUS_QUEUED
     task.dispatched_at = None
     session.add(task)
+    record_task_audit_event(
+        session,
+        task,
+        actor_subject=TASK_AUDIT_ACTOR_C2,
+        event_type="task.requeued",
+        message="Task requeued after delivery failed.",
+    )
     session.flush()
     await queue.enqueue(client, task)
 
@@ -200,12 +214,21 @@ async def cancel_task(
     queue: TaskQueueService,
     client: redis.Redis | None,
     task: Task,
+    *,
+    actor_subject: str = TASK_AUDIT_ACTOR_C2,
 ) -> Task:
     if task.status != TASK_STATUS_QUEUED:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only queued tasks can be cancelled")
     task.status = TASK_STATUS_CANCELLED
     task.cancelled_at = utc_now()
     session.add(task)
+    record_task_audit_event(
+        session,
+        task,
+        actor_subject=actor_subject,
+        event_type="task.cancelled",
+        message="Task cancelled before dispatch.",
+    )
     session.flush()
     await queue.remove(client, task)
     return task
@@ -242,6 +265,18 @@ def apply_task_result(session: Session, *, beacon_id: uuid.UUID, payload: dict[s
     if next_status in {TASK_STATUS_COMPLETED, TASK_STATUS_FAILED}:
         task.completed_at = now
     session.add(task)
+    record_task_audit_event(
+        session,
+        task,
+        actor_subject=f"beacon:{beacon_id}",
+        event_type=task_event_type(task.status),
+        message="Beacon reported task lifecycle update.",
+        metadata={
+            "exit_code": payload.get("exit_code"),
+            "timed_out": payload.get("timed_out"),
+            "truncated": payload.get("truncated"),
+        },
+    )
     return task
 
 

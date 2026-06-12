@@ -187,6 +187,26 @@ export interface TaskListResponse {
   items: Task[];
 }
 
+export interface TaskAuditEvent {
+  actor_subject: string;
+  beacon_id: string;
+  command: string | null;
+  created_at: string;
+  event_type: string;
+  id: string;
+  message: string | null;
+  metadata: Record<string, unknown>;
+  module: string;
+  occurred_at: string;
+  task_id: string;
+  task_status: TaskStatus | null;
+  updated_at: string;
+}
+
+export interface TaskAuditEventListResponse {
+  items: TaskAuditEvent[];
+}
+
 export interface BeaconBuildTarget {
   arch: BeaconBuildTargetArch;
   extension: string;
@@ -411,11 +431,14 @@ export async function getTransportStatus(baseUrl: string, accessToken: string): 
 export async function getTasks(
   baseUrl: string,
   accessToken: string,
-  options: { beaconId?: string; limit?: number; status?: TaskStatus } = {},
+  options: { beaconId?: string; command?: string; limit?: number; status?: TaskStatus } = {},
 ): Promise<TaskListResponse> {
   const params = new URLSearchParams();
   if (options.beaconId) {
     params.set('beacon_id', options.beaconId);
+  }
+  if (options.command) {
+    params.set('command', options.command);
   }
   if (options.status) {
     params.set('status', options.status);
@@ -425,6 +448,15 @@ export async function getTasks(
   }
   const query = params.toString();
   return c2Fetch<TaskListResponse>(baseUrl, accessToken, `/api/v1/tasks${query ? `?${query}` : ''}`);
+}
+
+export async function getTaskAuditEvents(
+  baseUrl: string,
+  accessToken: string,
+  taskId: string,
+  limit = 20,
+): Promise<TaskAuditEventListResponse> {
+  return c2Fetch<TaskAuditEventListResponse>(baseUrl, accessToken, `/api/v1/tasks/${taskId}/audit?limit=${limit}`);
 }
 
 export async function createShellTask(

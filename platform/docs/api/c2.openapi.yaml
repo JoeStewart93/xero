@@ -617,6 +617,16 @@ paths:
             format: uuid
           - type: 'null'
           title: Beacon Id
+      - name: command
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 256
+          - type: 'null'
+          title: Command
       - name: status
         in: query
         required: false
@@ -725,6 +735,50 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TaskResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/tasks/{task_id}/audit:
+    get:
+      tags:
+      - tasks
+      summary: List Task Audit Events
+      operationId: list_task_audit_events_api_v1_tasks__task_id__audit_get
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Task Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskAuditEventListResponse'
         '422':
           description: Validation Error
           content:
@@ -1695,6 +1749,85 @@ components:
       - message
       - occurred_at
       title: ProtocolSecurityEventResponse
+    TaskAuditEventListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/TaskAuditEventResponse'
+          type: array
+          title: Items
+      type: object
+      title: TaskAuditEventListResponse
+    TaskAuditEventResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        task_id:
+          type: string
+          title: Task Id
+        beacon_id:
+          type: string
+          title: Beacon Id
+        module:
+          type: string
+          title: Module
+        command:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Command
+        actor_subject:
+          type: string
+          title: Actor Subject
+        event_type:
+          type: string
+          title: Event Type
+        task_status:
+          anyOf:
+          - type: string
+            enum:
+            - cancelled
+            - completed
+            - dispatched
+            - failed
+            - queued
+            - running
+          - type: 'null'
+          title: Task Status
+        message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Message
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+        occurred_at:
+          type: string
+          format: date-time
+          title: Occurred At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - task_id
+      - beacon_id
+      - module
+      - actor_subject
+      - event_type
+      - occurred_at
+      - created_at
+      - updated_at
+      title: TaskAuditEventResponse
     TaskCreateRequest:
       properties:
         beacon_id:

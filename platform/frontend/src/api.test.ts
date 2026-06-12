@@ -16,6 +16,7 @@ import {
   getCurrentOperator,
   getProtocolInfo,
   getProtocolSecurityEvents,
+  getTaskAuditEvents,
   getTasks,
   getTransportStatus,
   launchInfrastructureWorker,
@@ -259,14 +260,35 @@ describe('api client', () => {
       status: 'queued',
       updated_at: new Date().toISOString(),
     };
+    const taskAuditPayload = {
+      actor_subject: 'operator-one',
+      beacon_id: 'beacon-one',
+      command: 'whoami',
+      created_at: new Date().toISOString(),
+      event_type: 'task.queued',
+      id: 'audit-one',
+      message: 'Operator queued shell task.',
+      metadata: {},
+      module: 'shell',
+      occurred_at: new Date().toISOString(),
+      task_id: 'task-one',
+      task_status: 'queued',
+      updated_at: new Date().toISOString(),
+    };
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ items: [taskPayload] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(taskPayload), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ...taskPayload, status: 'cancelled' }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...taskPayload, status: 'cancelled' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [taskAuditPayload] }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await getTasks('http://c2.local:8001/', 'c2-token', { beaconId: 'beacon-one', limit: 10, status: 'queued' });
+    await getTasks('http://c2.local:8001/', 'c2-token', {
+      beaconId: 'beacon-one',
+      command: 'whoami',
+      limit: 10,
+      status: 'queued',
+    });
     await createShellTask(
       'http://c2.local:8001/',
       'c2-token',
@@ -275,8 +297,11 @@ describe('api client', () => {
       'urgent',
     );
     await cancelTask('http://c2.local:8001/', 'c2-token', 'task-one');
+    await getTaskAuditEvents('http://c2.local:8001/', 'c2-token', 'task-one', 5);
 
-    expect(fetchMock.mock.calls[0][0]).toBe('http://c2.local:8001/api/v1/tasks?beacon_id=beacon-one&status=queued&limit=10');
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://c2.local:8001/api/v1/tasks?beacon_id=beacon-one&command=whoami&status=queued&limit=10',
+    );
     expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
     expect(fetchMock.mock.calls[1][0]).toBe('http://c2.local:8001/api/v1/tasks');
     expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)).toEqual({
@@ -287,6 +312,7 @@ describe('api client', () => {
     });
     expect(fetchMock.mock.calls[2][0]).toBe('http://c2.local:8001/api/v1/tasks/task-one');
     expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe('DELETE');
+    expect(fetchMock.mock.calls[3][0]).toBe('http://c2.local:8001/api/v1/tasks/task-one/audit?limit=5');
   });
 
   it('calls C2 beacon build endpoints and downloads artifacts with bearer auth', async () => {

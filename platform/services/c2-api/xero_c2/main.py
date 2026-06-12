@@ -30,6 +30,7 @@ from xero_common.security import (
 from xero_c2.beacon_auth import beacon_auth_exception, bearer_token
 from xero_c2.beacon_builds import (
     SUPPORTED_TARGETS,
+    artifact_download_filename,
     create_beacon_build,
     public_beacon_build,
     recent_builds,
@@ -645,7 +646,7 @@ def create_app() -> FastAPI:
         return FileResponse(
             artifact_path,
             media_type="application/octet-stream",
-            filename=build.artifact_filename or artifact_path.name,
+            filename=artifact_download_filename(build) or artifact_path.name,
         )
 
     @api_router.post("/protocol/frames", response_model=None, tags=["protocol"])

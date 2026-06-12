@@ -45,7 +45,7 @@ function renderPage() {
 
 const succeededBuild = {
   artifact_available: true,
-  artifact_filename: 'xero-beacon-linux-amd64',
+  artifact_filename: 'xero-beacon-linux-amd64.bin',
   artifact_sha256: 'abc123',
   artifact_size: 2048,
   completed_at: '2026-06-12T12:00:00Z',
@@ -92,12 +92,18 @@ describe('BeaconsDeployPage', () => {
     });
     apiMocks.getBeaconBuildTargets.mockResolvedValue({
       items: [
-        { arch: 'amd64', extension: '', label: 'Linux amd64', os: 'linux' },
+        { arch: 'amd64', extension: '.bin', label: 'Linux amd64', os: 'linux' },
         { arch: 'amd64', extension: '.exe', label: 'Windows amd64', os: 'windows' },
       ],
     });
     apiMocks.getBeaconBuilds.mockResolvedValue({ items: [succeededBuild] });
-    apiMocks.createBeaconBuild.mockResolvedValue({ ...succeededBuild, id: 'build-two', profile_name: 'ops' });
+    apiMocks.createBeaconBuild.mockResolvedValue({
+      ...succeededBuild,
+      artifact_filename: 'ops-beacon.exe',
+      id: 'build-two',
+      profile_name: 'ops',
+      target_os: 'windows',
+    });
     apiMocks.downloadBeaconBuildArtifact.mockResolvedValue(new Blob(['artifact']));
     vi.stubGlobal('URL', {
       createObjectURL: vi.fn(() => 'blob:artifact'),
@@ -129,6 +135,7 @@ describe('BeaconsDeployPage', () => {
     expect(screen.getByRole('button', { name: /Linux amd64/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Windows amd64/ })).toBeTruthy();
     expect(within(screen.getByTestId('beacon-build-list')).getByText('xero-beacon-linux-amd64')).toBeTruthy();
+    expect(within(screen.getByTestId('beacon-build-list')).queryByText('xero-beacon-linux-amd64.bin')).toBeNull();
     expect(screen.getByText('Succeeded')).toBeTruthy();
   });
 
@@ -164,10 +171,12 @@ describe('BeaconsDeployPage', () => {
 
     await screen.findByText('xero-beacon-linux-amd64');
     const anchorClick = vi.fn();
-    vi.spyOn(document, 'createElement').mockReturnValue({ click: anchorClick } as unknown as HTMLAnchorElement);
-    fireEvent.click(screen.getByRole('button', { name: 'Download xero-beacon-linux-amd64' }));
+    const anchor = { click: anchorClick } as unknown as HTMLAnchorElement;
+    vi.spyOn(document, 'createElement').mockReturnValue(anchor);
+    fireEvent.click(screen.getByRole('button', { name: 'Download xero-beacon-linux-amd64.bin' }));
 
     await waitFor(() => expect(apiMocks.downloadBeaconBuildArtifact).toHaveBeenCalledWith('http://localhost:8001', 'c2-token', 'build-one'));
+    expect(anchor.download).toBe('xero-beacon-linux-amd64.bin');
     expect(anchorClick).toHaveBeenCalledTimes(1);
   });
 
@@ -179,7 +188,7 @@ describe('BeaconsDeployPage', () => {
 
     expect(await screen.findByText('Artifact missing')).toBeTruthy();
     expect(screen.getByText('Artifact is missing from local C2 storage. Rebuild to recreate it.')).toBeTruthy();
-    const downloadButton = screen.getByRole('button', { name: 'Download xero-beacon-linux-amd64' }) as HTMLButtonElement;
+    const downloadButton = screen.getByRole('button', { name: 'Download xero-beacon-linux-amd64.bin' }) as HTMLButtonElement;
     expect(downloadButton.disabled).toBe(true);
     fireEvent.click(downloadButton);
 

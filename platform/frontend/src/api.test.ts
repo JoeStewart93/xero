@@ -292,7 +292,7 @@ describe('api client', () => {
   it('calls C2 beacon build endpoints and downloads artifacts with bearer auth', async () => {
     const buildPayload = {
       artifact_available: true,
-      artifact_filename: 'xero-beacon-linux-amd64',
+      artifact_filename: 'xero-beacon-linux-amd64.bin',
       artifact_sha256: 'abc123',
       artifact_size: 42,
       completed_at: new Date().toISOString(),
@@ -311,7 +311,7 @@ describe('api client', () => {
     const artifact = new Blob(['artifact']);
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ arch: 'amd64', extension: '', label: 'Linux amd64', os: 'linux' }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ arch: 'amd64', extension: '.bin', label: 'Linux amd64', os: 'linux' }] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ items: [buildPayload] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(buildPayload), { status: 200 }))
       .mockResolvedValueOnce(new Response(artifact, { status: 200 }));

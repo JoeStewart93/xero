@@ -189,7 +189,7 @@ def test_beacon_build_targets_require_auth_and_list_supported_targets(c2_client)
     assert unauthenticated.status_code == 401
     assert response.status_code == 200
     assert response.json()["items"] == [
-        {"os": "linux", "arch": "amd64", "extension": "", "label": "Linux amd64"},
+        {"os": "linux", "arch": "amd64", "extension": ".bin", "label": "Linux amd64"},
         {"os": "windows", "arch": "amd64", "extension": ".exe", "label": "Windows amd64"},
     ]
 
@@ -250,6 +250,30 @@ def test_beacon_build_api_creates_fake_artifact_and_requires_auth_for_download(b
 
     assert build is not None
     assert build.status == "succeeded"
+
+
+def test_beacon_build_api_adds_linux_download_extension(beacon_build_c2_client):
+    token = connect_c2(beacon_build_c2_client)
+    created = beacon_build_c2_client.post(
+        "/api/v1/beacon-builds",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "target_os": "linux",
+            "target_arch": "amd64",
+            "c2_url": "http://c2.local:8001",
+            "output_name": "ops-beacon",
+        },
+    )
+    payload = created.json()
+    downloaded = beacon_build_c2_client.get(
+        f"/api/v1/beacon-builds/{payload['id']}/artifact",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert created.status_code == 200
+    assert payload["artifact_filename"] == "ops-beacon.bin"
+    assert downloaded.status_code == 200
+    assert 'filename="ops-beacon.bin"' in downloaded.headers["content-disposition"]
 
 
 def test_beacon_build_api_reports_missing_artifact(beacon_build_c2_client):

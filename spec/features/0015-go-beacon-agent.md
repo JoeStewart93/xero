@@ -26,6 +26,7 @@
 - Build APIs are disabled by default outside explicitly enabled development/test configurations.
 - Local Go is optional because CI commands fall back to Docker `golang:1.26`.
 - Build metadata is stored in C2 Postgres and local artifacts are stored in the `xero_c2_beacon_artifacts` Docker volume mounted at `/app/artifacts/beacons`.
+- Artifact downloads use OS-specific filenames (`.bin` for Linux, `.exe` for Windows), while the Deploy wizard displays artifact titles without those file extensions.
 - F0015 does not add local S3-compatible object storage. A shared MinIO/S3-compatible artifact store remains a future platform concern for beacon builds, reports, loot, and result blobs.
 
 ## Architecture

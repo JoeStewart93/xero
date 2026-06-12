@@ -26,7 +26,7 @@ BUILD_STATUS_SUCCEEDED = "succeeded"
 BUILD_STATUS_FAILED = "failed"
 
 SUPPORTED_TARGETS = (
-    {"os": "linux", "arch": "amd64", "extension": "", "label": "Linux amd64"},
+    {"os": "linux", "arch": "amd64", "extension": ".bin", "label": "Linux amd64"},
     {"os": "windows", "arch": "amd64", "extension": ".exe", "label": "Windows amd64"},
 )
 
@@ -46,7 +46,7 @@ def public_beacon_build(build: BeaconBuild) -> dict:
         "status": build.status,
         "profile_name": build.profile_name,
         "config": build.config or {},
-        "artifact_filename": build.artifact_filename,
+        "artifact_filename": artifact_download_filename(build),
         "artifact_sha256": build.artifact_sha256,
         "artifact_size": build.artifact_size,
         "artifact_available": artifact_available(build),
@@ -61,6 +61,24 @@ def public_beacon_build(build: BeaconBuild) -> dict:
 
 def artifact_available(build: BeaconBuild) -> bool:
     return bool(build.artifact_path and Path(build.artifact_path).is_file())
+
+
+def artifact_extension(target_os: str) -> str:
+    return ".exe" if target_os == "windows" else ".bin"
+
+
+def ensure_artifact_extension(filename: str, target_os: str) -> str:
+    extension = artifact_extension(target_os)
+    return filename if filename.lower().endswith(extension) else f"{filename}{extension}"
+
+
+def artifact_download_filename(build: BeaconBuild) -> str | None:
+    filename = build.artifact_filename
+    if not filename and build.artifact_path:
+        filename = Path(build.artifact_path).name
+    if not filename:
+        return None
+    return ensure_artifact_extension(filename, build.target_os)
 
 
 def build_config(payload: BeaconBuildCreateRequest, *, c2_public_key_b64: str) -> dict:
@@ -108,8 +126,7 @@ def artifact_root(settings) -> Path:
 def artifact_filename(build: BeaconBuild, output_name: str | None = None) -> str:
     base = output_name or f"xero-beacon-{build.target_os}-{build.target_arch}-{str(build.id)[:8]}"
     safe_base = re.sub(r"[^A-Za-z0-9_.-]+", "-", base).strip(".-") or "xero-beacon"
-    extension = ".exe" if build.target_os == "windows" else ""
-    return f"{safe_base}{extension}" if not safe_base.endswith(extension) else safe_base
+    return ensure_artifact_extension(safe_base, build.target_os)
 
 
 def fake_build_artifact(build: BeaconBuild, filename: str) -> BuildArtifact:

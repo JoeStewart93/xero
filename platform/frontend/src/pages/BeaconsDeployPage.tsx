@@ -39,6 +39,21 @@ function buildStatusClass(build: BeaconBuild): string {
   return build.status;
 }
 
+function artifactExtension(build: BeaconBuild): string {
+  return build.target_os === 'windows' ? '.exe' : '.bin';
+}
+
+function buildDownloadName(build: BeaconBuild): string {
+  const fallback = `xero-beacon-${build.target_os}-${build.target_arch}${artifactExtension(build)}`;
+  return build.artifact_filename ?? fallback;
+}
+
+function buildDisplayName(build: BeaconBuild): string {
+  const downloadName = buildDownloadName(build);
+  const extension = artifactExtension(build);
+  return downloadName.toLowerCase().endsWith(extension) ? downloadName.slice(0, -extension.length) : downloadName;
+}
+
 function formatBytes(value: number | null): string {
   if (value === null) {
     return '-';
@@ -171,7 +186,7 @@ export function BeaconsDeployPage() {
       const objectUrl = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = objectUrl;
-      anchor.download = build.artifact_filename ?? `xero-beacon-${build.target_os}-${build.target_arch}`;
+      anchor.download = buildDownloadName(build);
       anchor.click();
       URL.revokeObjectURL(objectUrl);
     } catch (caught) {
@@ -299,7 +314,7 @@ export function BeaconsDeployPage() {
                 builds.map((build) => (
                   <div className="deploy-build-row" key={build.id}>
                     <div>
-                      <strong>{build.artifact_filename ?? `${build.target_os}/${build.target_arch}`}</strong>
+                      <strong>{buildDisplayName(build)}</strong>
                       <span>{build.profile_name} / {formatBytes(build.artifact_size)}</span>
                       {build.status === 'succeeded' && !build.artifact_available ? (
                         <small>Artifact is missing from local C2 storage. Rebuild to recreate it.</small>
@@ -309,7 +324,7 @@ export function BeaconsDeployPage() {
                     <div>
                       <span className={`build-status build-status--${buildStatusClass(build)}`}>{buildStatusDisplay(build)}</span>
                       <button
-                        aria-label={`Download ${build.artifact_filename ?? build.id}`}
+                        aria-label={`Download ${buildDownloadName(build)}`}
                         className="icon-button"
                         disabled={!buildCanDownload(build) || downloadingBuildId === build.id}
                         onClick={() => void handleDownload(build)}

@@ -35,9 +35,9 @@
         | worker inventory / pairing / provisioning
         v
 [ C2 API container :8000 ]
-        |                  |
-        v                  v
-[ C2 PostgreSQL ]     [ C2 Redis ]
+        |                  |                  |
+        v                  v                  v
+[ C2 PostgreSQL ]     [ C2 Redis ]      [ MinIO artifacts ]
         ^
         |
    Docker socket/workspace mount for optional local worker launch
@@ -49,7 +49,10 @@ The C2 backend is the default embedded beacon handler and embedded scanner. It c
 | :--- | :--- | :--- |
 | c2-postgres | `postgres:16` | internal only |
 | c2-redis | `redis:7` | internal only |
+| c2-minio | `minio/minio` | `${C2_MINIO_API_PORT:-9000}`, `${C2_MINIO_CONSOLE_PORT:-9001}` |
 | c2-api | `platform/services/c2-api` | `${C2_BACKEND_PORT:-8001}` |
+
+Local C2 stores managed artifacts in MinIO by default. The C2 API owns artifact metadata in Postgres and proxies authenticated downloads; operators do not receive direct MinIO credentials or presigned URLs in the F0015.01 amendment.
 
 ## Optional External Infrastructure
 
@@ -95,7 +98,7 @@ External service scaffolds can be started independently:
 | Endpoint | Auth | Purpose |
 | :--- | :--- | :--- |
 | `GET /health` | public | Container liveness |
-| `GET /ready` | public | Container readiness, Postgres, Redis |
+| `GET /ready` | public | Container readiness, Postgres, Redis, and C2 artifact storage |
 | `GET /api/v1/health` | bootstrap JWT | UI/API liveness display |
 | `GET /api/v1/ready` | bootstrap JWT | UI/API readiness display |
 
@@ -115,6 +118,11 @@ Key service variables:
 - `C2_LOCAL_PROVISIONING_ENABLED`
 - `C2_WORKER_CONNECT_URL`
 - `WORKER_PAIRING_TOKEN`
+- `C2_ARTIFACT_STORAGE_BACKEND`
+- `C2_ARTIFACT_S3_ENDPOINT_URL`
+- `C2_ARTIFACT_S3_BUCKET`
+- `C2_MINIO_API_PORT`
+- `C2_MINIO_CONSOLE_PORT`
 
 ## CI/CD
 

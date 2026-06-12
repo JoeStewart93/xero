@@ -7,7 +7,7 @@
 | Priority | P1 |
 | Status | Planned |
 | MVP Phase | 5 |
-| Depends on | F0071 |
+| Depends on | F0071, F0015.01-AMD |
 
 ## Summary
 Integrate reconnaissance data into campaign reports. Includes scan summaries, vulnerability findings, asset discovery timeline, and export functionality (PDF, HTML, JSON, CSV).
@@ -18,6 +18,7 @@ Integrate reconnaissance data into campaign reports. Includes scan summaries, vu
 - Asset discovery timeline
 - Export formats: PDF, HTML, JSON, CSV
 - Charts/graphs for vulnerability distribution
+- Generated PDF, HTML, JSON, and CSV exports are stored as managed artifacts through F0015.01-AMD.
 
 ## Report Sections
 

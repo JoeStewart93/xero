@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import os
@@ -8,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tarfile
+import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from xero_common.database import session_factory_for_settings
 from xero_common.models import utc_now
 
+from xero_c2.artifacts import ArtifactStorageError, artifact_is_available, put_artifact
 from xero_c2.models import BeaconBuild
 from xero_c2.schemas import BeaconBuildCreateRequest
 
@@ -38,7 +39,7 @@ class BuildArtifact:
     logs_tail: str
 
 
-def public_beacon_build(build: BeaconBuild) -> dict:
+def public_beacon_build(build: BeaconBuild, settings) -> dict:
     return {
         "id": str(build.id),
         "target_os": build.target_os,
@@ -49,7 +50,7 @@ def public_beacon_build(build: BeaconBuild) -> dict:
         "artifact_filename": artifact_download_filename(build),
         "artifact_sha256": build.artifact_sha256,
         "artifact_size": build.artifact_size,
-        "artifact_available": artifact_available(build),
+        "artifact_available": artifact_available(build, settings),
         "logs_tail": build.logs_tail,
         "error_message": build.error_message,
         "created_at": build.created_at.isoformat(),
@@ -59,8 +60,11 @@ def public_beacon_build(build: BeaconBuild) -> dict:
     }
 
 
-def artifact_available(build: BeaconBuild) -> bool:
-    return bool(build.artifact_path and Path(build.artifact_path).is_file())
+def artifact_available(build: BeaconBuild, settings) -> bool:
+    try:
+        return artifact_is_available(settings, build.artifact)
+    except ArtifactStorageError:
+        return False
 
 
 def artifact_extension(target_os: str) -> str:
@@ -74,8 +78,6 @@ def ensure_artifact_extension(filename: str, target_os: str) -> str:
 
 def artifact_download_filename(build: BeaconBuild) -> str | None:
     filename = build.artifact_filename
-    if not filename and build.artifact_path:
-        filename = Path(build.artifact_path).name
     if not filename:
         return None
     return ensure_artifact_extension(filename, build.target_os)
@@ -115,14 +117,6 @@ def create_beacon_build(
     return build
 
 
-def artifact_root(settings) -> Path:
-    root = Path(settings.beacon_build_artifact_dir)
-    if not root.is_absolute():
-        root = Path.cwd() / root
-    root.mkdir(parents=True, exist_ok=True)
-    return root
-
-
 def artifact_filename(build: BeaconBuild, output_name: str | None = None) -> str:
     base = output_name or f"xero-beacon-{build.target_os}-{build.target_arch}-{str(build.id)[:8]}"
     safe_base = re.sub(r"[^A-Za-z0-9_.-]+", "-", base).strip(".-") or "xero-beacon"
@@ -143,14 +137,21 @@ def fake_build_artifact(build: BeaconBuild, filename: str) -> BuildArtifact:
 
 
 def complete_build(session: Session, settings, build: BeaconBuild, artifact: BuildArtifact) -> BeaconBuild:
-    destination = artifact_root(settings) / artifact.filename
-    destination.write_bytes(artifact.content)
-    digest = hashlib.sha256(artifact.content).hexdigest()
+    stored_artifact = put_artifact(
+        session,
+        settings,
+        namespace="beacon-builds",
+        owner_type="beacon_build",
+        owner_id=build.id,
+        filename=artifact.filename,
+        content=artifact.content,
+    )
     build.status = BUILD_STATUS_SUCCEEDED
-    build.artifact_path = str(destination)
+    build.artifact_id = stored_artifact.id
+    build.artifact_path = None
     build.artifact_filename = artifact.filename
-    build.artifact_sha256 = digest
-    build.artifact_size = len(artifact.content)
+    build.artifact_sha256 = stored_artifact.sha256
+    build.artifact_size = stored_artifact.size_bytes
     build.logs_tail = artifact.logs_tail[-4096:]
     build.error_message = None
     build.completed_at = utc_now()
@@ -229,26 +230,29 @@ def local_go_artifact(settings, build: BeaconBuild, filename: str) -> BuildArtif
         return None
     platform_root = platform_root_from_settings(settings)
     beacon_root = platform_root / "beacons" / "go"
-    output_path = artifact_root(settings) / f".tmp-{uuid.uuid4()}-{filename}"
-    env = os.environ.copy()
-    env.update({"GOOS": build.target_os, "GOARCH": build.target_arch, "CGO_ENABLED": "0"})
-    command = [
-        go_bin,
-        "build",
-        "-trimpath",
-        "-ldflags",
-        ldflags_for_config(build.config or {}),
-        "-o",
-        str(output_path),
-        ".",
-    ]
-    completed = run_command(command, cwd=beacon_root, env=env, timeout=settings.beacon_build_timeout_seconds)
-    logs = (completed.stdout + completed.stderr).decode("utf-8", errors="replace")
-    if completed.returncode != 0:
-        raise RuntimeError(logs or "Go build failed")
-    content = output_path.read_bytes()
-    output_path.unlink(missing_ok=True)
-    return BuildArtifact(filename=filename, content=content, logs_tail=logs or "local go build completed")
+    with tempfile.TemporaryDirectory(prefix="xero-beacon-build-") as temp_dir:
+        output_path = Path(temp_dir) / filename
+        env = os.environ.copy()
+        env.update({"GOOS": build.target_os, "GOARCH": build.target_arch, "CGO_ENABLED": "0"})
+        command = [
+            go_bin,
+            "build",
+            "-trimpath",
+            "-ldflags",
+            ldflags_for_config(build.config or {}),
+            "-o",
+            str(output_path),
+            ".",
+        ]
+        completed = run_command(command, cwd=beacon_root, env=env, timeout=settings.beacon_build_timeout_seconds)
+        logs = (completed.stdout + completed.stderr).decode("utf-8", errors="replace")
+        if completed.returncode != 0:
+            raise RuntimeError(logs or "Go build failed")
+        return BuildArtifact(
+            filename=filename,
+            content=output_path.read_bytes(),
+            logs_tail=logs or "local go build completed",
+        )
 
 
 def add_tree_to_tar(tar: tarfile.TarFile, source: Path, arc_prefix: str) -> None:

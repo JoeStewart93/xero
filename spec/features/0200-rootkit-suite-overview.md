@@ -168,7 +168,7 @@ The dynamic build server compiles rootkit payloads on-demand based on target spe
                                            +---------------+
                                            | Artifact      |
                                            | Storage       |
-                                           | (S3/Local)    |
+                                           | (F0015.01 S3) |
                                            +-------+-------+
                                                    |
                                                    v

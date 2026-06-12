@@ -7,7 +7,7 @@
 | Priority | v2 |
 | Status | Planned |
 | MVP Phase | v2 |
-| Depends on | F0011, F0015 |
+| Depends on | F0011, F0015, F0015.01-AMD |
 
 ## Summary
 Beacon implementations in Rust, C#, and C++ sharing the same binary protocol contract as the Go MVP beacon, with cross-language test vector compatibility.
@@ -18,6 +18,7 @@ Beacon implementations in Rust, C#, and C++ sharing the same binary protocol con
 - C++ beacon: maximum control, CMake cross-compile
 - All languages pass shared protocol test vector suite
 - Language selectable in beacon generation UI
+- Rust, C#, and C++ build outputs are stored and downloaded through F0015.01-AMD artifact storage.
 
 ## Stages
 

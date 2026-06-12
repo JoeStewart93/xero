@@ -7,7 +7,7 @@
 | Priority | P0 |
 | Status | Planned |
 | MVP Phase | 4 |
-| Depends on | F0016, F0015 |
+| Depends on | F0016, F0015, F0015.01-AMD |
 
 ## Summary
 Upload and download files between operator workstation and beacon filesystem via chunked transfer protocol with integrity verification and progress tracking.
@@ -18,6 +18,7 @@ Upload and download files between operator workstation and beacon filesystem via
 - Chunked transfer with SHA-256 per-chunk and whole-file hash
 - Resume interrupted upload from last acknowledged chunk
 - Max file size configurable; default 100MB for MVP
+- Operator uploads and beacon downloads use the F0015.01-AMD artifact store for durable transfer staging and retrieval.
 
 ## Stages
 

@@ -46,5 +46,5 @@ test('F0015 deploy wizard builds and downloads a Go beacon artifact', async ({ p
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: `Download ${outputName}` }).click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toBe(outputName);
+  expect(download.suggestedFilename()).toBe(`${outputName}.bin`);
 });

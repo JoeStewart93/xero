@@ -7,7 +7,7 @@
 | Priority | P0 |
 | Status | Planned |
 | MVP Phase | 3 |
-| Depends on | F0016, F0005 |
+| Depends on | F0016, F0005, F0015.01-AMD |
 
 ## Summary
 Persistent storage and retrieval of task results including structured output, errors, artifacts metadata, and streaming chunks for long-running module output.
@@ -18,6 +18,7 @@ Persistent storage and retrieval of task results including structured output, er
 - GET /api/v1/tasks/{id}/result returns full assembled output
 - Result retention policy with configurable TTL
 - WebSocket event emitted on result completion
+- Large result bodies, downloadable text exports, and binary result artifacts are stored through the F0015.01-AMD artifact store rather than ad hoc local paths.
 
 ## Stages
 

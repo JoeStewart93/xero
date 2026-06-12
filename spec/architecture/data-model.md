@@ -9,6 +9,8 @@
 | beacons | Registration metadata, last seen, status, opaque token hash, heartbeat sleep/jitter profile defaults, stale/offline state, protocol metadata, and transport mode/connection timestamps | [F0009](../features/0009-beacon-registration.md), [F0010](../features/0010-beacon-heartbeat-keepalive.md), [F0011](../features/0011-beacon-binary-protocol.md), [F0012](../features/0012-beacon-websocket-transport.md) |
 | beacon_events | Beacon status transition audit log for stale offline and heartbeat recovery events | [F0010](../features/0010-beacon-heartbeat-keepalive.md) |
 | tasks | Command/module jobs dispatched to beacons | [F0014](../features/0014-task-queue.md) |
+| artifacts | Managed object metadata for build outputs, result bodies, file transfers, reports, payload outputs, and other durable artifacts | [F0015.01-AMD](../features/0015.01-amd-minio-artifact-storage.md) |
+| beacon_builds | Go beacon build requests, status, configuration, denormalized artifact metadata, and artifact linkage | [F0015](../features/0015-go-beacon-agent.md), [F0015.01-AMD](../features/0015.01-amd-minio-artifact-storage.md) |
 | task_results | Output and status from completed tasks | [F0017](../features/0017-result-collection.md) |
 | sessions | Interactive shell/file/registry sessions | [F0018](../features/0018-interactive-shell-session.md) |
 | assets | Inventory records linked to beacons and discovered hosts | [F0030](../features/0030-asset-inventory.md) |
@@ -37,7 +39,7 @@
 | rootkit_build_jobs | Build server job tracking with target specs, status, progress, logs, and artifact URL | [F0207](../features/0207-rootkit-build-server.md) |
 | rootkit_events | Rootkit activity audit log including activation, deactivation, heartbeat, stealth mode changes | [F0200](../features/0200-rootkit-suite-overview.md) |
 
-Current implementation includes the BFF-owned `users` table (bootstrap accounts), the planned C2-owned `operators` table ([F0074](../features/0074-c2-operator-authentication.md)), the C2-owned F0009/F0010 beacons table with SHA-256 opaque token hash storage, heartbeat profile fields, stale/offline status, protocol version/session/public-key metadata, transport mode/connected/last-seen metadata, the C2-owned beacon_events audit table, F0011 protocol_security_events and protocol_frame_receipts, F0014 tasks, F0049 infrastructure_workers, worker_pairing_tokens, and worker_events, and the F0005/F0048 persistence foundation: SQLAlchemy session management, service-specific Alembic migrations, pool configuration, reusable UUID/timestamp model primitives, and generic CRUD helpers.
+Current implementation includes the BFF-owned `users` table (bootstrap accounts), the planned C2-owned `operators` table ([F0074](../features/0074-c2-operator-authentication.md)), the C2-owned F0009/F0010 beacons table with SHA-256 opaque token hash storage, heartbeat profile fields, stale/offline status, protocol version/session/public-key metadata, transport mode/connected/last-seen metadata, the C2-owned beacon_events audit table, F0011 protocol_security_events and protocol_frame_receipts, F0014 tasks, F0015 beacon_builds, F0015.01 artifacts, F0049 infrastructure_workers, worker_pairing_tokens, and worker_events, and the F0005/F0048 persistence foundation: SQLAlchemy session management, service-specific Alembic migrations, pool configuration, reusable UUID/timestamp model primitives, and generic CRUD helpers.
 
 All entities use UUID primary keys, created_at, and updated_at timestamps unless noted in feature specs.
 
@@ -67,9 +69,13 @@ Schema changes are managed by service-specific Alembic roots:
 | Service | Alembic root | Version table | Current ownership |
 | :--- | :--- | :--- | :--- |
 | BFF API | platform/services/bff-api/alembic/ | bff_alembic_version | users (bootstrap) |
-| C2 API | platform/services/c2-api/alembic/ | c2_alembic_version | operators ([F0074](../features/0074-c2-operator-authentication.md)), beacons, beacon_events, infrastructure_workers, worker_pairing_tokens, worker_events, protocol_security_events, protocol_frame_receipts, exploits, exploit_sources, payloads, encoder_configs, post_exploit_modules, exploit_executions, rootkit_configs, rootkit_payloads, rootkit_instances, rootkit_build_jobs, rootkit_events |
+| C2 API | platform/services/c2-api/alembic/ | c2_alembic_version | operators ([F0074](../features/0074-c2-operator-authentication.md)), beacons, beacon_events, tasks, beacon_builds, artifacts, infrastructure_workers, worker_pairing_tokens, worker_events, protocol_security_events, protocol_frame_receipts, exploits, exploit_sources, payloads, encoder_configs, post_exploit_modules, exploit_executions, rootkit_configs, rootkit_payloads, rootkit_instances, rootkit_build_jobs, rootkit_events |
 
 Common SQLAlchemy helpers live under platform/common/python/xero_common/. See [F0005](../features/0005-postgresql-persistence.md) and [F0048](../features/0048-service-boundary-refactor.md).
+
+## Object Storage
+
+Local Docker C2 uses MinIO as an S3-compatible artifact backend. C2 stores object metadata in `artifacts` and object bytes in the configured bucket/prefix, defaulting to `xero-artifacts` and `c2`. Operators download artifacts through authenticated C2 endpoints; direct object-store credentials and presigned URLs are not exposed by the F0015.01 amendment.
 
 ## v2 Extensions
 

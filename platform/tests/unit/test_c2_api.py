@@ -5,16 +5,17 @@ import threading
 import time
 import uuid
 from datetime import timedelta
-from pathlib import Path
 
 import pytest
 from sqlalchemy import select
 from starlette.websockets import WebSocketDisconnect, WebSocketState
+from xero_c2.artifacts import ArtifactNotFound, artifact_store_for_settings
 from xero_c2.beacon_liveness import BEACON_STATUS_OFFLINE, mark_stale_beacons_offline
 from xero_c2.beacon_transport import WS_CLOSE_DUPLICATE, WS_CLOSE_OVERLOADED, BeaconTransportManager
-from xero_c2.config import get_settings
+from xero_c2.config import Settings, get_settings
 from xero_c2.infrastructure_workers import mark_stale_workers
 from xero_c2.models import (
+    Artifact,
     Base,
     Beacon,
     BeaconBuild,
@@ -88,14 +89,16 @@ def beacon_build_c2_client(monkeypatch, tmp_path, make_c2_client):
     monkeypatch.setenv("C2_CONNECT_PASSWORD", "connect-me")
     monkeypatch.setenv("C2_JWT_SECRET_KEY", "test-c2-jwt-secret-with-enough-length")
     monkeypatch.setenv("C2_BEACON_BUILDS_ENABLED", "true")
-    monkeypatch.setenv("C2_BEACON_BUILD_ARTIFACT_DIR", str(artifact_dir))
+    monkeypatch.setenv("C2_ARTIFACT_STORAGE_BACKEND", "filesystem")
+    monkeypatch.setenv("C2_ARTIFACT_FILESYSTEM_DIR", str(artifact_dir))
     get_settings.cache_clear()
     clear_database_caches()
     Base.metadata.create_all(bind=get_engine(database_url))
     return make_c2_client(
         C2_DATABASE_URL=database_url,
         C2_BEACON_BUILDS_ENABLED="true",
-        C2_BEACON_BUILD_ARTIFACT_DIR=str(artifact_dir),
+        C2_ARTIFACT_STORAGE_BACKEND="filesystem",
+        C2_ARTIFACT_FILESYSTEM_DIR=str(artifact_dir),
     )
 
 
@@ -206,6 +209,27 @@ def test_beacon_build_creation_is_disabled_by_default(c2_client):
     assert response.json()["detail"] == "Beacon builds are disabled"
 
 
+def test_filesystem_artifact_store_put_head_get_delete(tmp_path):
+    settings = Settings(
+        app_env="test",
+        database_url=f"sqlite+pysqlite:///{tmp_path / 'artifacts.db'}",
+        artifact_storage_backend="filesystem",
+        artifact_filesystem_dir=str(tmp_path / "artifacts"),
+    )
+    store = artifact_store_for_settings(settings)
+
+    store.put("beacon-builds/build-one/xero-beacon.bin", b"payload", content_type="application/octet-stream")
+
+    assert store.head("beacon-builds/build-one/xero-beacon.bin") is True
+    assert store.get("beacon-builds/build-one/xero-beacon.bin") == b"payload"
+
+    store.delete("beacon-builds/build-one/xero-beacon.bin")
+
+    assert store.head("beacon-builds/build-one/xero-beacon.bin") is False
+    with pytest.raises(ArtifactNotFound):
+        store.get("beacon-builds/build-one/xero-beacon.bin")
+
+
 def test_beacon_build_api_creates_fake_artifact_and_requires_auth_for_download(beacon_build_c2_client):
     token = connect_c2(beacon_build_c2_client)
     created = beacon_build_c2_client.post(
@@ -247,9 +271,17 @@ def test_beacon_build_api_creates_fake_artifact_and_requires_auth_for_download(b
     SessionFactory = get_session_factory(settings.database_url)
     with SessionFactory() as session:
         build = session.get(BeaconBuild, uuid.UUID(payload["id"]))
+        artifact = session.get(Artifact, build.artifact_id) if build is not None else None
 
     assert build is not None
     assert build.status == "succeeded"
+    assert build.artifact_path is None
+    assert artifact is not None
+    assert artifact.namespace == "beacon-builds"
+    assert artifact.owner_type == "beacon_build"
+    assert artifact.object_key.endswith(f"/beacon-builds/{build.id}/ops-beacon.exe")
+    assert artifact.sha256 == payload["artifact_sha256"]
+    assert artifact.size_bytes == payload["artifact_size"]
 
 
 def test_beacon_build_api_adds_linux_download_extension(beacon_build_c2_client):
@@ -290,9 +322,11 @@ def test_beacon_build_api_reports_missing_artifact(beacon_build_c2_client):
     with SessionFactory() as session:
         build = session.get(BeaconBuild, uuid.UUID(payload["id"]))
         assert build is not None
-        assert build.artifact_path is not None
-        artifact_path = Path(build.artifact_path)
-    artifact_path.unlink()
+        assert build.artifact_id is not None
+        artifact = session.get(Artifact, build.artifact_id)
+        assert artifact is not None
+        object_key = artifact.object_key
+    artifact_store_for_settings(settings).delete(object_key)
 
     detail = beacon_build_c2_client.get(
         f"/api/v1/beacon-builds/{payload['id']}",
@@ -309,6 +343,18 @@ def test_beacon_build_api_reports_missing_artifact(beacon_build_c2_client):
     assert listed.json()["items"][0]["artifact_available"] is False
     assert downloaded.status_code == 404
     assert downloaded.json()["detail"] == "Beacon build artifact not found"
+
+
+def test_artifact_storage_rejects_default_minio_credentials_outside_local_modes():
+    with pytest.raises(ValueError, match="C2_ARTIFACT_S3 credentials"):
+        Settings(
+            app_env="production",
+            database_url="postgresql://user:pass@postgres:5432/db",
+            redis_url="redis://redis:6379/0",
+            jwt_secret_key="production-c2-jwt-secret-with-enough-length",
+            c2_connect_password="production-c2-password",
+            protocol_private_key_b64="production-protocol-private-key",
+        )
 
 
 def test_protocol_register_frame_updates_beacon_metadata_and_returns_ack(protocol_c2_client):

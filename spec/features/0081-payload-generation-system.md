@@ -7,7 +7,7 @@
 | Priority | P0 |
 | Status | Planned |
 | MVP Phase | 5 |
-| Depends on | F0015, F0021 |
+| Depends on | F0015, F0021, F0015.01-AMD |
 
 ## Summary
 Multi-language payload generation system supporting Go, Python, PowerShell, Bash, Rust, and C#. Provides template-based payload configuration, encoder/obfuscator pipeline, traffic shaping profile integration, and unified beacon deployment workflow.
@@ -19,6 +19,7 @@ Multi-language payload generation system supporting Go, Python, PowerShell, Bash
 - Traffic shaping profile integration from F0021
 - Unified beacon deployment integration
 - Payload caching for performance
+- Generated binary, script, shellcode, and packaged payload outputs are stored through F0015.01-AMD artifact storage.
 
 ## Stages
 

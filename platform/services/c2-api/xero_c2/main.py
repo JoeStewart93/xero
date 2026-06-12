@@ -3,13 +3,12 @@ from __future__ import annotations
 import asyncio
 import uuid
 from contextlib import asynccontextmanager, suppress
-from pathlib import Path
 from secrets import compare_digest
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from xero_common.database import session_factory_for_settings
@@ -27,6 +26,7 @@ from xero_common.security import (
     verify_beacon_token,
 )
 
+from xero_c2.artifacts import ArtifactNotFound, ArtifactStorageError, artifact_store_for_settings, read_artifact
 from xero_c2.beacon_auth import beacon_auth_exception, bearer_token
 from xero_c2.beacon_builds import (
     SUPPORTED_TARGETS,
@@ -69,7 +69,7 @@ from xero_c2.infrastructure_workers import (
     record_worker_event,
     run_worker_stale_monitor,
 )
-from xero_c2.models import Beacon, BeaconBuild, InfrastructureWorker, ProtocolSecurityEvent, Task
+from xero_c2.models import Artifact, Beacon, BeaconBuild, InfrastructureWorker, ProtocolSecurityEvent, Task
 from xero_c2.protocol import (
     ACK,
     CURRENT_PROTOCOL_VERSION,
@@ -231,11 +231,20 @@ def public_protocol_security_event(event: ProtocolSecurityEvent) -> dict:
     }
 
 
-def beacon_build_artifact_path(build: BeaconBuild) -> Path | None:
-    if not build.artifact_path:
-        return None
-    path = Path(build.artifact_path)
-    return path if path.exists() and path.is_file() else None
+def check_artifact_store(settings) -> dict[str, str]:
+    try:
+        artifact_store_for_settings(settings).ensure_ready()
+        return {"status": "healthy"}
+    except Exception as exc:
+        return {"status": "unhealthy", "error": str(exc)}
+
+
+def c2_readiness_report(settings) -> dict:
+    report = check_readiness(settings)
+    report["checks"]["artifact_store"] = check_artifact_store(settings)
+    ready = all(check["status"] == "healthy" for check in report["checks"].values())
+    report["status"] = "ready" if ready else "degraded"
+    return report
 
 
 async def publish_task_event(app: FastAPI, settings, event_type: str, task_payload: dict) -> None:
@@ -457,7 +466,7 @@ def create_app() -> FastAPI:
 
     @app.get("/ready", tags=["health"])
     def ready() -> JSONResponse:
-        report = check_readiness(settings)
+        report = c2_readiness_report(settings)
         status_code = 200 if report["status"] == "ready" else 503
         return JSONResponse(status_code=status_code, content=report)
 
@@ -583,7 +592,10 @@ def create_app() -> FastAPI:
     ) -> BeaconBuildListResponse:
         authorize_c2_token(settings, authorization)
         return BeaconBuildListResponse(
-            items=[BeaconBuildResponse(**public_beacon_build(build)) for build in recent_builds(session, limit)]
+            items=[
+                BeaconBuildResponse(**public_beacon_build(build, settings))
+                for build in recent_builds(session, limit)
+            ]
         )
 
     @api_router.post("/beacon-builds", response_model=BeaconBuildResponse, tags=["beacon-builds"])
@@ -614,7 +626,7 @@ def create_app() -> FastAPI:
             output_name = payload.output_name
             asyncio.create_task(asyncio.to_thread(run_build_job, settings, build_id, output_name=output_name))
 
-        return BeaconBuildResponse(**public_beacon_build(build))
+        return BeaconBuildResponse(**public_beacon_build(build, settings))
 
     @api_router.get("/beacon-builds/{build_id}", response_model=BeaconBuildResponse, tags=["beacon-builds"])
     def get_beacon_build(
@@ -626,27 +638,46 @@ def create_app() -> FastAPI:
         build = session.get(BeaconBuild, build_id)
         if build is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon build not found")
-        return BeaconBuildResponse(**public_beacon_build(build))
+        return BeaconBuildResponse(**public_beacon_build(build, settings))
 
     @api_router.get("/beacon-builds/{build_id}/artifact", response_model=None, tags=["beacon-builds"])
     def download_beacon_build_artifact(
         build_id: uuid.UUID,
         session: DbSession,
         authorization: Annotated[str | None, Header()] = None,
-    ) -> FileResponse:
+    ) -> Response:
         authorize_c2_token(settings, authorization)
         build = session.get(BeaconBuild, build_id)
         if build is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon build not found")
         if build.status != "succeeded":
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Beacon build artifact is not ready")
-        artifact_path = beacon_build_artifact_path(build)
-        if artifact_path is None:
+        if build.artifact_id is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon build artifact not found")
-        return FileResponse(
-            artifact_path,
-            media_type="application/octet-stream",
-            filename=artifact_download_filename(build) or artifact_path.name,
+        artifact = session.get(Artifact, build.artifact_id)
+        if artifact is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon build artifact not found")
+        try:
+            content = read_artifact(settings, artifact)
+        except ArtifactNotFound as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Beacon build artifact not found",
+            ) from exc
+        except ArtifactStorageError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Artifact storage is unavailable",
+            ) from exc
+        filename = artifact_download_filename(build) or artifact.filename
+        return Response(
+            content=content,
+            media_type=artifact.content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(content)),
+                "X-Content-Type-Options": "nosniff",
+            },
         )
 
     @api_router.post("/protocol/frames", response_model=None, tags=["protocol"])

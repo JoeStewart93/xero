@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, Uuid
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from xero_common.models import IdMixin, TimestampMixin, utc_now
 
 
@@ -166,6 +166,21 @@ class Task(BaseModel):
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class Artifact(BaseModel):
+    __tablename__ = "artifacts"
+
+    namespace: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    owner_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), default="application/octet-stream", nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    storage_backend: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    bucket: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    object_key: Mapped[str] = mapped_column(String(1024), nullable=False, index=True)
+
+
 class BeaconBuild(BaseModel):
     __tablename__ = "beacon_builds"
 
@@ -174,6 +189,13 @@ class BeaconBuild(BaseModel):
     status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False, index=True)
     profile_name: Mapped[str] = mapped_column(String(128), nullable=False)
     config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("artifacts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    artifact: Mapped[Artifact | None] = relationship(foreign_keys=[artifact_id])
     artifact_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     artifact_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     artifact_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)

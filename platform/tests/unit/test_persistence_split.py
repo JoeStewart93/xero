@@ -11,8 +11,8 @@ from xero_bff.models import User
 from xero_c2.config import Settings as C2Settings
 from xero_c2.config import get_settings as get_c2_settings
 from xero_c2.manage import alembic_config as c2_alembic_config
+from xero_c2.models import Artifact, Beacon, BeaconBuild
 from xero_c2.models import Base as C2Base
-from xero_c2.models import Beacon, BeaconBuild
 from xero_common import crud
 from xero_common.database import (
     clear_database_caches,
@@ -106,6 +106,7 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert "protocol_security_events" in inspector.get_table_names()
     assert "protocol_frame_receipts" in inspector.get_table_names()
     assert "tasks" in inspector.get_table_names()
+    assert "artifacts" in inspector.get_table_names()
     assert "beacon_builds" in inspector.get_table_names()
     assert "protocol_version" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "protocol_peer_public_key_b64" in {column["name"] for column in inspector.get_columns("beacons")}
@@ -115,13 +116,25 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert {"beacon_id", "module", "args", "status", "priority", "dispatched_at", "cancelled_at"}.issubset(
         task_columns
     )
+    artifact_columns = {column["name"] for column in inspector.get_columns("artifacts")}
+    assert {
+        "namespace",
+        "owner_type",
+        "owner_id",
+        "filename",
+        "size_bytes",
+        "sha256",
+        "storage_backend",
+        "bucket",
+        "object_key",
+    }.issubset(artifact_columns)
     build_columns = {column["name"] for column in inspector.get_columns("beacon_builds")}
-    assert {"target_os", "target_arch", "status", "config", "artifact_path", "artifact_sha256"}.issubset(
+    assert {"target_os", "target_arch", "status", "config", "artifact_id", "artifact_sha256"}.issubset(
         build_columns
     )
     with engine.connect() as connection:
         context = MigrationContext.configure(connection, opts={"version_table": "c2_alembic_version"})
-        assert context.get_current_heads() == ("c2_0008_beacon_builds",)
+        assert context.get_current_heads() == ("c2_0009_artifact_storage",)
 
 
 def test_generic_crud_helpers_work_with_service_models(tmp_path):
@@ -154,10 +167,26 @@ def test_generic_crud_helpers_work_with_service_models(tmp_path):
                 config={"c2_url": "http://c2.local:8001"},
             ),
         )
+        artifact = crud.create(
+            session,
+            Artifact(
+                namespace="beacon-builds",
+                owner_type="beacon_build",
+                owner_id=build.id,
+                filename="xero-beacon.bin",
+                content_type="application/octet-stream",
+                size_bytes=7,
+                sha256="a" * 64,
+                storage_backend="filesystem",
+                object_key="beacon-builds/build/xero-beacon.bin",
+            ),
+        )
+        build.artifact_id = artifact.id
         beacon_id = beacon.id
         build_id = build.id
         assert crud.read(session, Beacon, beacon_id) is not None
         assert crud.read(session, BeaconBuild, build_id) is not None
+        assert crud.read(session, Artifact, artifact.id) is not None
         assert crud.update(session, beacon, hostname="crud-renamed").hostname == "crud-renamed"
         crud.delete(session, beacon)
 

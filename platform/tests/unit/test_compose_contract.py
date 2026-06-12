@@ -48,12 +48,20 @@ def test_bff_compose_defines_ui_bff_stack_and_default_alias_matches():
 def test_c2_compose_defines_c2_api_stack_without_bff_seed_env():
     compose = load_yaml(C2_COMPOSE)
 
-    assert set(compose["services"]) == {"c2-postgres", "c2-redis", "c2-api"}
+    assert set(compose["services"]) == {"c2-postgres", "c2-redis", "c2-minio", "c2-api"}
     assert compose["services"]["c2-api"]["build"] == {
         "context": ".",
         "dockerfile": "services/c2-api/Dockerfile",
     }
     assert compose["services"]["c2-api"]["ports"] == ["${C2_BACKEND_PORT:-8001}:8000"]
+    assert compose["services"]["c2-minio"]["ports"] == [
+        "${C2_MINIO_API_PORT:-9000}:9000",
+        "${C2_MINIO_CONSOLE_PORT:-9001}:9001",
+    ]
+    assert compose["services"]["c2-minio"]["environment"]["MINIO_ROOT_USER"] == (
+        "${C2_ARTIFACT_S3_ACCESS_KEY:-xero_minio}"
+    )
+    assert compose["services"]["c2-api"]["depends_on"]["c2-minio"]["condition"] == "service_started"
     env = compose["services"]["c2-api"]["environment"]
     assert "XERO_SERVICE_ROLE" not in env
     assert "OPERATOR_USERNAME" not in env
@@ -66,9 +74,13 @@ def test_c2_compose_defines_c2_api_stack_without_bff_seed_env():
     assert env["C2_BEACON_WS_PING_INTERVAL_SECONDS"] == "${C2_BEACON_WS_PING_INTERVAL_SECONDS:-30}"
     assert env["C2_BEACON_WS_MAX_MESSAGE_BYTES"] == "${C2_BEACON_WS_MAX_MESSAGE_BYTES:-1048576}"
     assert env["C2_WORKER_CONNECT_URL"] == "${C2_WORKER_CONNECT_URL:-http://host.docker.internal:8001}"
+    assert env["C2_ARTIFACT_STORAGE_BACKEND"] == "${C2_ARTIFACT_STORAGE_BACKEND:-s3}"
+    assert env["C2_ARTIFACT_S3_ENDPOINT_URL"] == "${C2_ARTIFACT_S3_ENDPOINT_URL:-http://c2-minio:9000}"
+    assert env["C2_ARTIFACT_S3_BUCKET"] == "${C2_ARTIFACT_S3_BUCKET:-xero-artifacts}"
+    assert env["C2_ARTIFACT_S3_ACCESS_KEY"] == "${C2_ARTIFACT_S3_ACCESS_KEY:-xero_minio}"
     assert "/var/run/docker.sock:/var/run/docker.sock" in compose["services"]["c2-api"]["volumes"]
-    assert "xero_c2_beacon_artifacts:/app/artifacts/beacons" in compose["services"]["c2-api"]["volumes"]
-    assert set(compose["volumes"]) == {"xero_c2_beacon_artifacts", "xero_c2_postgres_data", "xero_c2_redis_data"}
+    assert "xero_c2_beacon_artifacts:/app/artifacts/beacons" not in compose["services"]["c2-api"]["volumes"]
+    assert set(compose["volumes"]) == {"xero_c2_minio_data", "xero_c2_postgres_data", "xero_c2_redis_data"}
 
 
 def test_handler_and_scanner_compose_files_define_scaffold_services():
@@ -139,9 +151,18 @@ def test_env_example_contains_variables_consumed_by_split_compose_files():
         "C2_PROVISIONING_PLATFORM_ROOT",
         "C2_PROVISIONING_PROJECT_PREFIX",
         "C2_BEACON_BUILDS_ENABLED",
-        "C2_BEACON_BUILD_ARTIFACT_DIR",
         "C2_BEACON_BUILD_TIMEOUT_SECONDS",
         "C2_BEACON_BUILD_GO_IMAGE",
+        "C2_ARTIFACT_STORAGE_BACKEND",
+        "C2_ARTIFACT_S3_ENDPOINT_URL",
+        "C2_ARTIFACT_S3_BUCKET",
+        "C2_ARTIFACT_S3_REGION",
+        "C2_ARTIFACT_S3_ACCESS_KEY",
+        "C2_ARTIFACT_S3_SECRET_KEY",
+        "C2_ARTIFACT_S3_PREFIX",
+        "C2_ARTIFACT_FILESYSTEM_DIR",
+        "C2_MINIO_API_PORT",
+        "C2_MINIO_CONSOLE_PORT",
         "HANDLER_SERVICE_NAME",
         "HANDLER_PORT",
         "SCANNER_SERVICE_NAME",

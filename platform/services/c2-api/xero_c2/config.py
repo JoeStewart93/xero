@@ -6,6 +6,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 DEV_JWT_SECRET = "dev-only-xero-jwt-secret-change-me"
 DEFAULT_C2_CONNECT_PASSWORD = "c2_password"
 DEV_PROTOCOL_PRIVATE_KEY_B64 = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
+DEV_ARTIFACT_S3_ACCESS_KEY = "xero_minio"
+DEV_ARTIFACT_S3_SECRET_KEY = "xero_minio_password"
 
 
 class Settings(BaseSettings):
@@ -72,9 +74,16 @@ class Settings(BaseSettings):
     task_max_timeout_seconds: int = Field(default=3600, gt=0, alias="C2_TASK_MAX_TIMEOUT_SECONDS")
     task_retention_days: int = Field(default=30, gt=0, alias="C2_TASK_RETENTION_DAYS")
     beacon_builds_enabled: bool = Field(default=False, alias="C2_BEACON_BUILDS_ENABLED")
-    beacon_build_artifact_dir: str = Field(default="artifacts/beacons", alias="C2_BEACON_BUILD_ARTIFACT_DIR")
     beacon_build_timeout_seconds: int = Field(default=180, gt=0, alias="C2_BEACON_BUILD_TIMEOUT_SECONDS")
     beacon_build_go_image: str = Field(default="golang:1.26", alias="C2_BEACON_BUILD_GO_IMAGE")
+    artifact_storage_backend: str = Field(default="s3", alias="C2_ARTIFACT_STORAGE_BACKEND")
+    artifact_s3_endpoint_url: str = Field(default="http://c2-minio:9000", alias="C2_ARTIFACT_S3_ENDPOINT_URL")
+    artifact_s3_bucket: str = Field(default="xero-artifacts", alias="C2_ARTIFACT_S3_BUCKET")
+    artifact_s3_region: str = Field(default="us-east-1", alias="C2_ARTIFACT_S3_REGION")
+    artifact_s3_access_key: str = Field(default=DEV_ARTIFACT_S3_ACCESS_KEY, alias="C2_ARTIFACT_S3_ACCESS_KEY")
+    artifact_s3_secret_key: str = Field(default=DEV_ARTIFACT_S3_SECRET_KEY, alias="C2_ARTIFACT_S3_SECRET_KEY")
+    artifact_s3_prefix: str = Field(default="c2", alias="C2_ARTIFACT_S3_PREFIX")
+    artifact_filesystem_dir: str = Field(default="artifacts", alias="C2_ARTIFACT_FILESYSTEM_DIR")
 
     @field_validator("api_v1_prefix")
     @classmethod
@@ -106,6 +115,14 @@ class Settings(BaseSettings):
             raise ValueError("C2_PROTOCOL_SUPPORTED_VERSIONS must include at least one version")
         return ",".join(dict.fromkeys(versions))
 
+    @field_validator("artifact_storage_backend")
+    @classmethod
+    def normalize_artifact_storage_backend(cls, value: str) -> str:
+        backend = value.strip().lower()
+        if backend not in {"filesystem", "s3"}:
+            raise ValueError("C2_ARTIFACT_STORAGE_BACKEND must be filesystem or s3")
+        return backend
+
     @field_validator(
         "service_name",
         "jwt_secret_key",
@@ -115,8 +132,15 @@ class Settings(BaseSettings):
         "provisioning_project_prefix",
         "protocol_private_key_b64",
         "protocol_supported_versions",
-        "beacon_build_artifact_dir",
         "beacon_build_go_image",
+        "artifact_storage_backend",
+        "artifact_s3_endpoint_url",
+        "artifact_s3_bucket",
+        "artifact_s3_region",
+        "artifact_s3_access_key",
+        "artifact_s3_secret_key",
+        "artifact_s3_prefix",
+        "artifact_filesystem_dir",
     )
     @classmethod
     def reject_blank_secret_values(cls, value: str) -> str:
@@ -137,6 +161,11 @@ class Settings(BaseSettings):
                 raise ValueError("C2_CONNECT_PASSWORD must be set to a non-default value outside development/test")
             if self.protocol_private_key_b64 == DEV_PROTOCOL_PRIVATE_KEY_B64:
                 raise ValueError("C2_PROTOCOL_PRIVATE_KEY_B64 must be set outside development/test")
+            if self.artifact_storage_backend == "s3" and (
+                self.artifact_s3_access_key == DEV_ARTIFACT_S3_ACCESS_KEY
+                or self.artifact_s3_secret_key == DEV_ARTIFACT_S3_SECRET_KEY
+            ):
+                raise ValueError("C2_ARTIFACT_S3 credentials must be set outside development/test")
         return self
 
 

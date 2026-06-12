@@ -6,7 +6,7 @@ Numbered implementation backlog for Xero. Features are developed in order where 
 
 ## Current Alignment Notes
 
-- F0001-F0015, F0048, and F0049 are complete.
+- F0001-F0015, F0015.01-AMD, F0048, and F0049 are complete.
 - The current UI/BFF stack, separate C2 stack, handler scaffold, and scanner scaffold are documented in F0001, F0048, and the architecture docs.
 - The current UI navigation is Home, Projects, Recon, Beacons, Exploits, Payloads, Assets, Reports, Loot, Settings, and separated Health/Realtime utility surfaces. Several sections are routeable shell stubs only; Inventory is under Assets.
 - F0008 adds direct-to-C2 operator realtime over /ws/operator; F0009 completes the beacon registration contract and the initial C2-backed Beacons overview; F0010 completes beacon heartbeat, stale/offline transitions, and active/offline UI counts.
@@ -36,6 +36,7 @@ flowchart TD
     F0011[F0011 Binary Protocol]
     F0014[F0014 Task Queue]
     F0015[F0015 Go Beacon]
+    F001501[F0015.01 MinIO Artifacts]
   end
   subgraph phase3 [Phase 3 Tasking & Recon Foundation]
     F0016[F0016 Commands]
@@ -105,7 +106,15 @@ flowchart TD
   F0049 --> F0045
   F0049 --> F0039
   F0009 --> F0015
+  F0015 --> F001501
   F0014 --> F0016
+  F001501 --> F0017
+  F001501 --> F0029
+  F001501 --> F0072
+  F001501 --> F0073
+  F001501 --> F0081
+  F001501 --> F0107
+  F001501 --> F0207
   F0016 --> F0022
   F0016 --> F0024
   F0022 --> F0023
@@ -192,13 +201,14 @@ F0049 completes shared handler/scanner worker pairing, heartbeat, stale detectio
 | F0013 | [Beacon HTTP Long-poll Fallback](0013-beacon-http-longpoll-fallback.md) | P0 | F0009, F0011 |
 | F0014 | [Task Queue](0014-task-queue.md) | P0 | F0006, F0009 |
 | F0015 | [Go Beacon Agent](0015-go-beacon-agent.md) | P0 | F0011-F0014 |
+| F0015.01-AMD | [MinIO Artifact Storage](0015.01-amd-minio-artifact-storage.md) | P0 Amendment | F0015, F0005, F0048 |
 
 ## Phase 3 - Tasking, Sessions, Scanning, UI (Weeks 5-6)
 
 | ID | Feature | Priority | Depends |
 | :--- | :--- | :--- | :--- |
 | F0016 | [Command Execution](0016-command-execution.md) | P0 | F0014, F0015 |
-| F0017 | [Result Collection](0017-result-collection.md) | P0 | F0016, F0005 |
+| F0017 | [Result Collection](0017-result-collection.md) | P0 | F0016, F0005, F0015.01-AMD |
 | F0018 | [Interactive Shell Session](0018-interactive-shell-session.md) | P0 | F0016, F0017 |
 | F0019 | [File Browser Session](0019-file-browser-session.md) | P0 | F0016, F0017 |
 | F0020 | [Registry Editor Session](0020-registry-editor-session.md) | P0 | F0016, F0017 |
@@ -230,7 +240,7 @@ F0049 completes shared handler/scanner worker pairing, heartbeat, stale detectio
 | F0058 | [Extended Banner Grabbing](0058-extended-banner-grabbing.md) | P0 | F0023, F0069 |
 | F0059 | [Vulnerability Scanning (Light)](0059-vulnerability-scanning-light.md) | P0 | F0023, F0030, F0069 |
 | F0071 | [Recon Result to Asset Ingestion](0071-recon-result-asset-ingestion.md) | P0 | F0030, F0017 |
-| F0073 | [Beacon-Side Recon Execution](0073-beacon-side-recon-execution.md) | P0 | F0016, F0047 |
+| F0073 | [Beacon-Side Recon Execution](0073-beacon-side-recon-execution.md) | P0 | F0016, F0047, F0015.01-AMD |
 
 ### P1 - Additional Recon (MVP Scope)
 
@@ -245,13 +255,13 @@ F0049 completes shared handler/scanner worker pairing, heartbeat, stale detectio
 | F0066 | [Passive DNS Enrichment](0066-passive-dns-enrichment.md) | P1 | F0054, F0069, F0070 |
 | F0067 | [GitHub/GitLab Recon](0067-github-gitlab-recon.md) | P1 | F0016, F0069 |
 | F0068 | [ICMP/Traceroute Mapping](0068-icmp-traceroute-mapping.md) | P1 | F0022, F0069 |
-| F0072 | [Recon Reporting Integration](0072-recon-reporting-integration.md) | P1 | F0071 |
+| F0072 | [Recon Reporting Integration](0072-recon-reporting-integration.md) | P1 | F0071, F0015.01-AMD |
 
 ## Phase 5 - Assets, Handlers, Plugins, Exploits & Payloads (Weeks 9-10)
 
 | ID | Feature | Priority | Depends |
 | :--- | :--- | :--- | :--- |
-| F0029 | [File Transfer](0029-file-transfer.md) | P0 | F0016, F0015 |
+| F0029 | [File Transfer](0029-file-transfer.md) | P0 | F0016, F0015, F0015.01-AMD |
 | F0030 | [Asset Inventory](0030-asset-inventory.md) | P1 | F0005, F0009 |
 | F0031 | [Automatic Asset Grouping](0031-automatic-asset-grouping.md) | P1 | F0030 |
 | F0032 | [Manual Asset Grouping](0032-manual-asset-grouping.md) | P1 | F0030 |
@@ -273,7 +283,7 @@ F0049 completes shared handler/scanner worker pairing, heartbeat, stale detectio
 | F0109 | [Handler Load Balancing](0109-handler-load-balancing.md) | P1 | F0038, F0039, F0010 |
 | **Exploits & Payloads** | | | |
 | F0080 | [Exploit Management System](0080-exploit-management-system.md) | P0 | F0023, F0030 |
-| F0081 | [Payload Generation System](0081-payload-generation-system.md) | P0 | F0015, F0021 |
+| F0081 | [Payload Generation System](0081-payload-generation-system.md) | P0 | F0015, F0021, F0015.01-AMD |
 | F0082 | [Post-Exploitation Orchestration](0082-post-exploitation-orchestration.md) | P1 | F0080, F0081 |
 | F0083 | [Exploit Source Adapters](0083-exploit-source-adapters.md) | P1 | F0080 |
 
@@ -287,7 +297,7 @@ F0049 completes shared handler/scanner worker pairing, heartbeat, stale detectio
 | F0104 | [Operator MFA](0104-operator-mfa.md) | v2 | F0074 |
 | F0105 | [Multi-role RBAC](0105-multi-role-rbac.md) | v2 | F0074 |
 | F0106 | [Plugin Marketplace](0106-plugin-marketplace.md) | v2 | F0041 |
-| F0107 | [Additional Beacon Languages](0107-additional-beacon-languages.md) | v2 | F0011, F0015 |
+| F0107 | [Additional Beacon Languages](0107-additional-beacon-languages.md) | v2 | F0011, F0015, F0015.01-AMD |
 | F0108 | [Memory-only Beacon Execution](0108-memory-only-beacon-execution.md) | v2 | F0015 |
 | F0110 | [RabbitMQ Message Bus](0110-rabbitmq-message-bus.md) | v2 | F0006 |
 | F0200 | [Rootkit Suite Overview](0200-rootkit-suite-overview.md) | v2 | F0015, F0018, F0041 |
@@ -297,7 +307,7 @@ F0049 completes shared handler/scanner worker pairing, heartbeat, stale detectio
 | F0204 | [Rootkit Persistence](0204-rootkit-persistence.md) | v2 | F0015, F0200, F0201, F0202, F0203 |
 | F0205 | [Rootkit Communication](0205-rootkit-communication.md) | v2 | F0015, F0200, F0204 |
 | F0206 | [Rootkit Evasion](0206-rootkit-evasion.md) | v2 | F0015, F0200, F0205 |
-| F0207 | [Rootkit Build Server](0207-rootkit-build-server.md) | v2 | F0015, F0200, F0201, F0202 |
+| F0207 | [Rootkit Build Server](0207-rootkit-build-server.md) | v2 | F0015, F0015.01-AMD, F0200, F0201, F0202 |
 | F0220 | [Rootkit Discovery & Evasion](0220-rootkit-discovery-evasion.md) | High | F0200, F0201, F0202, F0203 |
 | F0221 | [Credential Harvesting](0221-credential-harvesting.md) | High | F0015, F0200, F0203 |
 | F0222 | [C2 Resilience & Redundancy](0222-c2-resilience.md) | High | F0200, F0205 |

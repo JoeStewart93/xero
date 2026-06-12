@@ -7,7 +7,7 @@
 | Priority | P0 |
 | Status | Planned |
 | MVP Phase | 4 |
-| Depends on | F0016, F0047 |
+| Depends on | F0016, F0047, F0015.01-AMD |
 
 ## Summary
 Execute reconnaissance modules from compromised beacon vantage points. Enables internal network scanning, credential-passing for authenticated scans, and proxy support for pivoted scans. Hybrid approach: pure Python for simple tools, external binaries for complex scans.
@@ -19,6 +19,7 @@ Execute reconnaissance modules from compromised beacon vantage points. Enables i
 - Credential-passing for authenticated scans
 - Proxy support for pivoted scans
 - Results returned to C2
+- Staged beacon-side recon binaries are served from managed artifacts through F0015.01-AMD instead of hard-coded external URLs.
 
 ## Execution Models
 

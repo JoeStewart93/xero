@@ -73,6 +73,12 @@ class Settings(BaseSettings):
     task_default_timeout_seconds: int = Field(default=60, gt=0, alias="C2_TASK_DEFAULT_TIMEOUT_SECONDS")
     task_max_timeout_seconds: int = Field(default=3600, gt=0, alias="C2_TASK_MAX_TIMEOUT_SECONDS")
     task_retention_days: int = Field(default=30, gt=0, alias="C2_TASK_RETENTION_DAYS")
+    task_result_inline_max_bytes: int = Field(default=1_048_576, ge=1024, alias="C2_TASK_RESULT_INLINE_MAX_BYTES")
+    task_result_cleanup_interval_seconds: int = Field(
+        default=3600,
+        gt=0,
+        alias="C2_TASK_RESULT_CLEANUP_INTERVAL_SECONDS",
+    )
     beacon_builds_enabled: bool = Field(default=False, alias="C2_BEACON_BUILDS_ENABLED")
     beacon_build_timeout_seconds: int = Field(default=180, gt=0, alias="C2_BEACON_BUILD_TIMEOUT_SECONDS")
     beacon_build_go_image: str = Field(default="golang:1.26", alias="C2_BEACON_BUILD_GO_IMAGE")

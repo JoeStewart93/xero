@@ -785,6 +785,188 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/task-results:
+    get:
+      tags:
+      - tasks
+      summary: List Task Results
+      operationId: list_task_results_api_v1_task_results_get
+      parameters:
+      - name: beacon_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Beacon Id
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            pattern: ^(completed|failed)$
+          - type: 'null'
+          title: Status
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Cursor
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResultListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/tasks/{task_id}/result:
+    get:
+      tags:
+      - tasks
+      summary: Get Task Result
+      operationId: get_task_result_api_v1_tasks__task_id__result_get
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Task Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResultResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/tasks/{task_id}/result/download:
+    get:
+      tags:
+      - tasks
+      summary: Download Task Result Text
+      operationId: download_task_result_text_api_v1_tasks__task_id__result_download_get
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Task Id
+      - name: stream
+        in: query
+        required: false
+        schema:
+          type: string
+          pattern: ^(combined|stdout|stderr)$
+          default: combined
+          title: Stream
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/tasks/{task_id}/result/artifacts/{artifact_id}:
+    get:
+      tags:
+      - tasks
+      summary: Download Task Result Artifact
+      operationId: download_task_result_artifact_api_v1_tasks__task_id__result_artifacts__artifact_id__get
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Task Id
+      - name: artifact_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Artifact Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/beacons/register:
     post:
       tags:
@@ -1945,6 +2127,169 @@ components:
       - created_at
       - updated_at
       title: TaskResponse
+    TaskResultArtifactResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        role:
+          type: string
+          enum:
+          - binary
+          - combined
+          - stderr
+          - stdout
+          title: Role
+        filename:
+          type: string
+          title: Filename
+        content_type:
+          type: string
+          title: Content Type
+        size_bytes:
+          type: integer
+          title: Size Bytes
+        sha256:
+          type: string
+          title: Sha256
+        available:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Available
+      type: object
+      required:
+      - id
+      - role
+      - filename
+      - content_type
+      - size_bytes
+      - sha256
+      title: TaskResultArtifactResponse
+    TaskResultListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/TaskResultResponse'
+          type: array
+          title: Items
+        next_cursor:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Next Cursor
+      type: object
+      title: TaskResultListResponse
+    TaskResultResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        task_id:
+          type: string
+          title: Task Id
+        beacon_id:
+          type: string
+          title: Beacon Id
+        status:
+          type: string
+          enum:
+          - completed
+          - failed
+          title: Status
+        exit_code:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Exit Code
+        error_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Message
+        timed_out:
+          type: boolean
+          title: Timed Out
+          default: false
+        truncated:
+          type: boolean
+          title: Truncated
+          default: false
+        stdout:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Stdout
+        stderr:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Stderr
+        stdout_size_bytes:
+          type: integer
+          title: Stdout Size Bytes
+        stderr_size_bytes:
+          type: integer
+          title: Stderr Size Bytes
+        output_size_bytes:
+          type: integer
+          title: Output Size Bytes
+        stdout_sha256:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Stdout Sha256
+        stderr_sha256:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Stderr Sha256
+        output_sha256:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Output Sha256
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+        artifacts:
+          items:
+            $ref: '#/components/schemas/TaskResultArtifactResponse'
+          type: array
+          title: Artifacts
+        completed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Completed At
+        expires_at:
+          type: string
+          format: date-time
+          title: Expires At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - task_id
+      - beacon_id
+      - status
+      - stdout_size_bytes
+      - stderr_size_bytes
+      - output_size_bytes
+      - expires_at
+      - created_at
+      - updated_at
+      title: TaskResultResponse
     TransportStatusResponse:
       properties:
         active_websocket_connections:

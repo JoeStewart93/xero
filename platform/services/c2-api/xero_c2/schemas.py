@@ -242,6 +242,49 @@ class TaskAuditEventListResponse(BaseModel):
     items: list[TaskAuditEventResponse] = Field(default_factory=list)
 
 
+TaskResultStatus = Literal["completed", "failed"]
+
+
+class TaskResultArtifactResponse(BaseModel):
+    id: str
+    role: Literal["binary", "combined", "stderr", "stdout"]
+    filename: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+    available: bool | None = None
+
+
+class TaskResultResponse(BaseModel):
+    id: str
+    task_id: str
+    beacon_id: str
+    status: TaskResultStatus
+    exit_code: int | None = None
+    error_message: str | None = None
+    timed_out: bool = False
+    truncated: bool = False
+    stdout: str | None = None
+    stderr: str | None = None
+    stdout_size_bytes: int
+    stderr_size_bytes: int
+    output_size_bytes: int
+    stdout_sha256: str | None = None
+    stderr_sha256: str | None = None
+    output_sha256: str | None = None
+    metadata: dict = Field(default_factory=dict)
+    artifacts: list[TaskResultArtifactResponse] = Field(default_factory=list)
+    completed_at: datetime | None = None
+    expires_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskResultListResponse(BaseModel):
+    items: list[TaskResultResponse] = Field(default_factory=list)
+    next_cursor: datetime | None = None
+
+
 class BeaconBuildTargetResponse(BaseModel):
     os: BeaconBuildTargetOS
     arch: BeaconBuildTargetArch

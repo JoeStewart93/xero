@@ -58,6 +58,19 @@ async def publish_task_event(app, settings, event_type: str, task_payload: dict)
         await app.state.operator_realtime_hub.broadcast(event)
 
 
+async def publish_task_result_event(app, settings, event_type: str, result_payload: dict) -> None:
+    redis_client = getattr(app.state, "redis_client", None)
+    event = await publish_operator_event(
+        redis_client,
+        settings,
+        event_type,
+        data={"task_result": result_payload},
+        scope={"beacon_id": result_payload["beacon_id"], "task_id": result_payload["task_id"]},
+    )
+    if redis_client is None:
+        await app.state.operator_realtime_hub.broadcast(event)
+
+
 def websocket_protocol_accepted(websocket: WebSocket) -> bool:
     return BEACON_WEBSOCKET_PROTOCOL in parse_websocket_subprotocols(websocket)
 
@@ -181,6 +194,7 @@ async def run_beacon_websocket(websocket: WebSocket, *, settings, public_beacon:
             beacon_payload: dict | None = None
             event_type: str | None = None
             task_events: list[tuple[str, dict]] = []
+            task_result_events: list[tuple[str, dict]] = []
             with SessionFactory() as session:
                 try:
                     ensure_nonce_not_replayed(session, metadata)
@@ -240,8 +254,13 @@ async def run_beacon_websocket(websocket: WebSocket, *, settings, public_beacon:
                     event_type = str(ack_payload.get("event_type", "beacon.heartbeat"))
                     if ack_payload.get("task_event_type") and isinstance(ack_payload.get("task"), dict):
                         task_events.append((str(ack_payload["task_event_type"]), ack_payload["task"]))
+                    if ack_payload.get("task_result_event_type") and isinstance(ack_payload.get("task_result"), dict):
+                        task_result_events.append(
+                            (str(ack_payload["task_result_event_type"]), ack_payload["task_result"])
+                        )
                     ack_frame = encrypted_protocol_frame(settings, decoded, ACK, ack_payload)
                 except ProtocolError as exc:
+                    session.rollback()
                     record_protocol_error(session, exc, metadata, beacon_id=bound_beacon_id)
                     session.commit()
                     close_code = beacon_websocket_close_code(exc)
@@ -278,6 +297,13 @@ async def run_beacon_websocket(websocket: WebSocket, *, settings, public_beacon:
                     await publish_beacon_event(websocket.app, settings, "beacon.heartbeat", beacon_payload)
             for task_event_type_value, task_payload in task_events:
                 await publish_task_event(websocket.app, settings, task_event_type_value, task_payload)
+            for task_result_event_type_value, task_result_payload in task_result_events:
+                await publish_task_result_event(
+                    websocket.app,
+                    settings,
+                    task_result_event_type_value,
+                    task_result_payload,
+                )
     finally:
         if bound_beacon_id is not None and connection is not None:
             removed = await manager.unregister(bound_beacon_id, connection.id)

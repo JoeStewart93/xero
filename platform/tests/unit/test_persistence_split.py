@@ -107,6 +107,9 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert "protocol_frame_receipts" in inspector.get_table_names()
     assert "tasks" in inspector.get_table_names()
     assert "task_audit_events" in inspector.get_table_names()
+    assert "task_results" in inspector.get_table_names()
+    assert "result_chunks" in inspector.get_table_names()
+    assert "task_result_artifacts" in inspector.get_table_names()
     assert "artifacts" in inspector.get_table_names()
     assert "beacon_builds" in inspector.get_table_names()
     assert "protocol_version" in {column["name"] for column in inspector.get_columns("beacons")}
@@ -145,9 +148,35 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert {"target_os", "target_arch", "status", "config", "artifact_id", "artifact_sha256"}.issubset(
         build_columns
     )
+    task_result_columns = {column["name"] for column in inspector.get_columns("task_results")}
+    assert {
+        "task_id",
+        "beacon_id",
+        "status",
+        "exit_code",
+        "stdout_text",
+        "stderr_text",
+        "output_size_bytes",
+        "output_sha256",
+        "expires_at",
+    }.issubset(task_result_columns)
+    result_chunk_columns = {column["name"] for column in inspector.get_columns("result_chunks")}
+    assert {
+        "task_result_id",
+        "task_id",
+        "beacon_id",
+        "upload_id",
+        "stream",
+        "sequence",
+        "total_chunks",
+        "chunk_text",
+        "chunk_sha256",
+    }.issubset(result_chunk_columns)
+    task_result_artifact_columns = {column["name"] for column in inspector.get_columns("task_result_artifacts")}
+    assert {"task_result_id", "artifact_id", "role"}.issubset(task_result_artifact_columns)
     with engine.connect() as connection:
         context = MigrationContext.configure(connection, opts={"version_table": "c2_alembic_version"})
-        assert context.get_current_heads() == ("c2_0010_task_audit_events",)
+        assert context.get_current_heads() == ("c2_0011_task_results",)
 
 
 def test_generic_crud_helpers_work_with_service_models(tmp_path):

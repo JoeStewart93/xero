@@ -32,6 +32,13 @@ from xero_c2.protocol import (
 from xero_c2.protocol.constants import FRAME_HEADER, FRAME_HMAC_LENGTH, PROTOCOL_MAGIC
 from xero_c2.schemas import BeaconHeartbeatRequest, BeaconRegistrationRequest
 from xero_c2.task_queue import apply_task_result, public_task, task_event_type
+from xero_c2.task_results import (
+    RESULT_EVENT_COMPLETED,
+    ingest_task_result_payload,
+    is_chunk_payload,
+    task_for_result_payload,
+    task_result_event_payload,
+)
 
 
 def protocol_supported_versions(settings) -> list[int]:
@@ -317,9 +324,18 @@ def process_protocol_frame(
         ack_payload["task"] = None
     if decoded.message_type == TASK_RESULT:
         if beacon_id is not None:
-            task = apply_task_result(session, beacon_id=beacon_id, payload=decoded.payload)
+            task = task_for_result_payload(session, beacon_id=beacon_id, payload=decoded.payload)
             if task is not None:
-                ack_payload["task"] = public_task(task)
-                ack_payload["task_event_type"] = task_event_type(task.status)
+                result = ingest_task_result_payload(session, settings, task, decoded.payload)
+                if is_chunk_payload(decoded.payload) and result is None:
+                    ack_payload["receipt"] = "chunk_stored"
+                    return beacon_id, ack_payload
+                task = apply_task_result(session, beacon_id=beacon_id, payload=decoded.payload)
+                if task is not None:
+                    ack_payload["task"] = public_task(task)
+                    ack_payload["task_event_type"] = task_event_type(task.status)
+                if result is not None:
+                    ack_payload["task_result"] = task_result_event_payload(session, settings, result)
+                    ack_payload["task_result_event_type"] = RESULT_EVENT_COMPLETED
         ack_payload["receipt"] = "stored"
     return beacon_id, ack_payload

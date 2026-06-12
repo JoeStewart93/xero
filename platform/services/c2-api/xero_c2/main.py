@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from contextlib import asynccontextmanager, suppress
+from datetime import datetime
 from secrets import compare_digest
 from typing import Annotated
 
@@ -69,7 +70,17 @@ from xero_c2.infrastructure_workers import (
     record_worker_event,
     run_worker_stale_monitor,
 )
-from xero_c2.models import Artifact, Beacon, BeaconBuild, InfrastructureWorker, ProtocolSecurityEvent, Task, TaskAuditEvent
+from xero_c2.models import (
+    Artifact,
+    Beacon,
+    BeaconBuild,
+    InfrastructureWorker,
+    ProtocolSecurityEvent,
+    Task,
+    TaskAuditEvent,
+    TaskResult,
+    TaskResultArtifact,
+)
 from xero_c2.protocol import (
     ACK,
     CURRENT_PROTOCOL_VERSION,
@@ -105,7 +116,6 @@ from xero_c2.realtime import (
     run_operator_websocket,
     websocket_origin_allowed,
 )
-from xero_c2.task_audit import public_task_audit_event, record_task_audit_event
 from xero_c2.schemas import (
     BeaconBuildCreateRequest,
     BeaconBuildListResponse,
@@ -128,11 +138,13 @@ from xero_c2.schemas import (
     ProtocolInfoResponse,
     ProtocolSecurityEventListResponse,
     ProtocolSecurityEventResponse,
-    TaskCreateRequest,
     TaskAuditEventListResponse,
     TaskAuditEventResponse,
+    TaskCreateRequest,
     TaskListResponse,
     TaskResponse,
+    TaskResultListResponse,
+    TaskResultResponse,
     TaskStatus,
     TransportStatusResponse,
     WorkerHeartbeatRequest,
@@ -143,6 +155,7 @@ from xero_c2.schemas import (
     WorkerRegistrationResponse,
     WorkerStopResponse,
 )
+from xero_c2.task_audit import public_task_audit_event, record_task_audit_event
 from xero_c2.task_queue import (
     TASK_STATUS_QUEUED,
     TaskQueueService,
@@ -156,6 +169,12 @@ from xero_c2.task_queue import (
     task_event_type,
     task_queue_unavailable_exception,
     validate_task_timeout,
+)
+from xero_c2.task_results import (
+    download_text_for_result,
+    public_task_result,
+    purge_expired_task_results,
+    run_task_result_retention_monitor,
 )
 
 
@@ -258,6 +277,19 @@ async def publish_task_event(app: FastAPI, settings, event_type: str, task_paylo
         event_type,
         data={"task": task_payload},
         scope={"beacon_id": task_payload["beacon_id"], "task_id": task_payload["id"]},
+    )
+    if redis_client is None:
+        await app.state.operator_realtime_hub.broadcast(event)
+
+
+async def publish_task_result_event(app: FastAPI, settings, event_type: str, result_payload: dict) -> None:
+    redis_client = getattr(app.state, "redis_client", None)
+    event = await publish_operator_event(
+        redis_client,
+        settings,
+        event_type,
+        data={"task_result": result_payload},
+        scope={"beacon_id": result_payload["beacon_id"], "task_id": result_payload["task_id"]},
     )
     if redis_client is None:
         await app.state.operator_realtime_hub.broadcast(event)
@@ -422,15 +454,18 @@ def create_app() -> FastAPI:
         app.state.task_queue_service = task_queue_service
         stale_monitor_task: asyncio.Task[None] | None = None
         worker_monitor_task: asyncio.Task[None] | None = None
+        result_retention_task: asyncio.Task[None] | None = None
         SessionFactory = session_factory_for_settings(settings)
         with SessionFactory() as session:
             ensure_embedded_workers(session, settings)
             reset_beacon_transport_connections(session)
+            purge_expired_task_results(session, settings)
             session.commit()
         if settings.app_env.lower() != "test":
             await realtime_hub.start(getattr(app.state, "redis_client", None))
             stale_monitor_task = asyncio.create_task(run_beacon_stale_monitor(app, settings, public_beacon))
             worker_monitor_task = asyncio.create_task(run_worker_stale_monitor(app, settings, public_worker))
+            result_retention_task = asyncio.create_task(run_task_result_retention_monitor(app, settings))
         try:
             yield
         finally:
@@ -442,6 +477,10 @@ def create_app() -> FastAPI:
                 worker_monitor_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await worker_monitor_task
+            if result_retention_task is not None:
+                result_retention_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await result_retention_task
             await beacon_transport_manager.close_all()
             await beacon_longpoll_manager.close_all()
             await realtime_hub.stop()
@@ -749,8 +788,16 @@ def create_app() -> FastAPI:
                     str(ack_payload["task_event_type"]),
                     ack_payload["task"],
                 )
+            if ack_payload.get("task_result_event_type") and isinstance(ack_payload.get("task_result"), dict):
+                await publish_task_result_event(
+                    request.app,
+                    settings,
+                    str(ack_payload["task_result_event_type"]),
+                    ack_payload["task_result"],
+                )
             return encrypted_protocol_response(settings, decoded, ACK, ack_payload)
         except ProtocolError as exc:
+            session.rollback()
             record_protocol_error(session, exc, metadata)
             session.commit()
             return protocol_error_response(exc)
@@ -1185,6 +1232,125 @@ def create_app() -> FastAPI:
             items=[TaskAuditEventResponse(**public_task_audit_event(event)) for event in events]
         )
 
+    @api_router.get("/task-results", response_model=TaskResultListResponse, tags=["tasks"])
+    def list_task_results(
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+        beacon_id: Annotated[uuid.UUID | None, Query()] = None,
+        status_filter: Annotated[str | None, Query(alias="status", pattern="^(completed|failed)$")] = None,
+        cursor: Annotated[datetime | None, Query()] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    ) -> TaskResultListResponse:
+        authorize_c2_token(settings, authorization)
+        query = (
+            select(TaskResult)
+            .where(TaskResult.completed_at.is_not(None))
+            .order_by(TaskResult.completed_at.desc(), TaskResult.created_at.desc())
+        )
+        if beacon_id is not None:
+            query = query.where(TaskResult.beacon_id == beacon_id)
+        if status_filter is not None:
+            query = query.where(TaskResult.status == status_filter)
+        if cursor is not None:
+            query = query.where(TaskResult.completed_at < cursor)
+        results = session.execute(query.limit(limit + 1)).scalars().all()
+        page = results[:limit]
+        next_cursor = page[-1].completed_at if len(results) > limit and page else None
+        return TaskResultListResponse(
+            items=[
+                TaskResultResponse(**public_task_result(session, settings, result, include_output=False))
+                for result in page
+            ],
+            next_cursor=next_cursor,
+        )
+
+    def task_result_for_task(session: Session, task_id: uuid.UUID) -> TaskResult:
+        task = session.get(Task, task_id)
+        if task is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+        result = session.execute(select(TaskResult).where(TaskResult.task_id == task_id)).scalar_one_or_none()
+        if result is None or result.completed_at is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task result not found")
+        return result
+
+    @api_router.get("/tasks/{task_id}/result", response_model=TaskResultResponse, tags=["tasks"])
+    def get_task_result(
+        task_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> TaskResultResponse:
+        authorize_c2_token(settings, authorization)
+        result = task_result_for_task(session, task_id)
+        try:
+            payload = public_task_result(
+                session,
+                settings,
+                result,
+                include_output=True,
+                include_availability=True,
+            )
+        except ArtifactNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task result artifact not found") from exc
+        return TaskResultResponse(**payload)
+
+    @api_router.get("/tasks/{task_id}/result/download", response_model=None, tags=["tasks"])
+    def download_task_result_text(
+        task_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+        stream: Annotated[str, Query(pattern="^(combined|stdout|stderr)$")] = "combined",
+    ) -> Response:
+        authorize_c2_token(settings, authorization)
+        result = task_result_for_task(session, task_id)
+        try:
+            content, filename = download_text_for_result(session, settings, result, stream)
+        except ArtifactNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task result artifact not found") from exc
+        encoded = content.encode("utf-8")
+        return Response(
+            content=encoded,
+            media_type="text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(encoded)),
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @api_router.get("/tasks/{task_id}/result/artifacts/{artifact_id}", response_model=None, tags=["tasks"])
+    def download_task_result_artifact(
+        task_id: uuid.UUID,
+        artifact_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> Response:
+        authorize_c2_token(settings, authorization)
+        result = task_result_for_task(session, task_id)
+        artifact = (
+            session.execute(
+                select(Artifact)
+                .join(TaskResultArtifact, TaskResultArtifact.artifact_id == Artifact.id)
+                .where(TaskResultArtifact.task_result_id == result.id, Artifact.id == artifact_id)
+            )
+            .scalars()
+            .one_or_none()
+        )
+        if artifact is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task result artifact not found")
+        try:
+            content = read_artifact(settings, artifact)
+        except ArtifactNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task result artifact not found") from exc
+        return Response(
+            content=content,
+            media_type=artifact.content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{artifact.filename}"',
+                "Content-Length": str(len(content)),
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
     @api_router.delete("/tasks/{task_id}", response_model=TaskResponse, tags=["tasks"])
     async def delete_task(
         task_id: uuid.UUID,
@@ -1464,8 +1630,16 @@ def create_app() -> FastAPI:
                     str(ack_payload["task_event_type"]),
                     ack_payload["task"],
                 )
+            if ack_payload.get("task_result_event_type") and isinstance(ack_payload.get("task_result"), dict):
+                await publish_task_result_event(
+                    request.app,
+                    settings,
+                    str(ack_payload["task_result_event_type"]),
+                    ack_payload["task_result"],
+                )
             return encrypted_protocol_response(settings, decoded, ACK, ack_payload)
         except ProtocolError as exc:
+            session.rollback()
             record_protocol_error(session, exc, metadata, beacon_id=beacon_id)
             session.commit()
             if decoded is not None:

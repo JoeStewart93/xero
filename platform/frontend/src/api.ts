@@ -207,6 +207,46 @@ export interface TaskAuditEventListResponse {
   items: TaskAuditEvent[];
 }
 
+export interface TaskResultArtifact {
+  available?: boolean | null;
+  content_type: string;
+  filename: string;
+  id: string;
+  role: 'binary' | 'combined' | 'stderr' | 'stdout';
+  sha256: string;
+  size_bytes: number;
+}
+
+export interface TaskResult {
+  artifacts: TaskResultArtifact[];
+  beacon_id: string;
+  completed_at: string | null;
+  created_at: string;
+  error_message: string | null;
+  exit_code: number | null;
+  expires_at: string;
+  id: string;
+  metadata: Record<string, unknown>;
+  output_sha256: string | null;
+  output_size_bytes: number;
+  status: 'completed' | 'failed';
+  stderr?: string | null;
+  stderr_sha256: string | null;
+  stderr_size_bytes: number;
+  stdout?: string | null;
+  stdout_sha256: string | null;
+  stdout_size_bytes: number;
+  task_id: string;
+  timed_out: boolean;
+  truncated: boolean;
+  updated_at: string;
+}
+
+export interface TaskResultListResponse {
+  items: TaskResult[];
+  next_cursor: string | null;
+}
+
 export interface BeaconBuildTarget {
   arch: BeaconBuildTargetArch;
   extension: string;
@@ -457,6 +497,64 @@ export async function getTaskAuditEvents(
   limit = 20,
 ): Promise<TaskAuditEventListResponse> {
   return c2Fetch<TaskAuditEventListResponse>(baseUrl, accessToken, `/api/v1/tasks/${taskId}/audit?limit=${limit}`);
+}
+
+export async function getTaskResult(baseUrl: string, accessToken: string, taskId: string): Promise<TaskResult> {
+  return c2Fetch<TaskResult>(baseUrl, accessToken, `/api/v1/tasks/${taskId}/result`);
+}
+
+export async function getTaskResults(
+  baseUrl: string,
+  accessToken: string,
+  options: { beaconId?: string; cursor?: string; limit?: number; status?: TaskResult['status'] } = {},
+): Promise<TaskResultListResponse> {
+  const params = new URLSearchParams();
+  if (options.beaconId) {
+    params.set('beacon_id', options.beaconId);
+  }
+  if (options.status) {
+    params.set('status', options.status);
+  }
+  if (options.cursor) {
+    params.set('cursor', options.cursor);
+  }
+  if (options.limit) {
+    params.set('limit', String(options.limit));
+  }
+  const query = params.toString();
+  return c2Fetch<TaskResultListResponse>(baseUrl, accessToken, `/api/v1/task-results${query ? `?${query}` : ''}`);
+}
+
+export async function downloadTaskResultText(
+  baseUrl: string,
+  accessToken: string,
+  taskId: string,
+  stream: 'combined' | 'stderr' | 'stdout' = 'combined',
+): Promise<Blob> {
+  const headers = new Headers();
+  headers.set('Authorization', `Bearer ${accessToken}`);
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/tasks/${taskId}/result/download?stream=${stream}`, { headers });
+  if (!response.ok) {
+    const payload = await parseResponseJson<Record<string, string>>(response);
+    throw new Error(payload.detail || 'Task result download failed');
+  }
+  return response.blob();
+}
+
+export async function downloadTaskResultArtifact(
+  baseUrl: string,
+  accessToken: string,
+  taskId: string,
+  artifactId: string,
+): Promise<Blob> {
+  const headers = new Headers();
+  headers.set('Authorization', `Bearer ${accessToken}`);
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/tasks/${taskId}/result/artifacts/${artifactId}`, { headers });
+  if (!response.ok) {
+    const payload = await parseResponseJson<Record<string, string>>(response);
+    throw new Error(payload.detail || 'Task result artifact download failed');
+  }
+  return response.blob();
 }
 
 export async function createShellTask(

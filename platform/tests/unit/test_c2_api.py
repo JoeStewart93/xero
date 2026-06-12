@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import threading
 import time
 import uuid
@@ -23,11 +24,14 @@ from xero_c2.models import (
     InfrastructureWorker,
     ProtocolFrameReceipt,
     ProtocolSecurityEvent,
+    ResultChunk,
     Task,
     TaskAuditEvent,
+    TaskResult,
     WorkerEvent,
 )
 from xero_c2.protocol import HEARTBEAT, REGISTER, TASK_POLL, TASK_RESULT
+from xero_c2.task_results import purge_expired_task_results
 from xero_common.database import clear_database_caches, get_engine, get_session_factory
 from xero_common.models import utc_now
 from xero_common.security import hash_beacon_token
@@ -62,6 +66,30 @@ def protocol_c2_client(monkeypatch, tmp_path, make_c2_client):
     clear_database_caches()
     Base.metadata.create_all(bind=get_engine(database_url))
     return make_c2_client()
+
+
+@pytest.fixture
+def result_c2_client(monkeypatch, tmp_path, make_c2_client):
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'result-c2.db'}"
+    artifact_dir = tmp_path / "result-artifacts"
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("C2_DATABASE_URL", database_url)
+    monkeypatch.setenv("C2_CONNECT_PASSWORD", "connect-me")
+    monkeypatch.setenv("C2_JWT_SECRET_KEY", "test-c2-jwt-secret-with-enough-length")
+    monkeypatch.setenv("C2_PROTOCOL_FRAME_HARNESS_ENABLED", "true")
+    monkeypatch.setenv("C2_ARTIFACT_STORAGE_BACKEND", "filesystem")
+    monkeypatch.setenv("C2_ARTIFACT_FILESYSTEM_DIR", str(artifact_dir))
+    monkeypatch.setenv("C2_TASK_RESULT_INLINE_MAX_BYTES", "1024")
+    get_settings.cache_clear()
+    clear_database_caches()
+    Base.metadata.create_all(bind=get_engine(database_url))
+    return make_c2_client(
+        C2_DATABASE_URL=database_url,
+        C2_PROTOCOL_FRAME_HARNESS_ENABLED="true",
+        C2_ARTIFACT_STORAGE_BACKEND="filesystem",
+        C2_ARTIFACT_FILESYSTEM_DIR=str(artifact_dir),
+        C2_TASK_RESULT_INLINE_MAX_BYTES="1024",
+    )
 
 
 @pytest.fixture
@@ -570,6 +598,7 @@ def test_task_result_updates_known_task_status(protocol_c2_client):
     SessionFactory = get_session_factory(settings.database_url)
     with SessionFactory() as session:
         stored = session.get(Task, uuid.UUID(task["id"]))
+        result = session.execute(select(TaskResult).where(TaskResult.task_id == uuid.UUID(task["id"]))).scalar_one()
         audit_events = (
             session.execute(
                 select(TaskAuditEvent)
@@ -583,14 +612,308 @@ def test_task_result_updates_known_task_status(protocol_c2_client):
     assert result_response.status_code == 200
     assert ack["receipt"] == "stored"
     assert ack["task"]["status"] == "completed"
+    assert ack["task_result"]["task_id"] == task["id"]
+    assert "stdout" not in ack["task_result"]
     assert "stdout" not in ack["task"]
     assert stored is not None
     assert stored.status == "completed"
     assert stored.completed_at is not None
     assert "stdout" not in stored.args
+    assert result.stdout_text == "redacted"
+    assert result.stderr_text == ""
+    assert result.exit_code == 0
     assert [event.event_type for event in audit_events] == ["task.queued", "task.dispatched", "task.completed"]
     assert audit_events[-1].actor_subject == f"beacon:{registered['beacon_id']}"
     assert audit_events[-1].event_metadata == {"exit_code": 0, "timed_out": False, "truncated": False}
+
+    fetched = protocol_c2_client.get(
+        f"/api/v1/tasks/{task['id']}/result",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    downloaded = protocol_c2_client.get(
+        f"/api/v1/tasks/{task['id']}/result/download?stream=stdout",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    history = protocol_c2_client.get("/api/v1/task-results", headers={"Authorization": f"Bearer {token}"})
+
+    assert fetched.status_code == 200
+    assert fetched.json()["stdout"] == "redacted"
+    assert fetched.json()["stderr"] == ""
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"redacted"
+    assert 'filename="' in downloaded.headers["content-disposition"]
+    assert history.status_code == 200
+    assert history.json()["items"][0]["task_id"] == task["id"]
+
+
+def test_task_result_completion_broadcasts_operator_event(protocol_c2_client):
+    class BroadcastRecorder:
+        def __init__(self) -> None:
+            self.events: list[dict] = []
+
+        async def broadcast(self, event: dict) -> None:
+            self.events.append(event)
+
+    recorder = BroadcastRecorder()
+    protocol_c2_client.app.state.operator_realtime_hub = recorder
+    token = connect_c2(protocol_c2_client)
+    registered = decode_protocol_response(
+        protocol_c2_client.post(
+            "/api/v1/protocol/frames",
+            content=encode_protocol_test_frame(REGISTER, register_payload(supported_versions=[1])),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+        ).content
+    )
+    task = create_shell_task(protocol_c2_client, token, registered["beacon_id"], command="broadcast-result")
+    protocol_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(TASK_POLL, {"beacon_id": registered["beacon_id"]}),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+
+    protocol_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(
+            TASK_RESULT,
+            {
+                "beacon_id": registered["beacon_id"],
+                "exit_code": 0,
+                "status": "completed",
+                "stdout": "broadcasted",
+                "task_id": task["id"],
+            },
+        ),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+    event_by_type = {event["type"]: event for event in recorder.events}
+    task_event = event_by_type["task.completed"]
+    result_event = event_by_type["task.result.completed"]
+
+    assert task_event["type"] == "task.completed"
+    assert result_event["type"] == "task.result.completed"
+    assert result_event["scope"]["beacon_id"] == registered["beacon_id"]
+    assert result_event["scope"]["task_id"] == task["id"]
+    assert result_event["data"]["task_result"]["task_id"] == task["id"]
+    assert "stdout" not in result_event["data"]["task_result"]
+
+
+def test_chunked_task_result_assembles_and_uses_artifact_storage(result_c2_client):
+    token = connect_c2(result_c2_client)
+    registered = decode_protocol_response(
+        result_c2_client.post(
+            "/api/v1/protocol/frames",
+            content=encode_protocol_test_frame(REGISTER, register_payload(supported_versions=[1])),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+        ).content
+    )
+    task = create_shell_task(result_c2_client, token, registered["beacon_id"], command="chunked")
+    result_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(TASK_POLL, {"beacon_id": registered["beacon_id"]}),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+
+    chunks = ["a" * 600, "b" * 600]
+    stdout = "".join(chunks)
+    upload_id = f"upload-{uuid.uuid4()}"
+    stream_sha = hashlib.sha256(stdout.encode("utf-8")).hexdigest()
+
+    first = result_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(
+            TASK_RESULT,
+            {
+                "beacon_id": registered["beacon_id"],
+                "task_id": task["id"],
+                "status": "completed",
+                "upload_id": upload_id,
+                "stream": "stdout",
+                "chunk_index": 0,
+                "total_chunks": 2,
+                "chunk": chunks[0],
+                "chunk_sha256": hashlib.sha256(chunks[0].encode("utf-8")).hexdigest(),
+                "stream_sha256": stream_sha,
+                "stream_size_bytes": len(stdout.encode("utf-8")),
+                "exit_code": 0,
+            },
+        ),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+    first_ack = decode_protocol_response(first.content)
+
+    final = result_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(
+            TASK_RESULT,
+            {
+                "beacon_id": registered["beacon_id"],
+                "task_id": task["id"],
+                "status": "completed",
+                "upload_id": upload_id,
+                "stream": "stdout",
+                "chunk_index": 1,
+                "total_chunks": 2,
+                "chunk": chunks[1],
+                "chunk_sha256": hashlib.sha256(chunks[1].encode("utf-8")).hexdigest(),
+                "stream_sha256": stream_sha,
+                "stream_size_bytes": len(stdout.encode("utf-8")),
+                "result_final": True,
+                "exit_code": 0,
+                "stderr": "",
+            },
+        ),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+    final_ack = decode_protocol_response(final.content)
+    fetched = result_c2_client.get(
+        f"/api/v1/tasks/{task['id']}/result",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    downloaded = result_c2_client.get(
+        f"/api/v1/tasks/{task['id']}/result/download?stream=combined",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        stored = session.get(Task, uuid.UUID(task["id"]))
+        result = session.execute(select(TaskResult).where(TaskResult.task_id == uuid.UUID(task["id"]))).scalar_one()
+        chunk_count = (
+            session.execute(select(ResultChunk).where(ResultChunk.task_result_id == result.id)).scalars().all()
+        )
+
+    assert first.status_code == 200
+    assert first_ack["receipt"] == "chunk_stored"
+    assert "task" not in first_ack
+    assert final.status_code == 200
+    assert final_ack["receipt"] == "stored"
+    assert final_ack["task"]["status"] == "completed"
+    assert final_ack["task_result_event_type"] == "task.result.completed"
+    assert fetched.status_code == 200
+    assert fetched.json()["stdout"] == stdout
+    assert fetched.json()["artifacts"][0]["role"] == "stdout"
+    assert fetched.json()["artifacts"][0]["available"] is True
+    assert downloaded.content == stdout.encode("utf-8")
+    assert stored is not None and stored.status == "completed"
+    assert result.stdout_text is None
+    assert len(chunk_count) == 2
+
+
+def test_chunked_task_result_rejects_missing_chunks(result_c2_client):
+    token = connect_c2(result_c2_client)
+    registered = decode_protocol_response(
+        result_c2_client.post(
+            "/api/v1/protocol/frames",
+            content=encode_protocol_test_frame(REGISTER, register_payload(supported_versions=[1])),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+        ).content
+    )
+    task = create_shell_task(result_c2_client, token, registered["beacon_id"], command="missing-chunk")
+    result_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(TASK_POLL, {"beacon_id": registered["beacon_id"]}),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+    chunk = "tail"
+
+    response = result_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(
+            TASK_RESULT,
+            {
+                "beacon_id": registered["beacon_id"],
+                "task_id": task["id"],
+                "status": "completed",
+                "upload_id": f"upload-{uuid.uuid4()}",
+                "stream": "stdout",
+                "chunk_index": 1,
+                "total_chunks": 2,
+                "chunk": chunk,
+                "chunk_sha256": hashlib.sha256(chunk.encode("utf-8")).hexdigest(),
+                "stream_sha256": hashlib.sha256(b"headtail").hexdigest(),
+                "stream_size_bytes": len(b"headtail"),
+                "result_final": True,
+            },
+        ),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "INVALID_PAYLOAD"
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        stored = session.get(Task, uuid.UUID(task["id"]))
+        result = (
+            session.execute(select(TaskResult).where(TaskResult.task_id == uuid.UUID(task["id"]))).scalar_one_or_none()
+        )
+
+    assert stored is not None and stored.status == "dispatched"
+    assert result is None
+
+
+def test_expired_task_result_purge_removes_artifacts(result_c2_client):
+    token = connect_c2(result_c2_client)
+    registered = decode_protocol_response(
+        result_c2_client.post(
+            "/api/v1/protocol/frames",
+            content=encode_protocol_test_frame(REGISTER, register_payload(supported_versions=[1])),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+        ).content
+    )
+    task = create_shell_task(result_c2_client, token, registered["beacon_id"], command="expire-result")
+    result_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(TASK_POLL, {"beacon_id": registered["beacon_id"]}),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+    stdout = "x" * 1200
+    result_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(
+            TASK_RESULT,
+            {
+                "beacon_id": registered["beacon_id"],
+                "exit_code": 0,
+                "status": "completed",
+                "stdout": stdout,
+                "task_id": task["id"],
+            },
+        ),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+
+    settings = get_settings()
+    store = artifact_store_for_settings(settings)
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        result = session.execute(select(TaskResult).where(TaskResult.task_id == uuid.UUID(task["id"]))).scalar_one()
+        artifact = (
+            session.execute(
+                select(Artifact).where(Artifact.owner_id == result.id, Artifact.owner_type == "task_result")
+            )
+            .scalars()
+            .one()
+        )
+        object_key = artifact.object_key
+        assert store.head(object_key)
+        result.expires_at = utc_now() - timedelta(seconds=1)
+        session.add(result)
+        deleted = purge_expired_task_results(session, settings)
+        session.commit()
+
+    with SessionFactory() as session:
+        result = (
+            session.execute(select(TaskResult).where(TaskResult.task_id == uuid.UUID(task["id"]))).scalar_one_or_none()
+        )
+        artifact = session.execute(select(Artifact).where(Artifact.owner_type == "task_result")).scalar_one_or_none()
+
+    assert deleted == 1
+    assert result is None
+    assert artifact is None
+    assert not store.head(object_key)
 
 
 def test_cancel_dispatched_task_returns_conflict(protocol_c2_client):

@@ -3,6 +3,8 @@ package beacon
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,8 @@ import (
 	"xero-beacon/internal/shell"
 	"xero-beacon/internal/state"
 )
+
+const resultChunkBytes = 512 * 1024
 
 type Agent struct {
 	Config config.Config
@@ -301,18 +305,104 @@ func (a *Agent) executeTaskFromACK(ctx context.Context, ack map[string]any, send
 	case <-ctx.Done():
 		return ctx.Err()
 	case result := <-done:
-		return sendResult(map[string]any{
-			"beacon_id":  a.State.BeaconID,
-			"task_id":    taskID,
-			"status":     result.Status,
-			"stdout":     result.Stdout,
-			"stderr":     result.Stderr,
-			"exit_code":  result.ExitCode,
-			"timed_out":  result.TimedOut,
-			"truncated":  result.Truncated,
-			"session_id": a.Client.SessionIDString(),
-		})
+		return a.sendTaskResult(taskID, result, sendResult)
 	}
+}
+
+func (a *Agent) sendTaskResult(taskID string, result shell.Result, sendResult func(map[string]any) error) error {
+	base := map[string]any{
+		"beacon_id":  a.State.BeaconID,
+		"task_id":    taskID,
+		"status":     result.Status,
+		"exit_code":  result.ExitCode,
+		"timed_out":  result.TimedOut,
+		"truncated":  result.Truncated,
+		"session_id": a.Client.SessionIDString(),
+	}
+	if len([]byte(result.Stdout))+len([]byte(result.Stderr)) <= resultChunkBytes {
+		base["stdout"] = result.Stdout
+		base["stderr"] = result.Stderr
+		return sendResult(base)
+	}
+
+	uploadID := fmt.Sprintf("%s-%s-%d", a.Client.SessionIDString(), taskID, time.Now().UnixNano())
+	streams := []struct {
+		name  string
+		value string
+	}{
+		{name: "stdout", value: result.Stdout},
+		{name: "stderr", value: result.Stderr},
+	}
+	chunkedStreams := make([]struct {
+		name  string
+		value string
+	}, 0, len(streams))
+	for _, stream := range streams {
+		if stream.value != "" {
+			chunkedStreams = append(chunkedStreams, stream)
+		}
+	}
+	if len(chunkedStreams) == 0 {
+		base["stdout"] = result.Stdout
+		base["stderr"] = result.Stderr
+		return sendResult(base)
+	}
+
+	for streamIndex, stream := range chunkedStreams {
+		content := []byte(stream.value)
+		totalChunks := (len(content) + resultChunkBytes - 1) / resultChunkBytes
+		streamDigest := sha256Hex(content)
+		for sequence := 0; sequence < totalChunks; sequence++ {
+			start := sequence * resultChunkBytes
+			end := start + resultChunkBytes
+			if end > len(content) {
+				end = len(content)
+			}
+			chunk := content[start:end]
+			payload := cloneMap(base)
+			payload["upload_id"] = uploadID
+			payload["result_id"] = uploadID
+			payload["stream"] = stream.name
+			payload["chunk_index"] = sequence
+			payload["total_chunks"] = totalChunks
+			payload["chunk"] = string(chunk)
+			payload["chunk_sha256"] = sha256Hex(chunk)
+			payload["stream_sha256"] = streamDigest
+			payload["stream_size_bytes"] = len(content)
+			payload["result_final"] = streamIndex == len(chunkedStreams)-1 && sequence == totalChunks-1
+			if payload["result_final"] == true {
+				payload["stdout"] = fallbackStreamValue(result.Stdout, stream.name, "stdout")
+				payload["stderr"] = fallbackStreamValue(result.Stderr, stream.name, "stderr")
+			}
+			if err := sendResult(payload); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func cloneMap(value map[string]any) map[string]any {
+	cloned := make(map[string]any, len(value))
+	for key, item := range value {
+		cloned[key] = item
+	}
+	return cloned
+}
+
+func fallbackStreamValue(value string, chunkedStream string, targetStream string) string {
+	if chunkedStream == targetStream {
+		return ""
+	}
+	if len([]byte(value)) > resultChunkBytes {
+		return ""
+	}
+	return value
+}
+
+func sha256Hex(content []byte) string {
+	digest := sha256.Sum256(content)
+	return hex.EncodeToString(digest[:])
 }
 
 func registerPayload(runtime map[string]any) map[string]any {

@@ -130,6 +130,16 @@ def list_c2_tasks(token: str, beacon_id: str, *, command: str | None = None) -> 
     return response.json()["items"]
 
 
+def get_c2_task_result(token: str, task_id: str) -> dict:
+    response = httpx.get(
+        f"{C2_URL}/api/v1/tasks/{task_id}/result",
+        headers=c2_auth_headers(token),
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def c2_url_for_docker() -> str:
     parsed = C2_URL.rstrip("/")
     for host in ("localhost", "127.0.0.1"):
@@ -137,9 +147,29 @@ def c2_url_for_docker() -> str:
     return parsed
 
 
-def run_go_beacon_once(tmp_path: Path, *, protocol: dict, fingerprint: str) -> subprocess.CompletedProcess[str]:
+def run_go_beacon_once(
+    tmp_path: Path,
+    *,
+    protocol: dict,
+    fingerprint: str,
+    output_limit_bytes: int | None = None,
+) -> subprocess.CompletedProcess[str]:
     state_dir = tmp_path / "go-beacon-state"
     state_dir.mkdir(exist_ok=True)
+    env_args = [
+        "-e",
+        f"XERO_BEACON_C2_URL={c2_url_for_docker()}",
+        "-e",
+        f"XERO_BEACON_C2_PUBLIC_KEY_B64={protocol['c2_public_key_b64']}",
+        "-e",
+        "XERO_BEACON_STATE_PATH=/state/beacon-state.json",
+        "-e",
+        f"XERO_BEACON_MACHINE_FINGERPRINT_HASH={fingerprint}",
+        "-e",
+        "XERO_BEACON_SLEEP_SECONDS=1",
+    ]
+    if output_limit_bytes is not None:
+        env_args.extend(["-e", f"XERO_BEACON_OUTPUT_LIMIT_BYTES={output_limit_bytes}"])
     return subprocess.run(
         [
             "docker",
@@ -152,16 +182,7 @@ def run_go_beacon_once(tmp_path: Path, *, protocol: dict, fingerprint: str) -> s
             f"{state_dir}:/state",
             "-w",
             "/workspace/platform/beacons/go",
-            "-e",
-            f"XERO_BEACON_C2_URL={c2_url_for_docker()}",
-            "-e",
-            f"XERO_BEACON_C2_PUBLIC_KEY_B64={protocol['c2_public_key_b64']}",
-            "-e",
-            "XERO_BEACON_STATE_PATH=/state/beacon-state.json",
-            "-e",
-            f"XERO_BEACON_MACHINE_FINGERPRINT_HASH={fingerprint}",
-            "-e",
-            "XERO_BEACON_SLEEP_SECONDS=1",
+            *env_args,
             "golang:1.26",
             "go",
             "run",
@@ -593,6 +614,51 @@ def test_c2_stack_go_beacon_records_command_history_and_timeout(tmp_path):
     searched = {item["id"]: item for item in list_c2_tasks(c2_token, beacon_id, command="sleep")}
     assert searched[task["id"]]["status"] == "failed"
     assert "stdout" not in searched[task["id"]]
+
+
+def test_c2_stack_go_beacon_uploads_large_task_result_in_chunks(tmp_path):
+    require_url(C2_URL, "C2")
+    wait_for_service_health("docker-compose.c2.yml", "c2-api")
+
+    c2_token = c2_access_token()
+    protocol = protocol_metadata(c2_token)
+    fingerprint = f"integration-go-large-result-{time.time_ns()}"
+    output_size = 5 * 1024 * 1024
+
+    first = run_go_beacon_once(tmp_path, protocol=protocol, fingerprint=fingerprint, output_limit_bytes=output_size)
+    assert first.returncode == 0
+    state_file = tmp_path / "go-beacon-state" / "beacon-state.json"
+    beacon_id = json.loads(state_file.read_text(encoding="utf-8"))["beacon_id"]
+
+    task = create_c2_task(
+        c2_token,
+        beacon_id,
+        command=f"head -c {output_size} /dev/zero | tr '\\0' 'x'",
+        priority="urgent",
+        timeout_seconds=20,
+    )
+    second = run_go_beacon_once(tmp_path, protocol=protocol, fingerprint=fingerprint, output_limit_bytes=output_size)
+    assert second.returncode == 0
+
+    tasks = {item["id"]: item for item in list_c2_tasks(c2_token, beacon_id)}
+    result = get_c2_task_result(c2_token, task["id"])
+    downloaded = httpx.get(
+        f"{C2_URL}/api/v1/tasks/{task['id']}/result/download?stream=combined",
+        headers=c2_auth_headers(c2_token),
+        timeout=30,
+    )
+    downloaded.raise_for_status()
+
+    assert tasks[task["id"]]["status"] == "completed"
+    assert result["status"] == "completed"
+    assert result["stdout_size_bytes"] == output_size
+    assert result["output_size_bytes"] == output_size
+    assert len(result["stdout"]) == output_size
+    assert result["stdout"].startswith("xxxx")
+    assert result["artifacts"][0]["role"] == "stdout"
+    assert result["artifacts"][0]["available"] is True
+    assert len(downloaded.content) == output_size
+    assert downloaded.content.startswith(b"xxxx")
 
 
 def test_c2_stack_cancelled_task_is_skipped_by_beacon_poll():

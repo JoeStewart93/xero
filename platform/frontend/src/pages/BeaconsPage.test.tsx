@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Beacon } from '../api';
+import type { OperatorRealtimeEvent } from '../operatorRealtime';
 import { BeaconsPage } from './BeaconsPage';
 
 const mocks = vi.hoisted(() => ({
@@ -14,6 +15,8 @@ const mocks = vi.hoisted(() => ({
 const apiMocks = vi.hoisted(() => ({
   cancelTask: vi.fn(),
   createShellTask: vi.fn(),
+  downloadTaskResultText: vi.fn(),
+  getTaskResult: vi.fn(),
   getTasks: vi.fn(),
 }));
 
@@ -21,6 +24,8 @@ vi.mock('../api', async (importOriginal) => ({
   ...((await importOriginal()) as object),
   cancelTask: apiMocks.cancelTask,
   createShellTask: apiMocks.createShellTask,
+  downloadTaskResultText: apiMocks.downloadTaskResultText,
+  getTaskResult: apiMocks.getTaskResult,
   getTasks: apiMocks.getTasks,
 }));
 
@@ -150,6 +155,31 @@ describe('BeaconsPage', () => {
     apiMocks.getTasks.mockResolvedValue({ items: [] });
     apiMocks.createShellTask.mockResolvedValue(queuedTask);
     apiMocks.cancelTask.mockResolvedValue({ ...queuedTask, cancelled_at: '2026-06-08T14:09:00Z', status: 'cancelled' });
+    apiMocks.getTaskResult.mockResolvedValue({
+      artifacts: [],
+      beacon_id: beaconOne.id,
+      completed_at: '2026-06-08T14:09:00Z',
+      created_at: '2026-06-08T14:08:00Z',
+      error_message: null,
+      exit_code: 0,
+      expires_at: '2026-06-15T14:09:00Z',
+      id: '77777777-7777-7777-7777-777777777777',
+      metadata: {},
+      output_sha256: 'output-sha',
+      output_size_bytes: 12,
+      status: 'completed',
+      stderr: '',
+      stderr_sha256: 'stderr-sha',
+      stderr_size_bytes: 0,
+      stdout: 'output line\n',
+      stdout_sha256: 'stdout-sha',
+      stdout_size_bytes: 12,
+      task_id: '55555555-5555-5555-5555-555555555555',
+      timed_out: false,
+      truncated: false,
+      updated_at: '2026-06-08T14:09:00Z',
+    });
+    apiMocks.downloadTaskResultText.mockResolvedValue(new Blob(['output line\n'], { type: 'text/plain' }));
   });
 
   afterEach(() => {
@@ -357,6 +387,158 @@ describe('BeaconsPage', () => {
     });
     expect(screen.getAllByText('completed').length).toBeGreaterThan(0);
     expect(screen.getByText('completed 1m ago')).toBeTruthy();
+  });
+
+  it('loads and downloads durable task results from command history', async () => {
+    const completedTask = {
+      ...queuedTask,
+      args: { command: 'hostname', shell_type: 'auto', timeout_seconds: 60 },
+      completed_at: '2026-06-08T14:09:00Z',
+      id: '55555555-5555-5555-5555-555555555555',
+      status: 'completed',
+    };
+    const createObjectURL = vi.fn(() => 'blob:task-result');
+    const revokeObjectURL = vi.fn();
+    const clickAnchor = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+    apiMocks.getTasks.mockResolvedValue({ items: [completedTask] });
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 1,
+      beacons: [beaconOne],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 0,
+      status: 'connected',
+    });
+
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    expect(await screen.findByText('hostname')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'View result for hostname' }));
+
+    expect(await screen.findByTestId('task-result-panel')).toBeTruthy();
+    await waitFor(() => {
+      expect(apiMocks.getTaskResult).toHaveBeenCalledWith(
+        'http://localhost:18001',
+        'c2-token',
+        '55555555-5555-5555-5555-555555555555',
+      );
+    });
+    expect(screen.getByText('output line')).toBeTruthy();
+    expect(screen.getByText('Exit 0')).toBeTruthy();
+    expect(screen.getAllByText('12 B').length).toBeGreaterThanOrEqual(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Download combined result' }));
+
+    await waitFor(() => {
+      expect(apiMocks.downloadTaskResultText).toHaveBeenCalledWith(
+        'http://localhost:18001',
+        'c2-token',
+        '55555555-5555-5555-5555-555555555555',
+        'combined',
+      );
+    });
+    expect(createObjectURL).toHaveBeenCalled();
+    expect(clickAnchor).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:task-result');
+  });
+
+  it('refreshes the selected durable result when a completion event arrives', async () => {
+    const completedTask = {
+      ...queuedTask,
+      args: { command: 'hostname', shell_type: 'auto', timeout_seconds: 60 },
+      completed_at: '2026-06-08T14:09:00Z',
+      id: '55555555-5555-5555-5555-555555555555',
+      status: 'completed',
+    };
+    let latestEvent: OperatorRealtimeEvent | null = null;
+    const realtimeState = {
+      activeBeaconCount: 1,
+      beaconCount: 1,
+      beacons: [beaconOne],
+      error: '',
+      offlineBeaconCount: 0,
+      status: 'connected',
+    };
+    apiMocks.getTasks.mockResolvedValue({ items: [completedTask] });
+    apiMocks.getTaskResult
+      .mockResolvedValueOnce({
+        artifacts: [],
+        beacon_id: beaconOne.id,
+        completed_at: '2026-06-08T14:09:00Z',
+        created_at: '2026-06-08T14:08:00Z',
+        error_message: null,
+        exit_code: 0,
+        expires_at: '2026-06-15T14:09:00Z',
+        id: '77777777-7777-7777-7777-777777777777',
+        metadata: {},
+        output_sha256: 'output-sha',
+        output_size_bytes: 15,
+        status: 'completed',
+        stderr: '',
+        stderr_sha256: 'stderr-sha',
+        stderr_size_bytes: 0,
+        stdout: 'initial output',
+        stdout_sha256: 'stdout-sha',
+        stdout_size_bytes: 15,
+        task_id: completedTask.id,
+        timed_out: false,
+        truncated: false,
+        updated_at: '2026-06-08T14:09:00Z',
+      })
+      .mockResolvedValueOnce({
+        artifacts: [],
+        beacon_id: beaconOne.id,
+        completed_at: '2026-06-08T14:10:00Z',
+        created_at: '2026-06-08T14:08:00Z',
+        error_message: null,
+        exit_code: 0,
+        expires_at: '2026-06-15T14:10:00Z',
+        id: '77777777-7777-7777-7777-777777777777',
+        metadata: {},
+        output_sha256: 'updated-sha',
+        output_size_bytes: 14,
+        status: 'completed',
+        stderr: '',
+        stderr_sha256: 'stderr-sha',
+        stderr_size_bytes: 0,
+        stdout: 'updated output',
+        stdout_sha256: 'updated-sha',
+        stdout_size_bytes: 14,
+        task_id: completedTask.id,
+        timed_out: false,
+        truncated: false,
+        updated_at: '2026-06-08T14:10:00Z',
+      });
+    mocks.useRealtime.mockImplementation(() => ({ ...realtimeState, latestEvent }));
+
+    const rendered = renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    expect(await screen.findByText('hostname')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'View result for hostname' }));
+    expect(await screen.findByText('initial output')).toBeTruthy();
+
+    latestEvent = {
+      data: {},
+      id: 'event-one',
+      occurred_at: '2026-06-08T14:10:00Z',
+      scope: { beacon_id: beaconOne.id, task_id: completedTask.id },
+      source: { role: 'c2', service: 'xero-c2-core' },
+      type: 'task.result.completed',
+      version: 1,
+    };
+    rendered.rerender(
+      <MemoryRouter>
+        <BeaconsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('updated output')).toBeTruthy();
+    expect(apiMocks.getTaskResult.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   it('cancels a queued task from the command queue modal', async () => {

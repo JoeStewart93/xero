@@ -11,12 +11,16 @@ import {
   createShellTask,
   createWorkerPairingToken,
   downloadBeaconBuildArtifact,
+  downloadTaskResultArtifact,
+  downloadTaskResultText,
   getBeaconBuilds,
   getBeaconBuildTargets,
   getCurrentOperator,
   getProtocolInfo,
   getProtocolSecurityEvents,
   getTaskAuditEvents,
+  getTaskResult,
+  getTaskResults,
   getTasks,
   getTransportStatus,
   launchInfrastructureWorker,
@@ -275,12 +279,41 @@ describe('api client', () => {
       task_status: 'queued',
       updated_at: new Date().toISOString(),
     };
+    const taskResultPayload = {
+      artifacts: [{ available: true, content_type: 'text/plain', filename: 'task-one-stdout.txt', id: 'artifact-one', role: 'stdout', sha256: 'def456', size_bytes: 7 }],
+      beacon_id: 'beacon-one',
+      completed_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      error_message: null,
+      exit_code: 0,
+      expires_at: new Date().toISOString(),
+      id: 'result-one',
+      metadata: {},
+      output_sha256: 'def456',
+      output_size_bytes: 7,
+      status: 'completed',
+      stderr: '',
+      stderr_sha256: 'empty-sha',
+      stderr_size_bytes: 0,
+      stdout: 'whoami',
+      stdout_sha256: 'def456',
+      stdout_size_bytes: 7,
+      task_id: 'task-one',
+      timed_out: false,
+      truncated: false,
+      updated_at: new Date().toISOString(),
+    };
+    const resultBlob = new Blob(['whoami']);
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ items: [taskPayload] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(taskPayload), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...taskPayload, status: 'cancelled' }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [taskAuditPayload] }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [taskAuditPayload] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(taskResultPayload), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [taskResultPayload], next_cursor: null }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(resultBlob, { status: 200 }))
+      .mockResolvedValueOnce(new Response(resultBlob, { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
     await getTasks('http://c2.local:8001/', 'c2-token', {
@@ -298,6 +331,10 @@ describe('api client', () => {
     );
     await cancelTask('http://c2.local:8001/', 'c2-token', 'task-one');
     await getTaskAuditEvents('http://c2.local:8001/', 'c2-token', 'task-one', 5);
+    await getTaskResult('http://c2.local:8001/', 'c2-token', 'task-one');
+    await getTaskResults('http://c2.local:8001/', 'c2-token', { beaconId: 'beacon-one', limit: 5, status: 'completed' });
+    await downloadTaskResultText('http://c2.local:8001/', 'c2-token', 'task-one', 'stdout');
+    await downloadTaskResultArtifact('http://c2.local:8001/', 'c2-token', 'task-one', 'artifact-one');
 
     expect(fetchMock.mock.calls[0][0]).toBe(
       'http://c2.local:8001/api/v1/tasks?beacon_id=beacon-one&command=whoami&status=queued&limit=10',
@@ -313,6 +350,12 @@ describe('api client', () => {
     expect(fetchMock.mock.calls[2][0]).toBe('http://c2.local:8001/api/v1/tasks/task-one');
     expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe('DELETE');
     expect(fetchMock.mock.calls[3][0]).toBe('http://c2.local:8001/api/v1/tasks/task-one/audit?limit=5');
+    expect(fetchMock.mock.calls[4][0]).toBe('http://c2.local:8001/api/v1/tasks/task-one/result');
+    expect(fetchMock.mock.calls[5][0]).toBe(
+      'http://c2.local:8001/api/v1/task-results?beacon_id=beacon-one&status=completed&limit=5',
+    );
+    expect(fetchMock.mock.calls[6][0]).toBe('http://c2.local:8001/api/v1/tasks/task-one/result/download?stream=stdout');
+    expect(fetchMock.mock.calls[7][0]).toBe('http://c2.local:8001/api/v1/tasks/task-one/result/artifacts/artifact-one');
   });
 
   it('calls C2 beacon build endpoints and downloads artifacts with bearer auth', async () => {

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, Uuid
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from xero_common.models import IdMixin, TimestampMixin, utc_now
 
@@ -189,6 +189,95 @@ class TaskAuditEvent(BaseModel):
     message: Mapped[str | None] = mapped_column(String(512), nullable=True)
     event_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+
+
+class TaskResult(BaseModel):
+    __tablename__ = "task_results"
+    __table_args__ = (UniqueConstraint("task_id", name="uq_task_results_task_id"),)
+
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    beacon_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("beacons.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    timed_out: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    truncated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    stdout_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stderr_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stdout_size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    stderr_size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    output_size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    stdout_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stderr_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    output_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    result_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class ResultChunk(BaseModel):
+    __tablename__ = "result_chunks"
+    __table_args__ = (
+        UniqueConstraint("task_result_id", "stream", "upload_id", "sequence", name="uq_result_chunks_sequence"),
+    )
+
+    task_result_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("task_results.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    beacon_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("beacons.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    upload_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    stream: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_chunks: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
+    chunk_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    stream_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stream_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+
+
+class TaskResultArtifact(BaseModel):
+    __tablename__ = "task_result_artifacts"
+    __table_args__ = (UniqueConstraint("task_result_id", "artifact_id", "role", name="uq_task_result_artifacts_role"),)
+
+    task_result_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("task_results.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    artifact_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("artifacts.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    role: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    artifact: Mapped[Artifact] = relationship(foreign_keys=[artifact_id])
 
 
 class Artifact(BaseModel):

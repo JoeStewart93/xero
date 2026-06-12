@@ -156,6 +156,7 @@ export interface TransportStatus {
 export type TaskPriority = 'high' | 'low' | 'normal' | 'urgent';
 export type TaskStatus = 'cancelled' | 'completed' | 'dispatched' | 'failed' | 'queued' | 'running';
 export type ShellType = 'auto' | 'bash' | 'cmd' | 'powershell';
+export type ShellSessionStatus = 'closed' | 'closing' | 'detached' | 'failed' | 'open' | 'opening';
 export type BeaconBuildStatus = 'building' | 'failed' | 'queued' | 'succeeded';
 export type BeaconBuildTargetOS = 'linux' | 'windows';
 export type BeaconBuildTargetArch = 'amd64';
@@ -165,6 +166,31 @@ export interface ShellTaskArgs {
   command: string;
   shell_type?: ShellType;
   timeout_seconds?: number;
+}
+
+export interface ShellSession {
+  actor_subject: string;
+  beacon_id: string;
+  close_reason: string | null;
+  closed_at: string | null;
+  cols: number;
+  created_at: string;
+  detached_at: string | null;
+  id: string;
+  last_activity_at: string;
+  opened_at: string;
+  rows: number;
+  session_type: 'shell';
+  shell_type: ShellType;
+  status: ShellSessionStatus;
+  updated_at: string;
+}
+
+export interface ShellSessionCreateRequest {
+  beacon_id: string;
+  cols?: number;
+  rows?: number;
+  shell_type?: ShellType;
 }
 
 export interface Task {
@@ -573,6 +599,36 @@ export async function createShellTask(
       priority,
     }),
   });
+}
+
+export async function createShellSession(
+  baseUrl: string,
+  accessToken: string,
+  payload: ShellSessionCreateRequest,
+): Promise<ShellSession> {
+  return c2Fetch<ShellSession>(baseUrl, accessToken, '/api/v1/sessions/shell', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getShellSession(baseUrl: string, accessToken: string, sessionId: string): Promise<ShellSession> {
+  return c2Fetch<ShellSession>(baseUrl, accessToken, `/api/v1/sessions/${sessionId}`);
+}
+
+export async function closeShellSession(baseUrl: string, accessToken: string, sessionId: string): Promise<ShellSession> {
+  return c2Fetch<ShellSession>(baseUrl, accessToken, `/api/v1/sessions/${sessionId}`, {
+    method: 'DELETE',
+  });
+}
+
+export function shellSessionWebSocketUrl(baseUrl: string, sessionId: string): string {
+  const url = new URL(baseUrl);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.pathname = `/ws/sessions/${encodeURIComponent(sessionId)}`;
+  url.search = '';
+  url.hash = '';
+  return url.toString();
 }
 
 export async function cancelTask(baseUrl: string, accessToken: string, taskId: string): Promise<Task> {

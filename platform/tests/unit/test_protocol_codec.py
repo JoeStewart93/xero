@@ -58,7 +58,12 @@ def test_frame_encode_decode_roundtrip_all_message_types():
         HEARTBEAT: {"beacon_id": str(uuid.uuid4())},
         TASK_POLL: {"beacon_id": str(uuid.uuid4())},
         TASK_RESULT: {"beacon_id": str(uuid.uuid4()), "status": "completed", "task_id": "task-1"},
-        SESSION_DATA: {"beacon_id": str(uuid.uuid4()), "stream": "stdout", "chunk": "hello"},
+        SESSION_DATA: {
+            "beacon_id": str(uuid.uuid4()),
+            "data_b64": "aGVsbG8=",
+            "op": "stdout",
+            "session_id": str(uuid.uuid4()),
+        },
         ACK: {"status": "ok"},
     }
 

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import threading
 import time
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -22,6 +24,7 @@ from xero_c2.models import (
     BeaconBuild,
     BeaconEvent,
     InfrastructureWorker,
+    InteractiveSession,
     ProtocolFrameReceipt,
     ProtocolSecurityEvent,
     ResultChunk,
@@ -30,13 +33,26 @@ from xero_c2.models import (
     TaskResult,
     WorkerEvent,
 )
-from xero_c2.protocol import HEARTBEAT, REGISTER, TASK_POLL, TASK_RESULT
+from xero_c2.protocol import HEARTBEAT, REGISTER, SESSION_DATA, TASK_POLL, TASK_RESULT
+from xero_c2.protocol.codec import public_key_bytes
+from xero_c2.sessions import (
+    DuplicateSessionAttachError,
+    SessionRelayManager,
+    apply_beacon_session_data,
+    close_detached_after_grace,
+    expire_idle_sessions,
+    terminal_data_b64,
+)
 from xero_c2.task_results import purge_expired_task_results
 from xero_common.database import clear_database_caches, get_engine, get_session_factory
 from xero_common.models import utc_now
 from xero_common.security import hash_beacon_token
 
-from tests.helpers.protocol_frames import decode_protocol_response, encode_protocol_test_frame
+from tests.helpers.protocol_frames import (
+    decode_protocol_response,
+    encode_protocol_test_frame,
+    protocol_client_private_key,
+)
 
 
 @pytest.fixture
@@ -170,6 +186,20 @@ def create_shell_task(client, token: str, beacon_id: str, *, command: str = "who
     )
     assert response.status_code == 200
     return response.json()
+
+
+def attach_protocol_metadata(beacon_id: str) -> None:
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        beacon = session.get(Beacon, uuid.UUID(beacon_id))
+        assert beacon is not None
+        beacon.protocol_session_id = str(uuid.uuid4())
+        beacon.protocol_peer_public_key_b64 = base64.b64encode(
+            public_key_bytes(protocol_client_private_key())
+        ).decode("ascii")
+        session.add(beacon)
+        session.commit()
 
 
 def test_c2_connect_and_session(c2_client):
@@ -1324,6 +1354,263 @@ def test_beacon_websocket_task_poll_receives_queued_task(protocol_c2_client):
     assert ack["task"]["id"] == task["id"]
     assert ack["task"]["args"]["command"] == "whoami"
     assert stored is not None and stored.status == "dispatched"
+
+
+def test_shell_session_open_sends_session_data_to_connected_beacon(protocol_c2_client, monkeypatch):
+    token = connect_c2(protocol_c2_client)
+    registered = register_beacon(protocol_c2_client)
+    attach_protocol_metadata(registered["beacon_id"])
+    sent_frames: list[bytes] = []
+
+    async def capture_send(_, frame: bytes) -> bool:
+        sent_frames.append(frame)
+        return True
+
+    monkeypatch.setattr(protocol_c2_client.app.state.beacon_transport_manager, "send_to_beacon", capture_send)
+
+    created = protocol_c2_client.post(
+        "/api/v1/sessions/shell",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"beacon_id": registered["beacon_id"], "cols": 100, "rows": 28, "shell_type": "powershell"},
+    )
+    session_payload = created.json()
+    open_frame = decode_protocol_response(sent_frames[0], expected_message_type=SESSION_DATA)
+
+    assert created.status_code == 200
+    assert session_payload["status"] == "opening"
+    assert session_payload["shell_type"] == "powershell"
+    assert open_frame["op"] == "open"
+    assert open_frame["beacon_id"] == registered["beacon_id"]
+    assert open_frame["session_id"] == session_payload["id"]
+    assert open_frame["cols"] == 100
+    assert open_frame["rows"] == 28
+
+    ack_response = protocol_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(
+            SESSION_DATA,
+            {
+                "beacon_id": registered["beacon_id"],
+                "op": "open_ack",
+                "session_id": session_payload["id"],
+            },
+        ),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+    ack = decode_protocol_response(ack_response.content)
+
+    assert ack_response.status_code == 200
+    assert ack["acknowledged_message_type"] == SESSION_DATA
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        stored = session.get(InteractiveSession, uuid.UUID(session_payload["id"]))
+
+    assert stored is not None
+    assert stored.status == "open"
+
+
+def test_shell_session_close_sends_session_data_and_marks_closed(protocol_c2_client, monkeypatch):
+    token = connect_c2(protocol_c2_client)
+    registered = register_beacon(protocol_c2_client)
+    attach_protocol_metadata(registered["beacon_id"])
+    sent_frames: list[bytes] = []
+
+    async def capture_send(_, frame: bytes) -> bool:
+        sent_frames.append(frame)
+        return True
+
+    monkeypatch.setattr(protocol_c2_client.app.state.beacon_transport_manager, "send_to_beacon", capture_send)
+
+    created = protocol_c2_client.post(
+        "/api/v1/sessions/shell",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"beacon_id": registered["beacon_id"], "cols": 100, "rows": 28, "shell_type": "powershell"},
+    )
+    session_payload = created.json()
+
+    closed = protocol_c2_client.delete(
+        f"/api/v1/sessions/{session_payload['id']}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    close_frame = decode_protocol_response(sent_frames[-1], expected_message_type=SESSION_DATA)
+
+    assert closed.status_code == 200
+    assert closed.json()["status"] == "closed"
+    assert closed.json()["close_reason"] == "operator"
+    assert close_frame["op"] == "close"
+    assert close_frame["reason"] == "operator"
+    assert close_frame["session_id"] == session_payload["id"]
+
+
+def test_shell_session_data_builds_terminal_output_message(c2_client):
+    registered = register_beacon(c2_client)
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        beacon = session.get(Beacon, uuid.UUID(registered["beacon_id"]))
+        assert beacon is not None
+        shell_session = InteractiveSession(
+            actor_subject="operator:test",
+            beacon_id=beacon.id,
+            session_type="shell",
+            shell_type="bash",
+            status="open",
+        )
+        session.add(shell_session)
+        session.commit()
+        outcome = apply_beacon_session_data(
+            session,
+            beacon_id=beacon.id,
+            payload={
+                "beacon_id": registered["beacon_id"],
+                "data_b64": terminal_data_b64("hello from beacon\n"),
+                "op": "stdout",
+                "session_id": str(shell_session.id),
+            },
+        )
+
+    assert outcome.event_type == "session.output.received"
+    assert outcome.operator_message is not None
+    assert outcome.operator_message["op"] == "stdout"
+    assert outcome.operator_message["data"] == "hello from beacon\n"
+
+
+def test_shell_session_rejects_second_operator_attach():
+    class FakeSessionWebSocket:
+        application_state = WebSocketState.CONNECTED
+
+        def __init__(self) -> None:
+            self.closed_code: int | None = None
+            self.sent: list[dict] = []
+
+        async def send_json(self, payload: dict) -> None:
+            self.sent.append(payload)
+
+        async def close(self, *, code: int = 1000) -> None:
+            self.closed_code = code
+            self.application_state = WebSocketState.DISCONNECTED
+
+    async def scenario() -> int | None:
+        manager = SessionRelayManager(queue_size=2)
+        session_id = uuid.uuid4()
+        first = FakeSessionWebSocket()
+        second = FakeSessionWebSocket()
+        await manager.register(first, session_id)  # type: ignore[arg-type]
+        with pytest.raises(DuplicateSessionAttachError):
+            await manager.register(second, session_id)  # type: ignore[arg-type]
+        await manager.close_all()
+        return second.closed_code
+
+    assert asyncio.run(scenario()) == 4409
+
+
+def test_idle_timeout_closes_shell_session(c2_client):
+    registered = register_beacon(c2_client)
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        beacon = session.get(Beacon, uuid.UUID(registered["beacon_id"]))
+        assert beacon is not None
+        shell_session = InteractiveSession(
+            actor_subject="operator:test",
+            beacon_id=beacon.id,
+            last_activity_at=utc_now() - timedelta(seconds=settings.session_idle_timeout_seconds + 1),
+            opened_at=utc_now() - timedelta(seconds=settings.session_idle_timeout_seconds + 2),
+            session_type="shell",
+            shell_type="bash",
+            status="open",
+        )
+        session.add(shell_session)
+        session.commit()
+        expired = expire_idle_sessions(session, settings)
+        session.commit()
+
+    assert [item.id for item in expired] == [shell_session.id]
+    assert expired[0].status == "closed"
+    assert expired[0].close_reason == "idle_timeout"
+
+
+def test_idle_timeout_keeps_recent_shell_session_open(c2_client):
+    registered = register_beacon(c2_client)
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        beacon = session.get(Beacon, uuid.UUID(registered["beacon_id"]))
+        assert beacon is not None
+        shell_session = InteractiveSession(
+            actor_subject="operator:test",
+            beacon_id=beacon.id,
+            last_activity_at=utc_now() - timedelta(minutes=5),
+            opened_at=utc_now() - timedelta(minutes=5),
+            session_type="shell",
+            shell_type="bash",
+            status="open",
+        )
+        session.add(shell_session)
+        session.commit()
+        expired = expire_idle_sessions(session, settings)
+        session.commit()
+        session.refresh(shell_session)
+
+    assert expired == []
+    assert shell_session.status == "open"
+
+
+def test_detached_shell_session_cleanup_closes_after_grace(c2_client, monkeypatch):
+    registered = register_beacon(c2_client)
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        beacon = session.get(Beacon, uuid.UUID(registered["beacon_id"]))
+        assert beacon is not None
+        shell_session = InteractiveSession(
+            actor_subject="operator:test",
+            beacon_id=beacon.id,
+            detached_at=utc_now(),
+            session_type="shell",
+            shell_type="bash",
+            status="detached",
+        )
+        session.add(shell_session)
+        session.commit()
+        session_id = shell_session.id
+
+    class FakeBeaconTransportManager:
+        async def send_to_beacon(self, *_):
+            return False
+
+    class FakeRealtimeHub:
+        def __init__(self) -> None:
+            self.events: list[dict] = []
+
+        async def broadcast(self, event: dict) -> None:
+            self.events.append(event)
+
+    async def immediate_sleep(_seconds: int) -> None:
+        return None
+
+    realtime_hub = FakeRealtimeHub()
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            beacon_transport_manager=FakeBeaconTransportManager(),
+            operator_realtime_hub=realtime_hub,
+            redis_client=None,
+        ),
+    )
+    monkeypatch.setattr("xero_c2.sessions.asyncio.sleep", immediate_sleep)
+
+    asyncio.run(close_detached_after_grace(app, settings, session_id))
+
+    with SessionFactory() as session:
+        stored = session.get(InteractiveSession, session_id)
+
+    assert stored is not None
+    assert stored.status == "closed"
+    assert stored.close_reason == "operator_disconnected"
+    assert any(event["type"] == "session.closed" for event in realtime_hub.events)
 
 
 def test_beacon_websocket_existing_beacon_authenticates_with_token(protocol_c2_client):

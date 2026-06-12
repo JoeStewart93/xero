@@ -1,4 +1,6 @@
-import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FitAddon } from '@xterm/addon-fit';
+import { Terminal } from '@xterm/xterm';
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownUp,
   Boxes,
@@ -25,6 +27,8 @@ import { createPortal } from 'react-dom';
 
 import {
   cancelTask,
+  closeShellSession,
+  createShellSession,
   createShellTask,
   downloadTaskResultText,
   getTaskResult,
@@ -32,6 +36,7 @@ import {
 } from '../api';
 import type {
   Beacon,
+  ShellSession,
   ShellType,
   Task,
   TaskPriority,
@@ -44,6 +49,8 @@ import type { C2Connection } from '../c2ConnectionContext';
 import type { OperatorRealtimeEvent } from '../operatorRealtime';
 import { useC2Connection } from '../useC2Connection';
 import { useRealtime } from '../useRealtime';
+import { ShellSessionClient } from '../shellSessionClient';
+import type { ShellSessionConnectionStatus, ShellSessionMessage } from '../shellSessionClient';
 import {
   DEFAULT_BEACON_SORT_DIRECTION,
   DEFAULT_BEACON_SORT_KEY,
@@ -58,6 +65,7 @@ import {
   transportLabel,
   transportState,
 } from './beaconDisplay';
+import '@xterm/xterm/css/xterm.css';
 
 function DetailRow({ label, testId, value }: { label: string; testId?: string; value: string | number | null }) {
   return (
@@ -77,11 +85,11 @@ const hostOperations = [
     status: 'Planned',
   },
   {
-    description: 'Open a focused session workspace for direct host interaction.',
+    description: 'Attach to a live shell with streaming stdin and stdout.',
     icon: Crosshair,
     key: 'session',
     label: 'Interactive session',
-    status: 'Locked',
+    status: 'Ready',
   },
   {
     description: 'Inspect host files, collected artifacts, and secured output.',
@@ -147,6 +155,246 @@ function formatBytes(value: number): string {
 function resultOutput(result: TaskResult, stream: 'stderr' | 'stdout'): string {
   const value = result[stream];
   return typeof value === 'string' && value.length > 0 ? value : '(empty)';
+}
+
+function isTerminalSessionActive(session: ShellSession | null): boolean {
+  return Boolean(session && !['closed', 'failed'].includes(session.status));
+}
+
+function decodeTerminalData(message: ShellSessionMessage): string {
+  if (typeof message.data === 'string') {
+    return message.data;
+  }
+  if (!message.data_b64) {
+    return '';
+  }
+  try {
+    const raw = window.atob(message.data_b64);
+    const bytes = Uint8Array.from(raw, (char) => char.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return '';
+  }
+}
+
+function ShellSessionPanel({
+  beacon,
+  connection,
+}: {
+  beacon: Beacon;
+  connection: C2Connection;
+}) {
+  const terminalElementRef = useRef<HTMLDivElement | null>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const clientRef = useRef<ShellSessionClient | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<ShellSessionConnectionStatus>('disconnected');
+  const [error, setError] = useState('');
+  const [isClosingSession, setIsClosingSession] = useState(false);
+  const [isOpeningSession, setIsOpeningSession] = useState(false);
+  const [session, setSession] = useState<ShellSession | null>(null);
+  const [sessionShellType, setSessionShellType] = useState<ShellType>('auto');
+  const [terminalTranscript, setTerminalTranscript] = useState('');
+  const activeSession = isTerminalSessionActive(session);
+
+  const appendTerminal = useCallback((text: string) => {
+    if (!text) {
+      return;
+    }
+    terminalRef.current?.write(text);
+    setTerminalTranscript((current) => `${current}${text}`.slice(-20_000));
+  }, []);
+
+  const handleSessionStatus = useCallback((status: ShellSessionConnectionStatus, message?: string) => {
+    setConnectionStatus(status);
+    if (message) {
+      setError(message);
+    } else if (status === 'connected') {
+      setError('');
+    }
+  }, []);
+
+  const handleSessionMessage = useCallback((message: ShellSessionMessage) => {
+    if (message.session) {
+      setSession(message.session);
+    }
+    if (message.op === 'attached') {
+      appendTerminal(`\r\nAttached to session ${message.session?.id ?? ''}\r\n`);
+      return;
+    }
+    if (message.op === 'opened') {
+      appendTerminal('\r\nSession opened.\r\n');
+      setError('');
+      return;
+    }
+    if (message.op === 'stdout' || message.op === 'stderr') {
+      appendTerminal(decodeTerminalData(message));
+      return;
+    }
+    if (message.op === 'closed') {
+      appendTerminal('\r\nSession closed.\r\n');
+      clientRef.current?.stop();
+      return;
+    }
+    if (message.op === 'error') {
+      const messageText = message.message ?? message.session?.close_reason ?? 'Shell session error.';
+      setError(messageText);
+      appendTerminal(`\r\n${messageText}\r\n`);
+    }
+  }, [appendTerminal]);
+
+  useEffect(() => {
+    if (!terminalElementRef.current || terminalRef.current) {
+      return;
+    }
+    const terminal = new Terminal({
+      convertEol: true,
+      cursorBlink: true,
+      fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
+      fontSize: 12,
+      rows: 32,
+      theme: {
+        background: '#010509',
+        cursor: '#00e7ff',
+        foreground: '#d7f7ff',
+        selectionBackground: '#214a55',
+      },
+    });
+    const fitAddon = new FitAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.open(terminalElementRef.current);
+    fitAddon.fit();
+    const inputSubscription = terminal.onData((data) => {
+      clientRef.current?.sendInput(data);
+    });
+    terminalRef.current = terminal;
+    fitAddonRef.current = fitAddon;
+
+    function handleResize(): void {
+      fitAddon.fit();
+      clientRef.current?.resize(terminal.cols, terminal.rows);
+    }
+
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      inputSubscription.dispose();
+      clientRef.current?.stop();
+      terminal.dispose();
+      terminalRef.current = null;
+      fitAddonRef.current = null;
+    };
+  }, []);
+
+  async function handleOpenSession(): Promise<void> {
+    setIsOpeningSession(true);
+    setError('');
+    terminalRef.current?.reset();
+    setTerminalTranscript('');
+    appendTerminal(`Opening ${sessionShellType} shell on ${beacon.hostname}\r\n`);
+    try {
+      const created = await createShellSession(connection.baseUrl, connection.accessToken, {
+        beacon_id: beacon.id,
+        cols: 120,
+        rows: 32,
+        shell_type: sessionShellType,
+      });
+      setSession(created);
+      clientRef.current?.stop();
+      const client = new ShellSessionClient({
+        accessToken: connection.accessToken,
+        baseUrl: connection.baseUrl,
+        onMessage: handleSessionMessage,
+        onStatusChange: handleSessionStatus,
+        sessionId: created.id,
+      });
+      clientRef.current = client;
+      client.start();
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : 'Unable to open shell session.';
+      setError(message);
+      appendTerminal(`${message}\r\n`);
+    } finally {
+      setIsOpeningSession(false);
+    }
+  }
+
+  async function handleCloseSession(): Promise<void> {
+    if (!session) {
+      return;
+    }
+    setIsClosingSession(true);
+    setError('');
+    try {
+      if (clientRef.current?.isOpen()) {
+        clientRef.current.closeSession();
+      } else {
+        const closed = await closeShellSession(connection.baseUrl, connection.accessToken, session.id);
+        setSession(closed);
+        appendTerminal('\r\nSession closed.\r\n');
+      }
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : 'Unable to close shell session.';
+      setError(message);
+    } finally {
+      setIsClosingSession(false);
+    }
+  }
+
+  return (
+    <div className="shell-session-panel">
+      <div className="shell-session-toolbar">
+        <label>
+          <span>Shell</span>
+          <select
+            aria-label="Interactive shell type"
+            disabled={activeSession || isOpeningSession}
+            onChange={(event) => setSessionShellType(event.target.value as ShellType)}
+            value={sessionShellType}
+          >
+            {shellTypes.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          className="primary-button shell-session-action"
+          disabled={activeSession || isOpeningSession || !beacon.transport_connected}
+          onClick={() => void handleOpenSession()}
+          type="button"
+        >
+          <TerminalSquare aria-hidden="true" size={15} strokeWidth={2.2} />
+          <span>{isOpeningSession ? 'Opening' : 'Open'}</span>
+        </button>
+        <button
+          className="secondary-button shell-session-action"
+          disabled={!activeSession || isClosingSession}
+          onClick={() => void handleCloseSession()}
+          type="button"
+        >
+          <X aria-hidden="true" size={15} strokeWidth={2.2} />
+          <span>{isClosingSession ? 'Closing' : 'Close'}</span>
+        </button>
+      </div>
+
+      <div className="shell-session-status-strip">
+        <span data-testid="shell-session-status">{session?.status ?? connectionStatus}</span>
+        <span>{connectionStatus}</span>
+        <span>{beacon.transport_connected ? 'Transport online' : 'Transport offline'}</span>
+      </div>
+
+      {error ? <p className="task-queue-error" role="alert">{error}</p> : null}
+
+      <div className="shell-session-terminal-frame" data-testid="shell-session-terminal-frame">
+        <div aria-label="Interactive shell terminal" className="shell-session-terminal" ref={terminalElementRef} />
+      </div>
+      <pre aria-hidden="true" className="shell-session-transcript" data-testid="shell-session-transcript">
+        {terminalTranscript}
+      </pre>
+    </div>
+  );
 }
 
 function BeaconOperationsModal({
@@ -554,6 +802,8 @@ function BeaconOperationsModal({
                   </div>
                 ) : null}
               </div>
+            ) : activeOperation.key === 'session' ? (
+              <ShellSessionPanel beacon={beacon} connection={connection} />
             ) : (
               <>
                 <div className="beacon-operation-host-grid">

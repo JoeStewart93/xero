@@ -79,6 +79,11 @@ class Settings(BaseSettings):
         gt=0,
         alias="C2_TASK_RESULT_CLEANUP_INTERVAL_SECONDS",
     )
+    session_idle_timeout_seconds: int = Field(default=600, gt=0, alias="C2_SESSION_IDLE_TIMEOUT_SECONDS")
+    session_detach_grace_seconds: int = Field(default=30, ge=1, alias="C2_SESSION_DETACH_GRACE_SECONDS")
+    session_cleanup_interval_seconds: int = Field(default=5, gt=0, alias="C2_SESSION_CLEANUP_INTERVAL_SECONDS")
+    session_ws_queue_size: int = Field(default=128, ge=1, alias="C2_SESSION_WS_QUEUE_SIZE")
+    session_max_chunk_bytes: int = Field(default=65_536, ge=128, alias="C2_SESSION_MAX_CHUNK_BYTES")
     beacon_builds_enabled: bool = Field(default=False, alias="C2_BEACON_BUILDS_ENABLED")
     beacon_build_timeout_seconds: int = Field(default=180, gt=0, alias="C2_BEACON_BUILD_TIMEOUT_SECONDS")
     beacon_build_go_image: str = Field(default="golang:1.26", alias="C2_BEACON_BUILD_GO_IMAGE")
@@ -160,6 +165,8 @@ class Settings(BaseSettings):
         local_modes = {"development", "test"}
         if self.task_default_timeout_seconds > self.task_max_timeout_seconds:
             raise ValueError("C2_TASK_DEFAULT_TIMEOUT_SECONDS must be <= C2_TASK_MAX_TIMEOUT_SECONDS")
+        if self.session_idle_timeout_seconds <= self.session_detach_grace_seconds:
+            raise ValueError("C2_SESSION_IDLE_TIMEOUT_SECONDS must be greater than C2_SESSION_DETACH_GRACE_SECONDS")
         if self.app_env.lower() not in local_modes:
             if self.jwt_secret_key == DEV_JWT_SECRET or len(self.jwt_secret_key) < 32:
                 raise ValueError("C2_JWT_SECRET_KEY must be set to a non-default value outside development/test")

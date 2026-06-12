@@ -7,7 +7,9 @@ import {
 } from './authStorage';
 import {
   cancelTask,
+  closeShellSession,
   createBeaconBuild,
+  createShellSession,
   createShellTask,
   createWorkerPairingToken,
   downloadBeaconBuildArtifact,
@@ -18,6 +20,7 @@ import {
   getCurrentOperator,
   getProtocolInfo,
   getProtocolSecurityEvents,
+  getShellSession,
   getTaskAuditEvents,
   getTaskResult,
   getTaskResults,
@@ -25,6 +28,7 @@ import {
   getTransportStatus,
   launchInfrastructureWorker,
   loginOperator,
+  shellSessionWebSocketUrl,
 } from './api';
 import type {
   AuthSession,
@@ -356,6 +360,54 @@ describe('api client', () => {
     );
     expect(fetchMock.mock.calls[6][0]).toBe('http://c2.local:8001/api/v1/tasks/task-one/result/download?stream=stdout');
     expect(fetchMock.mock.calls[7][0]).toBe('http://c2.local:8001/api/v1/tasks/task-one/result/artifacts/artifact-one');
+  });
+
+  it('calls C2 shell session endpoints and builds the session websocket URL', async () => {
+    const shellSession = {
+      actor_subject: 'operator-one',
+      beacon_id: 'beacon-one',
+      close_reason: null,
+      closed_at: null,
+      cols: 120,
+      created_at: new Date().toISOString(),
+      detached_at: null,
+      id: 'session-one',
+      last_activity_at: new Date().toISOString(),
+      opened_at: new Date().toISOString(),
+      rows: 32,
+      session_type: 'shell',
+      shell_type: 'powershell',
+      status: 'opening',
+      updated_at: new Date().toISOString(),
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(shellSession), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...shellSession, status: 'open' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...shellSession, close_reason: 'operator', status: 'closed' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await createShellSession('http://c2.local:8001/', 'c2-token', {
+      beacon_id: 'beacon-one',
+      cols: 120,
+      rows: 32,
+      shell_type: 'powershell',
+    });
+    await getShellSession('http://c2.local:8001/', 'c2-token', 'session-one');
+    await closeShellSession('http://c2.local:8001/', 'c2-token', 'session-one');
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://c2.local:8001/api/v1/sessions/shell');
+    expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
+    expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)).toEqual({
+      beacon_id: 'beacon-one',
+      cols: 120,
+      rows: 32,
+      shell_type: 'powershell',
+    });
+    expect(fetchMock.mock.calls[1][0]).toBe('http://c2.local:8001/api/v1/sessions/session-one');
+    expect(fetchMock.mock.calls[2][0]).toBe('http://c2.local:8001/api/v1/sessions/session-one');
+    expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe('DELETE');
+    expect(shellSessionWebSocketUrl('https://c2.local:8001/base', 'session one')).toBe('wss://c2.local:8001/ws/sessions/session%20one');
   });
 
   it('calls C2 beacon build endpoints and downloads artifacts with bearer auth', async () => {

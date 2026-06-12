@@ -146,6 +146,33 @@ class ProtocolFrameReceipt(BaseModel):
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+class InteractiveSession(BaseModel):
+    __tablename__ = "sessions"
+
+    beacon_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("beacons.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    session_type: Mapped[str] = mapped_column(String(32), default="shell", nullable=False, index=True)
+    shell_type: Mapped[str] = mapped_column(String(32), default="auto", nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="opening", nullable=False, index=True)
+    actor_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    last_activity_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+        index=True,
+    )
+    detached_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    close_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    rows: Mapped[int] = mapped_column(Integer, default=32, nullable=False)
+    cols: Mapped[int] = mapped_column(Integer, default=120, nullable=False)
+
+
 class Task(BaseModel):
     __tablename__ = "tasks"
 

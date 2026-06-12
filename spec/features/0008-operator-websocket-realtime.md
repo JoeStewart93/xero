@@ -73,3 +73,8 @@ Direct-to-C2 operator WebSocket gateway that pushes beacon status changes, futur
 - [x] App shell realtime indicator shows Connected when WS established
 - [x] Simulate beacon check-in; Home beacon count updates without refresh
 - [x] Backend integration covers Redis degradation/recovery; frontend unit tests cover reconnecting/degraded/recovered client states.
+
+## Follow-up (F0074)
+
+- WebSocket auth must accept C2 operator JWTs (`kind: operator-session`); anonymous `c2-connect` tokens are rejected.
+- `RealtimePrincipal` includes `operator_id` and username for future audit and RBAC (F0105).

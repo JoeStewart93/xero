@@ -7,15 +7,18 @@
 | Priority | P1 |
 | Status | Planned |
 | MVP Phase | 5 |
-| Depends on | F0038, F0004 |
+| Depends on | F0038, F0049 |
 
 ## Summary
 Encrypted outbound tunnel from external connection handlers to the Xero C2 backend with certificate pinning, bidirectional frame relay, handler registration, heartbeat, and routing metadata.
 
+## Implementation Note
+F0049 provides shared infrastructure worker identity, one-time handler pairing, handler heartbeat, Settings > Infrastructure inventory, and local scaffold provisioning. F0039 remains planned for the encrypted handler-C2 tunnel, beacon frame relay, certificate pinning, handler draining semantics, and beacon routing through external handlers.
+
 ## Requirements
 - FR-11: Outbound encrypted tunnel from handler to C2
 - SR-03: Certificate pinning verifies C2 identity
-- Handler registers with C2 on startup via HANDLER_REGISTER
+- Handler pairs/registers with C2 through the F0049 worker control plane; tunnel startup still sends HANDLER_REGISTER metadata
 - Tunnel uses TLS 1.3 with pinned C2 certificate fingerprint
 - C2 routes beacon traffic to/from correct handler
 - Handler heartbeat includes health, capacity, connected beacon count, and draining state
@@ -27,12 +30,14 @@ Encrypted outbound tunnel from external connection handlers to the Xero C2 backe
 **Acceptance Criteria:**
 - [ ] HANDLER_REGISTER, HANDLER_HEARTBEAT, FRAME_RELAY, HANDLER_DRAINING message types
 - [ ] Tunnel encrypted with TLS 1.3 and cert pinning
-- [ ] Handler ID assigned by C2 on registration
+- [x] Handler worker ID assigned by C2 on F0049 registration
+- [ ] Tunnel session ID assigned by C2 on HANDLER_REGISTER
 
 ### Stage 2: C2 handler manager
 **Goal:** Backend tracks connected handlers and routes frames.
 **Acceptance Criteria:**
-- [ ] handlers table stores id, address, status, capacity, connected_at, and last_seen
+- [x] Shared `infrastructure_workers` table stores handler id, endpoint, status, capacity, and last_seen through F0049
+- [ ] Tunnel metadata stores connected_at, connected beacon counts, and relay state
 - [ ] FRAME_RELAY routes to beacon via handler or direct path
 - [ ] Handler disconnect marks associated beacons for reassignment by F0109
 
@@ -52,6 +57,7 @@ Encrypted outbound tunnel from external connection handlers to the Xero C2 backe
 ## Test Plan
 
 ### Unit Tests
+- [x] test_handler_worker_pairing_registration
 - [ ] test_handler_register_message
 - [ ] test_cert_pin_match_allows_connection
 - [ ] test_cert_pin_mismatch_rejects
@@ -61,9 +67,11 @@ Encrypted outbound tunnel from external connection handlers to the Xero C2 backe
 ### System / Integration Tests
 - [ ] Handler tunnels to C2; beacon task completes end-to-end
 - [ ] Wrong pin config; handler fails to connect; logged error
-- [ ] C2 shows handler online in handler registry API
+- [x] C2 shows handler online in shared infrastructure worker registry API after F0049 registration
+- [ ] C2 shows handler tunnel connected after tunnel establishment
 
 ### Playwright Tests
 - [ ] Settings shows handler tunnel status Connected
-- [ ] Handler list displays registered handlers with uptime
+- [x] Infrastructure lists handler worker inventory after F0049
+- [ ] Handler list displays tunnel uptime
 - [ ] Cert pin mismatch shows security alert in settings

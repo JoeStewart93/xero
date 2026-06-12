@@ -34,7 +34,11 @@ const beaconOne: Beacon = {
   machine_fingerprint_hash: 'fingerprint-alpha',
   os: 'Windows 11',
   pid: 4488,
+  protocol_version: 1,
   status: 'online',
+  transport_connected: true,
+  transport_last_seen: '2026-06-08T14:05:30Z',
+  transport_mode: 'websocket',
 };
 
 const beaconTwo: Beacon = {
@@ -48,7 +52,25 @@ const beaconTwo: Beacon = {
   machine_fingerprint_hash: 'fingerprint-bravo',
   os: 'Ubuntu 24.04',
   pid: 9001,
+  protocol_version: null,
   status: 'offline',
+  transport_connected: false,
+  transport_last_seen: '2026-06-08T13:05:00Z',
+  transport_mode: 'rest',
+};
+
+const beaconThree: Beacon = {
+  ...beaconOne,
+  hostname: 'beacon-charlie',
+  id: '33333333-3333-3333-3333-333333333333',
+  internal_ip: '10.40.0.10',
+  last_seen: '2026-06-08T14:04:00Z',
+  machine_fingerprint_hash: 'fingerprint-charlie',
+  protocol_version: 1,
+  status: 'offline',
+  transport_connected: false,
+  transport_last_seen: '2026-06-08T14:04:30Z',
+  transport_mode: 'long-poll',
 };
 
 function renderBeaconsPage() {
@@ -117,14 +139,58 @@ describe('BeaconsPage', () => {
     expect(screen.getByRole('link', { name: 'Open Settings' })).toBeTruthy();
   });
 
-  it('shows an empty registry when connected without beacons', () => {
+  it('shows an empty overview when connected without beacons', () => {
     renderBeaconsPage();
 
-    expect(screen.getByRole('heading', { name: 'Beacon registry' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Beacon overview' })).toBeTruthy();
     expect(screen.getByTestId('beacons-empty-state').textContent).toContain('No beacons registered.');
   });
 
   it('renders beacon roster and selected metadata detail', () => {
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 3,
+      beacons: [beaconTwo, beaconThree, beaconOne],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 2,
+      status: 'connected',
+    });
+
+    renderBeaconsPage();
+
+    const roster = screen.getByTestId('beacon-roster');
+    expect(within(roster).getByText('Last Heartbeat')).toBeTruthy();
+    expect(within(roster).getByText('beacon-alpha')).toBeTruthy();
+    expect(within(roster).getAllByText('Windows 11')).toHaveLength(2);
+    expect(within(roster).getByText('10.40.0.8')).toBeTruthy();
+    expect(within(roster).getByText('WebSocket')).toBeTruthy();
+    expect(within(roster).getByText('Long-poll')).toBeTruthy();
+    expect(within(roster).getByText('Connected')).toBeTruthy();
+    expect(screen.getByTestId('beacons-online-count').textContent).toBe('1');
+    expect(screen.getByTestId('beacons-offline-count').textContent).toBe('2');
+    expect(screen.getByTestId(`beacon-relative-${beaconOne.id}`).textContent).toBe('5m ago');
+    expect(screen.getByTestId('beacon-detail-hostname').textContent).toBe('beacon-alpha');
+    expect(screen.getByTestId('beacon-detail-os').textContent).toBe('Windows 11');
+    expect(screen.getByText('Protocol version').parentElement?.textContent).toContain('v1');
+    expect(screen.getByTestId('beacon-detail-transport-mode').textContent).toBe('WebSocket');
+    expect(screen.getByTestId('beacon-detail-transport-state').textContent).toBe('Connected');
+
+    fireEvent.click(screen.getByTestId(`beacon-row-${beaconTwo.id}`));
+
+    expect(screen.getByTestId('beacon-detail-hostname').textContent).toBe('beacon-bravo');
+    expect(screen.getByTestId('beacon-detail-os').textContent).toBe('Ubuntu 24.04');
+    expect(screen.getByTestId('beacon-detail-transport-mode').textContent).toBe('REST');
+    expect(screen.getByTestId('beacon-detail-transport-state').textContent).toBe('Disconnected');
+
+    fireEvent.click(screen.getByTestId(`beacon-row-${beaconThree.id}`));
+
+    expect(screen.getByTestId('beacon-detail-hostname').textContent).toBe('beacon-charlie');
+    expect(screen.getByTestId('beacon-detail-transport-mode').textContent).toBe('Long-poll');
+    expect(screen.getByTestId('beacon-detail-transport-state').textContent).toBe('Disconnected');
+  });
+
+  it('filters and sorts beacon rows', () => {
     mocks.useRealtime.mockReturnValue({
       activeBeaconCount: 1,
       beaconCount: 2,
@@ -137,21 +203,27 @@ describe('BeaconsPage', () => {
 
     renderBeaconsPage();
 
+    fireEvent.change(screen.getByLabelText('Search beacons'), { target: { value: 'websocket' } });
+
+    expect(screen.getByTestId(`beacon-row-${beaconOne.id}`)).toBeTruthy();
+    expect(screen.queryByTestId(`beacon-row-${beaconTwo.id}`)).toBeNull();
+
+    fireEvent.change(screen.getByLabelText('Search beacons'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sort beacons by Host' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sort beacons by Host' }));
+
     const roster = screen.getByTestId('beacon-roster');
-    expect(within(roster).getByText('Last Heartbeat')).toBeTruthy();
-    expect(within(roster).getByText('beacon-alpha')).toBeTruthy();
-    expect(within(roster).getByText('Windows 11')).toBeTruthy();
-    expect(within(roster).getByText('10.40.0.8')).toBeTruthy();
-    expect(screen.getByTestId('beacons-online-count').textContent).toBe('1');
-    expect(screen.getByTestId('beacons-offline-count').textContent).toBe('1');
-    expect(screen.getByTestId(`beacon-relative-${beaconOne.id}`).textContent).toBe('5m ago');
-    expect(screen.getByTestId('beacon-detail-hostname').textContent).toBe('beacon-alpha');
-    expect(screen.getByTestId('beacon-detail-os').textContent).toBe('Windows 11');
+    let rows = within(roster).getAllByRole('row').slice(1);
+    expect(rows[0].textContent).toContain('beacon-bravo');
+    expect(rows[1].textContent).toContain('beacon-alpha');
 
-    fireEvent.click(screen.getByTestId(`beacon-row-${beaconTwo.id}`));
+    fireEvent.click(screen.getByRole('button', { name: 'Reset beacon sorting' }));
 
-    expect(screen.getByTestId('beacon-detail-hostname').textContent).toBe('beacon-bravo');
-    expect(screen.getByTestId('beacon-detail-os').textContent).toBe('Ubuntu 24.04');
+    rows = within(roster).getAllByRole('row').slice(1);
+    expect(rows[0].textContent).toContain('beacon-alpha');
+    expect(rows[1].textContent).toContain('beacon-bravo');
+    expect(screen.getByRole('button', { name: 'Toggle beacon sort direction' }).textContent).toContain('Desc');
+    expect(screen.getByRole('button', { name: 'Sort beacons by Last Heartbeat' }).textContent).toContain('Descending');
   });
 
   it('opens host operations from a beacon row double-click', () => {

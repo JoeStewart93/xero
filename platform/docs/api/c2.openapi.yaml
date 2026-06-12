@@ -1,0 +1,1400 @@
+openapi: 3.1.0
+info:
+  title: Xero C2 API
+  version: 0.1.0
+paths:
+  /health:
+    get:
+      tags:
+      - health
+      summary: Health
+      operationId: health_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+                title: Response Health Health Get
+  /ready:
+    get:
+      tags:
+      - health
+      summary: Ready
+      operationId: ready_ready_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/v1/c2/connect:
+    post:
+      tags:
+      - c2
+      summary: Connect C2
+      operationId: connect_c2_api_v1_c2_connect_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/C2ConnectRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/C2ConnectResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/c2/session:
+    get:
+      tags:
+      - c2
+      summary: C2 Session
+      operationId: c2_session_api_v1_c2_session_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/C2SessionResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/transport:
+    get:
+      tags:
+      - transport
+      summary: Transport Status
+      operationId: transport_status_api_v1_transport_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransportStatusResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/protocol:
+    get:
+      tags:
+      - protocol
+      summary: Protocol Info
+      operationId: protocol_info_api_v1_protocol_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProtocolInfoResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/security/events:
+    get:
+      tags:
+      - security
+      summary: List Protocol Security Events
+      operationId: list_protocol_security_events_api_v1_security_events_get
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 25
+          title: Limit
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProtocolSecurityEventListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/protocol/frames:
+    post:
+      tags:
+      - protocol
+      summary: Submit Protocol Frame
+      operationId: submit_protocol_frame_api_v1_protocol_frames_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/infrastructure/workers:
+    get:
+      tags:
+      - infrastructure
+      summary: List Infrastructure Workers
+      operationId: list_infrastructure_workers_api_v1_infrastructure_workers_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InfrastructureWorkerListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/infrastructure/pairing-tokens:
+    post:
+      tags:
+      - infrastructure
+      summary: Create Worker Pairing Token
+      operationId: create_worker_pairing_token_api_v1_infrastructure_pairing_tokens_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PairingTokenCreateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PairingTokenCreateResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/infrastructure/workers/register:
+    post:
+      tags:
+      - infrastructure
+      summary: Register Infrastructure Worker
+      operationId: register_infrastructure_worker_api_v1_infrastructure_workers_register_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerRegistrationRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerRegistrationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/infrastructure/workers/{worker_id}/heartbeat:
+    post:
+      tags:
+      - infrastructure
+      summary: Heartbeat Infrastructure Worker
+      operationId: heartbeat_infrastructure_worker_api_v1_infrastructure_workers__worker_id__heartbeat_post
+      parameters:
+      - name: worker_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Worker Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerHeartbeatRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerHeartbeatResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/infrastructure/workers/launch:
+    post:
+      tags:
+      - infrastructure
+      summary: Launch Infrastructure Worker
+      operationId: launch_infrastructure_worker_api_v1_infrastructure_workers_launch_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerLaunchRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerLaunchResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/infrastructure/workers/{worker_id}/stop:
+    post:
+      tags:
+      - infrastructure
+      summary: Stop Infrastructure Worker
+      operationId: stop_infrastructure_worker_api_v1_infrastructure_workers__worker_id__stop_post
+      parameters:
+      - name: worker_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Worker Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerStopResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/beacons/register:
+    post:
+      tags:
+      - beacons
+      summary: Register Beacon
+      operationId: register_beacon_api_v1_beacons_register_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BeaconRegistrationRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeaconRegistrationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/beacons/{beacon_id}/heartbeat:
+    post:
+      tags:
+      - beacons
+      summary: Heartbeat Beacon
+      operationId: heartbeat_beacon_api_v1_beacons__beacon_id__heartbeat_post
+      parameters:
+      - name: beacon_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Beacon Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BeaconHeartbeatRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeaconHeartbeatResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/beacons/{beacon_id}/poll:
+    get:
+      tags:
+      - beacons
+      summary: Poll Beacon
+      operationId: poll_beacon_api_v1_beacons__beacon_id__poll_get
+      parameters:
+      - name: beacon_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Beacon Id
+      - name: timeout_seconds
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+            minimum: 1
+          - type: 'null'
+          title: Timeout Seconds
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/beacons/{beacon_id}/frame:
+    post:
+      tags:
+      - beacons
+      summary: Submit Beacon Frame
+      operationId: submit_beacon_frame_api_v1_beacons__beacon_id__frame_post
+      parameters:
+      - name: beacon_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Beacon Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/beacons:
+    get:
+      tags:
+      - beacons
+      summary: List Beacons
+      operationId: list_beacons_api_v1_beacons_get
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            pattern: ^(online|offline)$
+          - type: 'null'
+          title: Status
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeaconListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/beacons/{beacon_id}:
+    get:
+      tags:
+      - beacons
+      summary: Get Beacon
+      operationId: get_beacon_api_v1_beacons__beacon_id__get
+      parameters:
+      - name: beacon_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Beacon Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeaconResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    BeaconHeartbeatRequest:
+      properties:
+        hostname:
+          anyOf:
+          - type: string
+            maxLength: 255
+            minLength: 1
+          - type: 'null'
+          title: Hostname
+        os:
+          anyOf:
+          - type: string
+            maxLength: 128
+            minLength: 1
+          - type: 'null'
+          title: Os
+        architecture:
+          anyOf:
+          - type: string
+            maxLength: 64
+            minLength: 1
+          - type: 'null'
+          title: Architecture
+        internal_ip:
+          anyOf:
+          - type: string
+            maxLength: 64
+            minLength: 3
+          - type: 'null'
+          title: Internal Ip
+        external_ip:
+          anyOf:
+          - type: string
+            maxLength: 64
+            minLength: 3
+          - type: 'null'
+          title: External Ip
+        pid:
+          anyOf:
+          - type: integer
+            minimum: 0.0
+          - type: 'null'
+          title: Pid
+      type: object
+      title: BeaconHeartbeatRequest
+    BeaconHeartbeatResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+        sleep:
+          type: integer
+          title: Sleep
+        jitter:
+          type: number
+          title: Jitter
+        beacon:
+          $ref: '#/components/schemas/BeaconResponse'
+      type: object
+      required:
+      - status
+      - sleep
+      - jitter
+      - beacon
+      title: BeaconHeartbeatResponse
+    BeaconListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/BeaconResponse'
+          type: array
+          title: Items
+      type: object
+      title: BeaconListResponse
+    BeaconRegistrationRequest:
+      properties:
+        machine_fingerprint_hash:
+          type: string
+          maxLength: 128
+          minLength: 8
+          title: Machine Fingerprint Hash
+        hostname:
+          type: string
+          maxLength: 255
+          minLength: 1
+          title: Hostname
+        os:
+          type: string
+          maxLength: 128
+          minLength: 1
+          title: Os
+        architecture:
+          type: string
+          maxLength: 64
+          minLength: 1
+          title: Architecture
+        internal_ip:
+          type: string
+          maxLength: 64
+          minLength: 3
+          title: Internal Ip
+        external_ip:
+          anyOf:
+          - type: string
+            maxLength: 64
+            minLength: 3
+          - type: 'null'
+          title: External Ip
+        pid:
+          type: integer
+          minimum: 0.0
+          title: Pid
+      type: object
+      required:
+      - machine_fingerprint_hash
+      - hostname
+      - os
+      - architecture
+      - internal_ip
+      - pid
+      title: BeaconRegistrationRequest
+    BeaconRegistrationResponse:
+      properties:
+        beacon_id:
+          type: string
+          title: Beacon Id
+        beacon_token:
+          type: string
+          title: Beacon Token
+        status:
+          type: string
+          title: Status
+        sleep:
+          type: integer
+          title: Sleep
+          default: 30
+        jitter:
+          type: number
+          title: Jitter
+          default: 0.1
+        beacon:
+          $ref: '#/components/schemas/BeaconResponse'
+      type: object
+      required:
+      - beacon_id
+      - beacon_token
+      - status
+      - beacon
+      title: BeaconRegistrationResponse
+    BeaconResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        machine_fingerprint_hash:
+          type: string
+          title: Machine Fingerprint Hash
+        hostname:
+          type: string
+          title: Hostname
+        os:
+          type: string
+          title: Os
+        architecture:
+          type: string
+          title: Architecture
+        internal_ip:
+          type: string
+          title: Internal Ip
+        external_ip:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: External Ip
+        pid:
+          type: integer
+          title: Pid
+        status:
+          type: string
+          title: Status
+        protocol_version:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Protocol Version
+        transport_mode:
+          type: string
+          enum:
+          - long-poll
+          - rest
+          - websocket
+          title: Transport Mode
+          default: rest
+        transport_connected:
+          type: boolean
+          title: Transport Connected
+          default: false
+        transport_last_seen:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Transport Last Seen
+        first_seen:
+          type: string
+          format: date-time
+          title: First Seen
+        last_seen:
+          type: string
+          format: date-time
+          title: Last Seen
+      type: object
+      required:
+      - id
+      - machine_fingerprint_hash
+      - hostname
+      - os
+      - architecture
+      - internal_ip
+      - pid
+      - status
+      - first_seen
+      - last_seen
+      title: BeaconResponse
+    C2ConnectRequest:
+      properties:
+        password:
+          type: string
+          maxLength: 128
+          minLength: 1
+          title: Password
+      type: object
+      required:
+      - password
+      title: C2ConnectRequest
+    C2ConnectResponse:
+      properties:
+        access_token:
+          type: string
+          title: Access Token
+        token_type:
+          type: string
+          title: Token Type
+          default: bearer
+        expires_at:
+          type: string
+          format: date-time
+          title: Expires At
+        service:
+          type: string
+          title: Service
+        service_role:
+          type: string
+          title: Service Role
+        status:
+          type: string
+          title: Status
+          default: connected
+      type: object
+      required:
+      - access_token
+      - expires_at
+      - service
+      - service_role
+      title: C2ConnectResponse
+    C2SessionResponse:
+      properties:
+        service:
+          type: string
+          title: Service
+        service_role:
+          type: string
+          title: Service Role
+        status:
+          type: string
+          title: Status
+      type: object
+      required:
+      - service
+      - service_role
+      - status
+      title: C2SessionResponse
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    InfrastructureWorkerListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/InfrastructureWorkerResponse'
+          type: array
+          title: Items
+      type: object
+      title: InfrastructureWorkerListResponse
+    InfrastructureWorkerResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        kind:
+          type: string
+          enum:
+          - beacon-handler
+          - scanner
+          title: Kind
+        name:
+          type: string
+          title: Name
+        origin:
+          type: string
+          enum:
+          - embedded
+          - external
+          - c2-managed
+          title: Origin
+        status:
+          type: string
+          enum:
+          - pending
+          - online
+          - offline
+          - starting
+          - stopping
+          - failed
+          title: Status
+        endpoint:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Endpoint
+        capabilities:
+          items:
+            type: string
+          type: array
+          title: Capabilities
+        capacity:
+          type: integer
+          title: Capacity
+        current_load:
+          type: integer
+          title: Current Load
+        version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Version
+        last_seen:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Seen
+        managed_project:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Managed Project
+        managed_service:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Managed Service
+        managed_host_port:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Managed Host Port
+        last_error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Last Error
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - kind
+      - name
+      - origin
+      - status
+      - capacity
+      - current_load
+      - created_at
+      - updated_at
+      title: InfrastructureWorkerResponse
+    PairingTokenCreateRequest:
+      properties:
+        kind:
+          type: string
+          enum:
+          - beacon-handler
+          - scanner
+          title: Kind
+        name:
+          type: string
+          maxLength: 255
+          minLength: 1
+          title: Name
+      type: object
+      required:
+      - kind
+      - name
+      title: PairingTokenCreateRequest
+    PairingTokenCreateResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        kind:
+          type: string
+          enum:
+          - beacon-handler
+          - scanner
+          title: Kind
+        name:
+          type: string
+          title: Name
+        pairing_token:
+          type: string
+          title: Pairing Token
+        expires_at:
+          type: string
+          format: date-time
+          title: Expires At
+        command:
+          type: string
+          title: Command
+      type: object
+      required:
+      - id
+      - kind
+      - name
+      - pairing_token
+      - expires_at
+      - command
+      title: PairingTokenCreateResponse
+    ProtocolInfoResponse:
+      properties:
+        current_version:
+          type: integer
+          title: Current Version
+        supported_versions:
+          items:
+            type: integer
+          type: array
+          title: Supported Versions
+        key_exchange:
+          type: string
+          title: Key Exchange
+        encryption:
+          type: string
+          title: Encryption
+        integrity:
+          type: string
+          title: Integrity
+        frame_header_length:
+          type: integer
+          title: Frame Header Length
+        max_frame_bytes:
+          type: integer
+          title: Max Frame Bytes
+        c2_public_key_b64:
+          type: string
+          title: C2 Public Key B64
+        frame_harness_enabled:
+          type: boolean
+          title: Frame Harness Enabled
+      type: object
+      required:
+      - current_version
+      - supported_versions
+      - key_exchange
+      - encryption
+      - integrity
+      - frame_header_length
+      - max_frame_bytes
+      - c2_public_key_b64
+      - frame_harness_enabled
+      title: ProtocolInfoResponse
+    ProtocolSecurityEventListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ProtocolSecurityEventResponse'
+          type: array
+          title: Items
+      type: object
+      title: ProtocolSecurityEventListResponse
+    ProtocolSecurityEventResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        beacon_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Beacon Id
+        event_type:
+          type: string
+          title: Event Type
+        severity:
+          type: string
+          title: Severity
+        message:
+          type: string
+          title: Message
+        session_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Session Id
+        nonce:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Nonce
+        occurred_at:
+          type: string
+          format: date-time
+          title: Occurred At
+      type: object
+      required:
+      - id
+      - event_type
+      - severity
+      - message
+      - occurred_at
+      title: ProtocolSecurityEventResponse
+    TransportStatusResponse:
+      properties:
+        active_websocket_connections:
+          type: integer
+          title: Active Websocket Connections
+        active_longpoll_requests:
+          type: integer
+          title: Active Longpoll Requests
+        transport_mode_counts:
+          additionalProperties:
+            type: integer
+          type: object
+          title: Transport Mode Counts
+        websocket_send_queue_size:
+          type: integer
+          title: Websocket Send Queue Size
+        websocket_registration_timeout_seconds:
+          type: integer
+          title: Websocket Registration Timeout Seconds
+        websocket_heartbeat_timeout_seconds:
+          type: integer
+          title: Websocket Heartbeat Timeout Seconds
+        websocket_ping_interval_seconds:
+          type: integer
+          title: Websocket Ping Interval Seconds
+        websocket_ping_timeout_seconds:
+          type: integer
+          title: Websocket Ping Timeout Seconds
+        websocket_max_message_bytes:
+          type: integer
+          title: Websocket Max Message Bytes
+        longpoll_timeout_seconds:
+          type: integer
+          title: Longpoll Timeout Seconds
+        longpoll_max_frame_bytes:
+          type: integer
+          title: Longpoll Max Frame Bytes
+      type: object
+      required:
+      - active_websocket_connections
+      - active_longpoll_requests
+      - transport_mode_counts
+      - websocket_send_queue_size
+      - websocket_registration_timeout_seconds
+      - websocket_heartbeat_timeout_seconds
+      - websocket_ping_interval_seconds
+      - websocket_ping_timeout_seconds
+      - websocket_max_message_bytes
+      - longpoll_timeout_seconds
+      - longpoll_max_frame_bytes
+      title: TransportStatusResponse
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+    WorkerHeartbeatRequest:
+      properties:
+        endpoint:
+          anyOf:
+          - type: string
+            maxLength: 512
+          - type: 'null'
+          title: Endpoint
+        capabilities:
+          items:
+            type: string
+          type: array
+          maxItems: 32
+          title: Capabilities
+        capacity:
+          type: integer
+          maximum: 100000.0
+          minimum: 1.0
+          title: Capacity
+          default: 1
+        current_load:
+          type: integer
+          minimum: 0.0
+          title: Current Load
+          default: 0
+        version:
+          anyOf:
+          - type: string
+            maxLength: 64
+          - type: 'null'
+          title: Version
+      type: object
+      title: WorkerHeartbeatRequest
+    WorkerHeartbeatResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+        heartbeat_interval_seconds:
+          type: integer
+          title: Heartbeat Interval Seconds
+        worker:
+          $ref: '#/components/schemas/InfrastructureWorkerResponse'
+      type: object
+      required:
+      - status
+      - heartbeat_interval_seconds
+      - worker
+      title: WorkerHeartbeatResponse
+    WorkerLaunchRequest:
+      properties:
+        kind:
+          type: string
+          enum:
+          - beacon-handler
+          - scanner
+          title: Kind
+        name:
+          type: string
+          maxLength: 255
+          minLength: 1
+          title: Name
+        host_port:
+          type: integer
+          maximum: 65535.0
+          minimum: 1024.0
+          title: Host Port
+      type: object
+      required:
+      - kind
+      - name
+      - host_port
+      title: WorkerLaunchRequest
+    WorkerLaunchResponse:
+      properties:
+        worker:
+          $ref: '#/components/schemas/InfrastructureWorkerResponse'
+      type: object
+      required:
+      - worker
+      title: WorkerLaunchResponse
+    WorkerRegistrationRequest:
+      properties:
+        kind:
+          type: string
+          enum:
+          - beacon-handler
+          - scanner
+          title: Kind
+        name:
+          type: string
+          maxLength: 255
+          minLength: 1
+          title: Name
+        pairing_token:
+          type: string
+          maxLength: 256
+          minLength: 16
+          title: Pairing Token
+        endpoint:
+          anyOf:
+          - type: string
+            maxLength: 512
+          - type: 'null'
+          title: Endpoint
+        capabilities:
+          items:
+            type: string
+          type: array
+          maxItems: 32
+          title: Capabilities
+        capacity:
+          type: integer
+          maximum: 100000.0
+          minimum: 1.0
+          title: Capacity
+          default: 1
+        current_load:
+          type: integer
+          minimum: 0.0
+          title: Current Load
+          default: 0
+        version:
+          anyOf:
+          - type: string
+            maxLength: 64
+          - type: 'null'
+          title: Version
+      type: object
+      required:
+      - kind
+      - name
+      - pairing_token
+      title: WorkerRegistrationRequest
+    WorkerRegistrationResponse:
+      properties:
+        worker_id:
+          type: string
+          title: Worker Id
+        worker_token:
+          type: string
+          title: Worker Token
+        heartbeat_interval_seconds:
+          type: integer
+          title: Heartbeat Interval Seconds
+        worker:
+          $ref: '#/components/schemas/InfrastructureWorkerResponse'
+      type: object
+      required:
+      - worker_id
+      - worker_token
+      - heartbeat_interval_seconds
+      - worker
+      title: WorkerRegistrationResponse
+    WorkerStopResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+        worker:
+          $ref: '#/components/schemas/InfrastructureWorkerResponse'
+      type: object
+      required:
+      - status
+      - worker
+      title: WorkerStopResponse

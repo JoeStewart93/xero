@@ -1,0 +1,103 @@
+{
+  "vectors": [
+    {
+      "frame_b64": "WEVSTwEBAEgAAAC/qqqqqqqqqqqqqgAAAAAAAQEBAQEBAQEBAQEBAc6NOtHMtjPse3DBeBSlx27NApaFBQ00R0W6BYcOWH1Zqh5VimLzUfDoL/RXotZvRuW8pPaG8Mu8/e1ayIyGs4N1IhAIfQR3b2brNJzvXZMlDMBeI1PRKe60ttQk+4fbL1a/R5cPdvYw3bBTzXaqZpfGiheBn5BhfHMcNwGoX4UrolWQWtLDq6dNNYXqDv+HME0C5HQw3sPIZ7Mx+1uu3wyRRYBzmZWAX7UpVFGK6b7UDpp4xh1hEWS+Nl1w3NoZR83Oz8O2fzsE99Qp42LpaRXxTnL4M2hnY79HrKYdcG0zgip+DMYms6hc9WkZsUw1tHcx3D98I1QN5SAWW0krZA==",
+      "message_type": "REGISTER",
+      "nonce_hex": "010101010101010101010101",
+      "payload": {
+        "architecture": "x64",
+        "hostname": "vector-host",
+        "internal_ip": "10.30.0.5",
+        "machine_fingerprint_hash": "vector-fingerprint",
+        "os": "Windows 11",
+        "pid": 3030,
+        "supported_versions": [
+          1
+        ]
+      },
+      "peer_public_key_b64": "B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=",
+      "private_key_b64": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
+      "session_id": "aaaaaaaa-aaaa-aaaa-aaaa-000000000001",
+      "session_id_hex": "aaaaaaaaaaaaaaaaaaaa000000000001"
+    },
+    {
+      "frame_b64": "WEVSTwECAEgAAABEqqqqqqqqqqqqqgAAAAAAAgICAgICAgICAgICAs6NOtHMtjPse3DBeBSlx27NApaFBQ00R0W6BYcOWH1ZoM7smq/BaZFLNXUx7OYqSjkmYhVzLMwj4YfoCltNS50MFT50qrwnLXCF3+QYn7gqXa45lB5UdhCoxYBKEGFM+5aGnojBpaz05QQZ85YS7HgC9OwCfOKjlY0HfD/ffHfNPkTIIQ==",
+      "message_type": "HEARTBEAT",
+      "nonce_hex": "020202020202020202020202",
+      "payload": {
+        "beacon_id": "11111111-1111-1111-1111-111111111111"
+      },
+      "peer_public_key_b64": "B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=",
+      "private_key_b64": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
+      "session_id": "aaaaaaaa-aaaa-aaaa-aaaa-000000000002",
+      "session_id_hex": "aaaaaaaaaaaaaaaaaaaa000000000002"
+    },
+    {
+      "frame_b64": "WEVSTwEDAEgAAABEqqqqqqqqqqqqqgAAAAAAAwMDAwMDAwMDAwMDA86NOtHMtjPse3DBeBSlx27NApaFBQ00R0W6BYcOWH1ZnZ+d1CK3sT0M/1lPJBtNmKK1hdyQvudZZunvIBnBrDq29rgkOnLqhUK6Gie3rkQQFeCqVW2P1806p7RU5GLGfq+VBvnjEHKTEiDL889Kn9+q95zYg4dbuPxtXQm4+tE7ah6NAw==",
+      "message_type": "TASK_POLL",
+      "nonce_hex": "030303030303030303030303",
+      "payload": {
+        "beacon_id": "11111111-1111-1111-1111-111111111111"
+      },
+      "peer_public_key_b64": "B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=",
+      "private_key_b64": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
+      "session_id": "aaaaaaaa-aaaa-aaaa-aaaa-000000000003",
+      "session_id_hex": "aaaaaaaaaaaaaaaaaaaa000000000003"
+    },
+    {
+      "frame_b64": "WEVSTwEEAEgAAACOqqqqqqqqqqqqqgAAAAAABAQEBAQEBAQEBAQEBM6NOtHMtjPse3DBeBSlx27NApaFBQ00R0W6BYcOWH1ZRUXQvipwuRlBE44+KpDQfnFL6cTOS0zh0EUiDV5+ADLvmicyrxO3QK8YGI8YM1iPVLBFFm/TAdb/MkOtxyv0e7VW+Sf37PJCstPw8J/fB5ZVmMav/Vii1jVx0rc1JwR2OacJVHvQP68NvUKY8VcMyIxkGs542cd80mpiosMD2UhmxVanczI4iXfxyxL3HABV+2vLlU9g+45IiASdY2sigPvuCRebrIlolvHZ7Nbe",
+      "message_type": "TASK_RESULT",
+      "nonce_hex": "040404040404040404040404",
+      "payload": {
+        "beacon_id": "11111111-1111-1111-1111-111111111111",
+        "output_digest": "sha256:abc123",
+        "status": "completed",
+        "task_id": "task-one"
+      },
+      "peer_public_key_b64": "B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=",
+      "private_key_b64": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
+      "session_id": "aaaaaaaa-aaaa-aaaa-aaaa-000000000004",
+      "session_id_hex": "aaaaaaaaaaaaaaaaaaaa000000000004"
+    },
+    {
+      "frame_b64": "WEVSTwEFAEgAAABmqqqqqqqqqqqqqgAAAAAABQUFBQUFBQUFBQUFBc6NOtHMtjPse3DBeBSlx27NApaFBQ00R0W6BYcOWH1Z8ZbE8sdkXOEysN//az2U/aH5CWx1usZ25Co+0QqPDnqGPuWPXmJFnWkeashQigLTNLcZO8lx5dSMJa9Y8pWpUf2f+vYPzg39zpf7vVaRQbj0ngY0DqvThQLFsWZEubN7kSuaiu99UNDCCqBCpvqJCpkM9nxPRLTv9EM2j6kPKM5bhZvPNRA=",
+      "message_type": "SESSION_DATA",
+      "nonce_hex": "050505050505050505050505",
+      "payload": {
+        "beacon_id": "11111111-1111-1111-1111-111111111111",
+        "chunk": "hello",
+        "stream": "stdout"
+      },
+      "peer_public_key_b64": "B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=",
+      "private_key_b64": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
+      "session_id": "aaaaaaaa-aaaa-aaaa-aaaa-000000000005",
+      "session_id_hex": "aaaaaaaaaaaaaaaaaaaa000000000005"
+    },
+    {
+      "frame_b64": "WEVSTwEGAEgAAABJqqqqqqqqqqqqqgAAAAAABgYGBgYGBgYGBgYGBs6NOtHMtjPse3DBeBSlx27NApaFBQ00R0W6BYcOWH1Zop4TXwVA8bqpNhr7flY4p9kVShoxdVSBsus+D3N+mD69vRQDDZAF4IfHATFAXymyL9RcO/cs5SaFAverVqXI3WjJrtdIbExm2Z22UZZpWK23u7EQsgN5hfdzojgqo+zlKe775+UB3Tds",
+      "message_type": "ACK",
+      "nonce_hex": "060606060606060606060606",
+      "payload": {
+        "acknowledged_message_type": "TASK_RESULT",
+        "status": "ok"
+      },
+      "peer_public_key_b64": "B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=",
+      "private_key_b64": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
+      "session_id": "aaaaaaaa-aaaa-aaaa-aaaa-000000000006",
+      "session_id_hex": "aaaaaaaaaaaaaaaaaaaa000000000006"
+    },
+    {
+      "frame_b64": "WEVSTwEHAEgAAAA5qqqqqqqqqqqqqgAAAAAABwcHBwcHBwcHBwcHB86NOtHMtjPse3DBeBSlx27NApaFBQ00R0W6BYcOWH1Z1qr+XV9Z0HXmxXCmpJ45lf4+IQXwyPRZdKeEau3gx3hYpy8kGbKUQpIg2uoZfiQPnHtDLogVc2OvScsVU17hJUo1853/UQvspjMP4HZIb/cqgmJAyGAzuqE=",
+      "message_type": "PROTOCOL_ERROR",
+      "nonce_hex": "070707070707070707070707",
+      "payload": {
+        "code": "HMAC_MISMATCH",
+        "status": "error"
+      },
+      "peer_public_key_b64": "B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=",
+      "private_key_b64": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
+      "session_id": "aaaaaaaa-aaaa-aaaa-aaaa-000000000007",
+      "session_id_hex": "aaaaaaaaaaaaaaaaaaaa000000000007"
+    }
+  ]
+}

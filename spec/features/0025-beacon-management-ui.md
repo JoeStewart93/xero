@@ -13,7 +13,7 @@
 Full beacon management interface with sortable list, detail panel, status filters, profile assignment, and contextual actions for tasking and sessions.
 
 ## Current Implementation Note
-F0009 enables the Beacons side tab and `/beacons` registry/detail route for connected C2 backends. This feature remains **Planned** for the richer management workspace: sorting, filtering, search, profile assignment, contextual task/session actions, kill workflow, and CSV export.
+F0009 enables the Beacons side tab and `/beacons` overview/detail route for connected C2 backends. This feature remains **Planned** for the richer management workspace: sorting, filtering, search, profile assignment, contextual task/session actions, kill workflow, and CSV export.
 
 ## Requirements
 - Beacons list page with sort, filter, and search

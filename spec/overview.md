@@ -1,9 +1,9 @@
 # Xero: Modular Command & Control Platform
-**Version:** 1.4.0
+**Version:** 1.5.0
 **Date:** June 09, 2026
 **Status:** Approved
 **Prepared For:** Development Team
-**Changelog:** Added distributed beacon handler and scanner architecture guidance, including embedded C2 defaults, external handler/scanner fleets, handler failover, distributed scan orchestration, and later beacon pivot scanning/proxying.
+**Changelog:** Split local BFF, C2 API, beacon handler scaffold, and scanner scaffold into separate service directories, compose files, and OpenAPI documents; added shared handler/scanner worker pairing and Settings > Infrastructure inventory.
 
 ---
 
@@ -11,10 +11,12 @@
 
 **Xero** is a modular Command & Control (C2) platform for authorized cybersecurity research, defensive testing, and scoped red-team operations. It automates scanning, enumeration, exploitation support, and post-exploitation workflows while keeping operator UI, local BFF services, C2 backend logic, embedded infrastructure roles, external handlers, external scanners, pivot routes, and beacons logically separated.
 
-The current implementation has two deployable backend roles:
+The current implementation has separate deployable API services:
 
-1. **Local UI/BFF:** Serves operator-facing API needs for the frontend, local authentication, protected health, and C2 connection setup.
-2. **C2 Backend:** Runs C2-facing services separately so it can be hosted locally or remotely. By default, the C2 backend also provides the embedded beacon handler and embedded scanner for single-server operation.
+1. **Local UI/BFF:** Serves bootstrap auth, protected BFF health, and C2 URL configuration for the frontend.
+2. **C2 Backend:** Runs C2-facing services separately so it can be hosted locally or remotely. Owns C2 operator authentication, operator realtime WebSocket, completed beacon registration/heartbeat, embedded handler/scanner defaults, and shared infrastructure worker pairing/liveness control plane.
+3. **Beacon Handler Scaffold:** Separate service home for future external handler work; currently health/readiness plus optional C2 worker pairing/heartbeat.
+4. **Scanner Scaffold:** Separate service home for future scanner worker work; currently health/readiness plus optional C2 worker pairing/heartbeat.
 
 Product code lives under `platform/` in the `xero` repository. Specifications live at `spec/`. See [mvp-requirements.md](mvp-requirements.md), [features/README.md](features/README.md), and [architecture/README.md](architecture/README.md).
 
@@ -25,10 +27,10 @@ Product code lives under `platform/` in the `xero` repository. Specifications li
 ### 2.1 Core Components
 
 1. **Xero UI:** React + TypeScript operator console served by the local frontend container.
-2. **Xero BFF:** Local FastAPI service that owns operator login, local admin workflows, protected UI health endpoints, and C2 connection orchestration.
-3. **Xero C2 Backend:** FastAPI service running in `XERO_SERVICE_ROLE=c2`; it accepts C2 connection authentication, hosts the operator realtime WebSocket, owns completed beacon registration, and provides embedded handler/scanner defaults until external infrastructure is added.
-4. **External Beacon Handlers:** Lightweight relays that accept beacon traffic and tunnel it to Xero C2 for distributed connection management, fault tolerance, load balancing, and traffic separation.
-5. **External Scanner Workers:** Planned scanner nodes that register with C2, execute recon jobs or scan shards, and return progress/results for aggregation.
+2. **Xero BFF:** Local FastAPI service that owns bootstrap login, protected UI health endpoints, and C2 URL configuration.
+3. **Xero C2 Backend:** FastAPI service under `platform/services/c2-api/`; it owns C2 operator authentication, hosts the operator realtime WebSocket, owns completed beacon registration/heartbeat, provides embedded handler/scanner defaults, and owns the shared infrastructure worker pairing/liveness control plane.
+4. **External Beacon Handlers:** Lightweight relays that pair/heartbeat with Xero C2 today and later accept beacon traffic/tunnel it to C2 for distributed connection management, fault tolerance, load balancing, and traffic separation.
+5. **External Scanner Workers:** Scanner nodes that pair/heartbeat with C2 today and later execute recon jobs or scan shards and return progress/results for aggregation.
 6. **Beacon Pivot Workers / Proxies:** Later capability where an installed beacon acts as a scoped scanner or proxy from its network vantage point.
 7. **Beacons (Agents):** Payloads deployed on authorized target systems. They communicate directly with the embedded C2 handler by default or through external/ad-hoc handlers in later phases.
 
@@ -45,9 +47,12 @@ Product code lives under `platform/` in the `xero` repository. Specifications li
 [ Xero C2 Backend ] -> [ C2 Postgres / Redis ]
 ```
 
-The UI authenticates locally to the BFF using `POST /auth/login`. C2 connectivity is established from Settings by sending a C2 connection password to `POST /api/v1/c2/connect` on a backend running `XERO_SERVICE_ROLE=c2`.
+The UI uses a dual auth model ([F0074](features/0074-c2-operator-authentication.md)):
 
-When connected to C2, the UI opens `/ws/operator` directly on the C2 backend with the C2 bearer token. C2 publishes operator-visible events through Redis channel `events:operator`.
+- **Bootstrap:** When no C2 URL is configured, the UI authenticates to the BFF using `POST /auth/login` (bootstrap admin) to configure the C2 backend URL and access BFF health.
+- **Operational:** When a C2 URL is configured, login authenticates to C2 using `POST /api/v1/auth/login` and stores an operator JWT used for all C2 API calls and `/ws/operator`.
+
+When authenticated to C2, the UI opens `/ws/operator` directly on the C2 backend with the operator JWT. C2 publishes operator-visible events through Redis channel `events:operator`.
 
 ### 2.3 Beacon Network Paths
 
@@ -86,7 +91,7 @@ When connected to C2, the UI opens `/ws/operator` directly on the C2 backend wit
 ### 3.3 User Personas
 
 - **Operator:** Uses the UI to manage project scope, recon, beacons, tasking, assets, and reporting.
-- **Local Administrator:** Uses the local BFF/admin account to manage local access and connect the UI to a C2 backend.
+- **Local Administrator:** Uses the BFF bootstrap admin account to configure the C2 backend URL and access BFF health. Does not receive operational C2 authority without a C2 operator account.
 - **Infrastructure Admin:** Manages C2 servers, handlers, scanner workers, and later pivot routes. Expanded RBAC is v2 (F0105).
 - **Developer:** Extends the platform via plugins and modules.
 
@@ -101,9 +106,9 @@ When connected to C2, the UI opens `/ws/operator` directly on the C2 backend wit
 ### 4.1 Local UI/BFF
 
 - **FR-01:** Python FastAPI BFF foundation with health, readiness, CORS, OpenAPI, and protected operator endpoints. ([F0004](features/0004-fastapi-backend-foundation.md))
-- **FR-02:** Username/password authentication with BCrypt-hashed PostgreSQL users and JWT sessions. ([F0003](features/0003-operator-authentication.md))
-- **FR-03:** Local BFF can authenticate to a separate C2 backend using a configured C2 connection password.
-- **FR-04:** Protected operator API routes include `/api/v1/health`, `/api/v1/ready`, `/api/v1/me`, `/api/v1/beacons`, and `/api/v1/auth/password`.
+- **FR-02:** Bootstrap username/password authentication with BCrypt-hashed BFF users and JWT sessions for setup scope. ([F0003](features/0003-operator-authentication.md))
+- **FR-03:** C2 operator username/password authentication with BCrypt-hashed C2 operators and operator JWT sessions. ([F0074](features/0074-c2-operator-authentication.md))
+- **FR-04:** Protected BFF operator API routes include `/api/v1/health`, `/api/v1/ready`, `/api/v1/me`, and `/api/v1/auth/password`.
 
 ### 4.2 Xero C2 Backend
 
@@ -115,8 +120,8 @@ When connected to C2, the UI opens `/ws/operator` directly on the C2 backend wit
 ### 4.3 Management UI
 
 - **FR-09:** React + TypeScript + Tailwind UI with Stitch-first UI development. ([F0007](features/0007-react-ui-shell.md))
-- **FR-10:** Current protected routes: `/home`, `/projects`, `/recon`, `/beacons`, `/settings`, and `/health`.
-- **FR-11:** Current side navigation: Home, Projects, Recon, Beacons, planned Reporting, planned Inventory, planned Assets, Settings, and separated Health.
+- **FR-10:** Current protected routes include `/home`, `/projects`, `/recon`, `/beacons`, `/exploits`, `/payloads`, `/assets`, `/reports`, `/loot`, `/settings`, and `/health`; several later-feature routes currently render shell stubs only.
+- **FR-11:** Current side navigation: Home, Projects, Recon, Beacons, Exploits, Payloads, Assets, Reports, Loot, Settings, and separated utility Health/Realtime.
 - **FR-12:** Project scope leads into Recon workflows; C2-dependent workflows remain locked until a C2 backend connection is configured.
 
 ### 4.4 Connection Handlers
@@ -127,19 +132,29 @@ When connected to C2, the UI opens `/ws/operator` directly on the C2 backend wit
 - **FR-16:** Handler pools support health, assignment, failover, and beacon migration. ([F0109](features/0109-handler-load-balancing.md))
 - **FR-17:** Ad-hoc handler installation on beacons. ([F0044](features/0044-adhoc-handler-installation.md))
 - **FR-18:** Traffic masking. ([F0040](features/0040-handler-traffic-masking.md))
+- **FR-18a:** Handler/scanner worker pairing, heartbeat, inventory, and local scaffold provisioning. ([F0049](features/0049-c2-infrastructure-worker-pairing.md))
 
 ### 4.5 Scanners and Recon
 
 - **FR-19:** C2 backend provides the embedded/default scanner for recon workflows.
-- **FR-20:** External scanner workers can register with C2, report health/capabilities, and execute assigned scan jobs. ([F0045](features/0045-scanner-worker-registry.md))
+- **FR-20:** External scanner workers can pair/register with C2 and report health/capabilities through F0049; scanner job execution remains with F0045. ([F0049](features/0049-c2-infrastructure-worker-pairing.md), [F0045](features/0045-scanner-worker-registry.md))
 - **FR-21:** Scan orchestration can select one scanner or distribute a single scan across multiple scanner workers, then merge results. ([F0046](features/0046-distributed-scan-orchestration.md))
 - **FR-22:** Later pivot mode allows an installed beacon to scan/proxy from its network vantage point within explicit project scope. ([F0047](features/0047-beacon-pivot-scanning-and-proxying.md))
 
-### 4.6 Beacons (Agents)
+### 4.6 Exploits and Payloads
 
-- **FR-23:** Process injection and token impersonation are v2. ([F0101](features/0101-process-injection-token-impersonation.md))
-- **FR-24:** Mutual TLS (mTLS) when connecting to handlers.
-- **FR-25:** Custom profiles for jitter, sleep, user agents, and traffic shaping. ([F0021](features/0021-traffic-shaping-profiles.md))
+- **FR-23:** Exploit management system with multi-source aggregation (Metasploit, ExploitDB, built-in). ([F0080](features/0080-exploit-management-system.md), [F0083](features/0083-exploit-source-adapters.md))
+- **FR-24:** Exploit suggestion engine based on asset and service enumeration profiles. ([F0080](features/0080-exploit-management-system.md))
+- **FR-25:** Multi-language payload generation system (Go, Python, PowerShell, Bash, Rust, C#). ([F0081](features/0081-payload-generation-system.md))
+- **FR-26:** Encoder/obfuscator pipeline with configurable transformation chains. ([F0081](features/0081-payload-generation-system.md))
+- **FR-27:** Post-exploitation orchestration with chained execution workflows. ([F0082](features/0082-post-exploitation-orchestration.md))
+- **FR-28:** Unified payload-to-beacon deployment integration. ([F0081](features/0081-payload-generation-system.md))
+
+### 4.7 Beacons (Agents)
+
+- **FR-29:** Process injection and token impersonation are v2. ([F0101](features/0101-process-injection-token-impersonation.md))
+- **FR-30:** Mutual TLS (mTLS) when connecting to handlers.
+- **FR-31:** Custom profiles for jitter, sleep, user agents, and traffic shaping. ([F0021](features/0021-traffic-shaping-profiles.md))
 
 ---
 
@@ -168,14 +183,14 @@ See [architecture/security-model.md](architecture/security-model.md).
 - **SR-02:** Secrets via environment variables or Vault.
 - **SR-03:** Handler certificate pinning.
 - **SR-04:** Traffic shaping. ([F0021](features/0021-traffic-shaping-profiles.md))
-- **SR-05:** Non-development deployments must override default JWT, operator, local admin, and C2 connection secrets.
+- **SR-05:** Non-development deployments must override default JWT, bootstrap admin, and C2 admin seed credentials.
 - **SR-06:** Scanner and pivot execution must remain constrained to active project scope and preserve audit metadata.
 
 ---
 
 ## 7. Deployment Strategy
 
-The local UI/BFF stack is started with `docker compose up --build` from `platform/`. The optional local C2 backend stack is started with `docker compose -f docker-compose.c2.yml up --build`. External handler and scanner deployments are planned follow-up features; the C2 backend remains the default embedded handler/scanner when those are absent.
+The local UI/BFF stack is started with `docker compose -f docker-compose.bff.yml up --build` from `platform/`. `docker-compose.yml` remains a temporary BFF alias. The optional local C2 backend stack is started with `docker compose -f docker-compose.c2.yml up --build`. Handler and scanner scaffolds are started with `docker-compose.handler.yml` and `docker-compose.scanner.yml` or launched from `Settings > Infrastructure` when local provisioning is enabled. Handler tunnel behavior and scanner execution are planned follow-up work; the C2 backend remains the default embedded handler/scanner when external workers are absent.
 
 Follow numbered features in [features/README.md](features/README.md). Summary aligns with MVP phases in [mvp-requirements.md](mvp-requirements.md#6-implementation-phases).
 
@@ -192,7 +207,7 @@ Follow numbered features in [features/README.md](features/README.md). Summary al
 [ Local Xero BFF ] <----> [ BFF PostgreSQL ]
     |                       [ BFF Redis ]
     |
-    | C2 token from /api/v1/c2/connect
+    | C2 operator JWT from /api/v1/auth/login
     v
 [ Xero C2 Backend ] <----> [ C2 PostgreSQL ]
     |                       [ C2 Redis ]
@@ -201,7 +216,7 @@ Follow numbered features in [features/README.md](features/README.md). Summary al
 [ Beacon 1 ]
 
     | P1 external handler path
-[ Connection Handler A ]
+[ Connection Handler A ] -- F0049 pairing/heartbeat --> [ Xero C2 Backend ]
     |
 [ Beacon 2 ]
 
@@ -209,7 +224,8 @@ Follow numbered features in [features/README.md](features/README.md). Summary al
 [ Recon Target ]
 
     | P1 external scanner path
-[ Scanner Worker A ] ---> [ Recon Target ]
+[ Scanner Worker A ] -- F0049 pairing/heartbeat --> [ Xero C2 Backend ]
+[ Scanner Worker A ] ---> [ Recon Target ] (scan execution planned)
 
     | P2 pivot scanner/proxy path
 [ Beacon Pivot ] ----> [ Internal Recon/Proxy Target ]

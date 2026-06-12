@@ -152,7 +152,7 @@ describe('LoginPage', () => {
     });
 
     const primaryNav = screen.getByLabelText('Primary');
-    for (const label of ['Home', 'Projects', 'Recon', 'Beacons', 'Reporting', 'Inventory', 'Assets', 'Settings']) {
+    for (const label of ['Home', 'Projects', 'Recon', 'Beacons', 'Exploits', 'Payloads', 'Assets', 'Reports', 'Loot', 'Settings']) {
       expect(within(primaryNav).getByText(label)).toBeTruthy();
     }
     expect(screen.getByLabelText('System').textContent).toContain('Health');

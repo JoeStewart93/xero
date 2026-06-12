@@ -2,7 +2,7 @@
 
 ## Local UI/BFF Stack
 
-`platform/docker-compose.yml` runs the operator UI and local BFF stack.
+`platform/docker-compose.bff.yml` runs the operator UI and local BFF stack. `platform/docker-compose.yml` is a temporary compatibility alias for the same stack.
 
 ```text
 [ Operator Browser ]
@@ -11,7 +11,7 @@
 [ Frontend container :3000 ]
         |
         v
-[ BFF backend container :8000 ]
+[ BFF API container :8000 ]
         |                  |
         v                  v
 [ PostgreSQL ]        [ Redis ]
@@ -19,9 +19,9 @@
 
 | Service | Image / build | Host port |
 | :--- | :--- | :--- |
-| postgres | `postgres:16` | internal only |
-| redis | `redis:7` | internal only |
-| backend | `platform/backend` with `XERO_SERVICE_ROLE=bff` | `${BACKEND_PORT:-8000}` |
+| bff-postgres | `postgres:16` | internal only |
+| bff-redis | `redis:7` | internal only |
+| bff-api | `platform/services/bff-api` | `${BACKEND_PORT:-8000}` |
 | frontend | `platform/frontend` | `${FRONTEND_PORT:-3000}` |
 
 ## Separate C2 Backend Stack
@@ -29,23 +29,27 @@
 `platform/docker-compose.c2.yml` runs the C2 backend independently. This stack can run on the same machine for local development or on a remote server.
 
 ```text
-[ Xero UI Settings ]
+[ Xero UI Settings / Login ]
         |
-        | POST /api/v1/c2/connect
+        | POST /api/v1/auth/login (F0074)
+        | worker inventory / pairing / provisioning
         v
-[ C2 backend container :8000 ]
+[ C2 API container :8000 ]
         |                  |
         v                  v
 [ C2 PostgreSQL ]     [ C2 Redis ]
+        ^
+        |
+   Docker socket/workspace mount for optional local worker launch
 ```
 
-The C2 backend is the default embedded beacon handler and embedded scanner. It can accept beacon traffic directly and run scanner-backed recon workflows without requiring external handler or scanner infrastructure.
+The C2 backend is the default embedded beacon handler and embedded scanner. It can accept beacon registration/heartbeat directly and, in later scan features, run scanner-backed recon workflows without requiring external handler or scanner infrastructure. F0049 adds C2 worker inventory, external worker pairing/heartbeat, and optional local scaffold launch/stop from Settings > Infrastructure.
 
 | Service | Image / build | Host port |
 | :--- | :--- | :--- |
 | c2-postgres | `postgres:16` | internal only |
 | c2-redis | `redis:7` | internal only |
-| c2-backend | `platform/backend` with `XERO_SERVICE_ROLE=c2` | `${C2_BACKEND_PORT:-8001}` |
+| c2-api | `platform/services/c2-api` | `${C2_BACKEND_PORT:-8001}` |
 
 ## Optional External Infrastructure
 
@@ -79,26 +83,38 @@ Later pivot mode:
 | Distributed scanning | Single embedded scanner job | Scan sharding across scanner workers with merged results | [F0046](../features/0046-distributed-scan-orchestration.md) |
 | Pivot scanning/proxying | Not available by default | Installed beacon acts as scoped scanner/proxy vantage point | [F0047](../features/0047-beacon-pivot-scanning-and-proxying.md) |
 
+External service scaffolds can be started independently:
+
+| File | Service | Host port | Current behavior |
+| :--- | :--- | :--- | :--- |
+| `platform/docker-compose.handler.yml` | `beacon-handler` | `${HANDLER_PORT:-8002}` | Health/readiness scaffold plus optional C2 pairing heartbeat |
+| `platform/docker-compose.scanner.yml` | `scanner` | `${SCANNER_PORT:-8003}` | Health/readiness scaffold plus optional C2 pairing heartbeat |
+
 ## Healthchecks
 
 | Endpoint | Auth | Purpose |
 | :--- | :--- | :--- |
 | `GET /health` | public | Container liveness |
 | `GET /ready` | public | Container readiness, Postgres, Redis |
-| `GET /api/v1/health` | operator JWT | UI/API liveness display |
-| `GET /api/v1/ready` | operator JWT | UI/API readiness display |
+| `GET /api/v1/health` | bootstrap JWT | UI/API liveness display |
+| `GET /api/v1/ready` | bootstrap JWT | UI/API readiness display |
 
 ## Environment
 
-Secrets and local defaults are documented in `platform/.env.example`. Non-development deployments must override default JWT, operator, local admin, and C2 connection secrets.
+Secrets and local defaults are documented in `platform/.env.example`. Non-development deployments must override default JWT, bootstrap admin, and C2 admin seed credentials.
 
-Key role variables:
+Key service variables:
 
-- `XERO_SERVICE_ROLE=bff|c2`
-- `C2_CONNECT_PASSWORD`
+- `C2_ADMIN_USERNAME`
+- `C2_ADMIN_PASSWORD`
 - `C2_TOKEN_EXPIRES_MINUTES`
 - `VITE_API_BASE_URL`
 - `VITE_DEFAULT_C2_BASE_URL`
+- `HANDLER_PORT`
+- `SCANNER_PORT`
+- `C2_LOCAL_PROVISIONING_ENABLED`
+- `C2_WORKER_CONNECT_URL`
+- `WORKER_PAIRING_TOKEN`
 
 ## CI/CD
 

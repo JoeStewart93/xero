@@ -13,7 +13,7 @@
 Reference Python plugin implementation demonstrating the plugin contract, packaged with example modules and documentation for rapid P1 operator extension development.
 
 ## Requirements
-- Python reference plugin in platform/backend/app/plugins/python/
+- Python reference plugin under `platform/services/c2-api/xero_c2/plugins/python/`
 - Example plugin: hello_world and env_info modules
 - Plugin SDK package with typed args and result helpers
 - README with authorized-use disclaimer and dev guide

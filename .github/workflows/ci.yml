@@ -36,12 +36,15 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-          cache-dependency-path: platform/backend/requirements-dev.txt
+          cache-dependency-path: |
+            platform/services/bff-api/requirements-dev.txt
+            platform/services/c2-api/requirements-dev.txt
 
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r backend/requirements-dev.txt
+          python -m pip install -r services/bff-api/requirements-dev.txt
+          python -m pip install -r services/c2-api/requirements-dev.txt
 
       - name: Lint backend
         run: python scripts/ci.py backend-lint
@@ -51,6 +54,9 @@ jobs:
 
       - name: Run backend unit tests
         run: python scripts/ci.py backend-unit
+
+      - name: Run Go protocol compatibility tests
+        run: python scripts/ci.py go-protocol-test
 
       - name: Run backend behave tests
         run: python scripts/ci.py backend-behave
@@ -99,13 +105,41 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Build backend image
+      - name: Build BFF API image
         uses: docker/build-push-action@v7
         with:
-          context: platform/backend
+          context: platform
+          file: platform/services/bff-api/Dockerfile
           push: false
           load: true
-          tags: xero-backend:ci
+          tags: xero-bff-api:ci
+
+      - name: Build C2 API image
+        uses: docker/build-push-action@v7
+        with:
+          context: platform
+          file: platform/services/c2-api/Dockerfile
+          push: false
+          load: true
+          tags: xero-c2-api:ci
+
+      - name: Build beacon handler image
+        uses: docker/build-push-action@v7
+        with:
+          context: platform
+          file: platform/services/beacon-handler/Dockerfile
+          push: false
+          load: true
+          tags: xero-beacon-handler:ci
+
+      - name: Build scanner image
+        uses: docker/build-push-action@v7
+        with:
+          context: platform
+          file: platform/services/scanner/Dockerfile
+          push: false
+          load: true
+          tags: xero-scanner:ci
 
       - name: Build frontend image
         uses: docker/build-push-action@v7
@@ -120,7 +154,10 @@ jobs:
       - name: Capture Docker build metadata
         run: |
           mkdir -p artifacts
-          docker image inspect xero-backend:ci > artifacts/xero-backend-image.json
+          docker image inspect xero-bff-api:ci > artifacts/xero-bff-api-image.json
+          docker image inspect xero-c2-api:ci > artifacts/xero-c2-api-image.json
+          docker image inspect xero-beacon-handler:ci > artifacts/xero-beacon-handler-image.json
+          docker image inspect xero-scanner:ci > artifacts/xero-scanner-image.json
           docker image inspect xero-frontend:ci > artifacts/xero-frontend-image.json
           docker images "xero-*" > artifacts/docker-images.txt
 
@@ -143,11 +180,15 @@ jobs:
     env:
       COMPOSE_PROJECT_NAME: xero-ci
       BACKEND_PORT: "18000"
+      C2_BACKEND_PORT: "18001"
       FRONTEND_PORT: "13000"
       VITE_API_BASE_URL: http://localhost:18000
+      VITE_DEFAULT_C2_BASE_URL: http://localhost:18001
       FRONTEND_ORIGIN: http://localhost:13000
       PLAYWRIGHT_BASE_URL: http://localhost:13000
+      PLAYWRIGHT_C2_BASE_URL: http://localhost:18001
       XERO_BACKEND_URL: http://localhost:18000
+      XERO_C2_BACKEND_URL: http://localhost:18001
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -157,7 +198,9 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-          cache-dependency-path: platform/backend/requirements-dev.txt
+          cache-dependency-path: |
+            platform/services/bff-api/requirements-dev.txt
+            platform/services/c2-api/requirements-dev.txt
 
       - name: Set up Node
         uses: actions/setup-node@v6
@@ -169,12 +212,21 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r backend/requirements-dev.txt
+          python -m pip install -r services/bff-api/requirements-dev.txt
+          python -m pip install -r services/c2-api/requirements-dev.txt
           npm ci --prefix frontend
           npx --prefix frontend playwright install --with-deps chromium
 
-      - name: Start Compose stack
-        run: docker compose up -d --build
+      - name: Start BFF Compose stack
+        run: docker compose -f docker-compose.bff.yml up -d --build
+
+      - name: Start C2 Compose stack
+        env:
+          C2_BACKEND_PORT: "18001"
+          C2_SERVICE_NAME: xero-c2-core
+          C2_PROTOCOL_FRAME_HARNESS_ENABLED: "true"
+          FRONTEND_ORIGIN: http://localhost:13000
+        run: docker compose -f docker-compose.c2.yml up -d --build
 
       - name: Run Compose integration tests
         run: python scripts/ci.py backend-integration
@@ -186,8 +238,10 @@ jobs:
         if: always()
         run: |
           mkdir -p artifacts
-          docker compose ps > artifacts/compose-ps.txt
-          docker compose logs --no-color > artifacts/compose.log
+          docker compose -f docker-compose.bff.yml ps > artifacts/compose-bff-ps.txt
+          docker compose -f docker-compose.c2.yml ps > artifacts/compose-c2-ps.txt
+          docker compose -f docker-compose.bff.yml logs --no-color > artifacts/compose-bff.log
+          docker compose -f docker-compose.c2.yml logs --no-color > artifacts/compose-c2.log
 
       - name: Upload failure artifacts
         if: ${{ failure() && env.ACT != 'true' }}
@@ -202,4 +256,6 @@ jobs:
 
       - name: Stop Compose stack
         if: always()
-        run: docker compose down --volumes --remove-orphans
+        run: |
+          docker compose -f docker-compose.c2.yml down --volumes --remove-orphans
+          docker compose -f docker-compose.bff.yml down --volumes --remove-orphans

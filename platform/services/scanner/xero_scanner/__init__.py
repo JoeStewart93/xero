@@ -1,0 +1,1 @@
+"""Xero scanner worker scaffold."""

@@ -10,10 +10,10 @@
 | Depends on | F0004, F0005 |
 
 ## Summary
-API, persistence, realtime, and initial UI workflow for beacon check-in. F0009 assigns stable beacon IDs, captures host metadata, stores hashed opaque registration token material, and exposes registered beacons in the operator Beacons registry.
+API, persistence, realtime, and initial UI workflow for beacon check-in. F0009 assigns stable beacon IDs, captures host metadata, stores hashed opaque registration token material, and exposes registered beacons in the operator Beacons overview.
 
 ## Current Implementation Notes
-F0009 completes the beacon registration contract introduced during F0008. `POST /api/v1/beacons/register` is C2-role only, requires no operator JWT, validates and normalizes metadata, creates or updates one row per machine fingerprint, rotates an opaque per-beacon registration token on every successful registration, stores only a SHA-256 token hash, and returns the plaintext token only in that registration response. `GET /api/v1/beacons` and realtime event payloads never expose token material. The Beacons side tab is enabled when the UI is connected to C2 and opens `/beacons` with a dense registry/detail view. F0010 owns heartbeat/offline behavior, F0011 owns encrypted binary protocol key exchange and frame crypto, and later UI specs own richer management actions.
+F0009 completes the beacon registration contract introduced during F0008. `POST /api/v1/beacons/register` is C2 API only, requires no operator JWT, validates and normalizes metadata, creates or updates one row per machine fingerprint, rotates an opaque per-beacon registration token on every successful registration, stores only a SHA-256 token hash, and returns the plaintext token only in that registration response. `GET /api/v1/beacons` and realtime event payloads never expose token material. The Beacons side tab is enabled when the UI is connected to C2 and opens `/beacons` with a dense overview/detail view. F0010 owns heartbeat/offline behavior, F0011 owns encrypted binary protocol key exchange and frame crypto, and later UI specs own richer management actions.
 
 ## Requirements
 - FR-03: Persist beacon metadata in PostgreSQL

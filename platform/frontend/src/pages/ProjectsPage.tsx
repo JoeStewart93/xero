@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   Boxes,
   CheckCircle2,
   FolderKanban,
@@ -14,7 +15,9 @@ import {
 
 import { AppShell } from '../components/AppShell';
 import { C2RequiredPanel } from '../components/C2RequiredPanel';
+import { ModalShell } from '../components/ModalShell';
 import {
+  GLOBAL_SCOPE_LABEL,
   createLocalId,
   readActiveProjectId,
   readProjectScopeSnapshot,
@@ -115,6 +118,7 @@ export function ProjectsPage() {
   const [selectedProjectId, setSelectedProjectId] = useState(() => activeProjectId || projects[0]?.id || '');
   const [projectError, setProjectError] = useState('');
   const [targetError, setTargetError] = useState('');
+  const [pendingDeleteProject, setPendingDeleteProject] = useState<DiscoveryProject | null>(null);
   const activeProjectIdRef = useRef(activeProjectId);
   const selectedProjectIdRef = useRef(selectedProjectId);
 
@@ -126,6 +130,8 @@ export function ProjectsPage() {
   const domains = selectedProject?.targets.filter((target) => target.type === 'domain') ?? [];
   const ips = selectedProject?.targets.filter((target) => target.type === 'ip') ?? [];
   const selectedProjectIsActive = Boolean(selectedProject && selectedProject.id === activeProjectId);
+  const activeScopeName = activeProject?.name ?? GLOBAL_SCOPE_LABEL;
+  const activeScopeTargets = activeProject ? String(countTargets(activeProject)) : 'Unscoped';
 
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
@@ -201,6 +207,33 @@ export function ProjectsPage() {
     setActiveProjectId(projectId);
     writeActiveProjectId(projectId);
     setSelectedProjectId(projectId);
+  }
+
+  function handleConfirmDeleteProject() {
+    if (!pendingDeleteProject) {
+      return;
+    }
+
+    const deletedProjectId = pendingDeleteProject.id;
+    const nextProjects = projects.filter((project) => project.id !== deletedProjectId);
+    const nextActiveProjectId = activeProjectId === deletedProjectId ? '' : activeProjectId;
+    const nextSelectedProjectId =
+      selectedProjectId === deletedProjectId
+        ? nextProjects.find((project) => project.id === nextActiveProjectId)?.id ?? nextProjects[0]?.id ?? ''
+        : selectedProjectId;
+
+    setProjects(nextProjects);
+    setActiveProjectId(nextActiveProjectId);
+    setSelectedProjectId(nextSelectedProjectId);
+    activeProjectIdRef.current = nextActiveProjectId;
+    selectedProjectIdRef.current = nextSelectedProjectId;
+    writeProjects(nextProjects);
+    if (activeProjectId === deletedProjectId) {
+      writeActiveProjectId('');
+    }
+    setPendingDeleteProject(null);
+    setProjectError('');
+    setTargetError('');
   }
 
   function handleAddTarget(event: FormEvent<HTMLFormElement>) {
@@ -344,9 +377,22 @@ export function ProjectsPage() {
                   {selectedProjectIsActive ? 'This project is active platform scope.' : 'Activate this project before running scoped workflows.'}
                 </p>
               </div>
-              <div className={`project-scope-badge ${selectedProjectIsActive ? 'project-scope-badge--active' : ''}`}>
-                {selectedProjectIsActive ? <CheckCircle2 aria-hidden="true" size={15} strokeWidth={2.2} /> : <ShieldCheck aria-hidden="true" size={15} strokeWidth={2.2} />}
-                <span>{selectedProjectIsActive ? 'Active scope' : 'Inactive'}</span>
+              <div className="project-detail-actions">
+                <div className={`project-scope-badge ${selectedProjectIsActive ? 'project-scope-badge--active' : ''}`}>
+                  {selectedProjectIsActive ? <CheckCircle2 aria-hidden="true" size={15} strokeWidth={2.2} /> : <ShieldCheck aria-hidden="true" size={15} strokeWidth={2.2} />}
+                  <span>{selectedProjectIsActive ? 'Active scope' : 'Inactive'}</span>
+                </div>
+                {selectedProject ? (
+                  <button
+                    aria-label={`Delete project ${selectedProject.name}`}
+                    className="project-delete-button"
+                    onClick={() => setPendingDeleteProject(selectedProject)}
+                    title={`Delete ${selectedProject.name}`}
+                    type="button"
+                  >
+                    <Trash2 aria-hidden="true" size={15} strokeWidth={2.2} />
+                  </button>
+                ) : null}
               </div>
             </div>
 
@@ -373,7 +419,7 @@ export function ProjectsPage() {
                     <span>
                       {selectedProjectIsActive
                         ? 'Recon and later workflows resolve against this project until deactivated.'
-                        : 'Press Activate to make this the only active project scope.'}
+                        : `${GLOBAL_SCOPE_LABEL} scope remains active until this project is activated.`}
                     </span>
                   </div>
                   <button
@@ -396,7 +442,7 @@ export function ProjectsPage() {
                 <Boxes aria-hidden="true" size={20} strokeWidth={2} />
                 <div>
                   <strong>No project selected.</strong>
-                  <span>Create a project on the right to begin defining scope.</span>
+                  <span>{GLOBAL_SCOPE_LABEL} scope is active by default. Create a project on the right to define scoped targets.</span>
                 </div>
               </div>
             )}
@@ -470,18 +516,46 @@ export function ProjectsPage() {
               </div>
               <div className="dashboard-list">
                 <div className="dashboard-row">
-                  <span>Project</span>
-                  <strong>{activeProject?.name ?? '-'}</strong>
+                  <span>Scope</span>
+                  <strong>{activeScopeName}</strong>
                 </div>
                 <div className="dashboard-row">
                   <span>Targets</span>
-                  <strong>{activeProject ? countTargets(activeProject) : '-'}</strong>
+                  <strong>{activeScopeTargets}</strong>
                 </div>
               </div>
             </section>
           </aside>
         </div>
       )}
+
+      {pendingDeleteProject ? (
+        <ModalShell
+          ariaLabel="Delete project confirmation"
+          onClose={() => setPendingDeleteProject(null)}
+          subtitle="This removes the local project container and all targets in it."
+          title="Delete project"
+        >
+          <div className="project-delete-modal-body">
+            <div className="project-delete-warning">
+              <AlertTriangle aria-hidden="true" size={18} strokeWidth={2.2} />
+              <div>
+                <strong>Delete {pendingDeleteProject.name}?</strong>
+                <span>This cannot be undone. If this project is active, the platform returns to {GLOBAL_SCOPE_LABEL}.</span>
+              </div>
+            </div>
+            <div className="button-row">
+              <button className="secondary-button" onClick={() => setPendingDeleteProject(null)} type="button">
+                Cancel
+              </button>
+              <button className="danger-button" onClick={handleConfirmDeleteProject} type="button">
+                <Trash2 aria-hidden="true" size={15} strokeWidth={2} />
+                <span>Delete project</span>
+              </button>
+            </div>
+          </div>
+        </ModalShell>
+      ) : null}
     </AppShell>
   );
 }

@@ -72,7 +72,7 @@ export function HomePage() {
             </div>
             <div className="dashboard-row">
               <span>Operator realtime</span>
-              <strong>{realtime.status}</strong>
+              <strong data-testid="home-realtime-status">{realtime.status}</strong>
             </div>
             <div className="dashboard-row">
               <span>Active beacons</span>
@@ -121,7 +121,7 @@ export function HomePage() {
           <div className="panel-header">
             <div>
               <h2>Discovery lifecycle</h2>
-              <p className="muted-text">Project scope leads into recon, then findings triage.</p>
+              <p className="muted-text">Project scope leads into recon, then asset inventory and reporting.</p>
             </div>
             <div className="panel-icon" aria-hidden="true">
               <ServerCog size={18} strokeWidth={2} />
@@ -141,8 +141,8 @@ export function HomePage() {
             </div>
             <div className="lifecycle-step lifecycle-step--muted">
               <ServerCog aria-hidden="true" size={18} strokeWidth={2} />
-              <strong>Findings</strong>
-              <span>Planned triage workspace for discovered vulnerabilities.</span>
+              <strong>Assets</strong>
+              <span>Planned inventory workspace for discovered hosts, services, and vulnerabilities.</span>
             </div>
           </div>
         </section>

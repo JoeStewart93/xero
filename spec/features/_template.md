@@ -34,7 +34,7 @@ One paragraph describing the feature and operator/beacon-visible outcome.
 ## Test Plan
 
 ### Unit Tests
-- [ ] Specific test case (platform/backend/tests/ or platform/frontend/)
+- [ ] Specific test case (`platform/tests/` or `platform/frontend/`)
 
 ### System / Integration Tests
 - [ ] Docker Compose / API / beacon-in-the-loop scenario

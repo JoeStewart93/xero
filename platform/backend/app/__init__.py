@@ -1,1 +1,0 @@
-"""Xero Core backend package."""

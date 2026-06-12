@@ -20,34 +20,54 @@ xero/
 |   `-- features/
 `-- platform/
     |-- docker-compose.yml
+    |-- docker-compose.bff.yml
     |-- docker-compose.c2.yml
+    |-- docker-compose.handler.yml
+    |-- docker-compose.scanner.yml
     |-- .env.example
     |-- pyproject.toml
     |-- pytest.ini
+    |-- common/
+    |   `-- python/
+    |       `-- xero_common/
+    |-- services/
+    |   |-- bff-api/
+    |   |   |-- xero_bff/
+    |   |   |-- alembic/
+    |   |   |-- Dockerfile
+    |   |   |-- requirements.txt
+    |   |   `-- requirements-dev.txt
+    |   |-- c2-api/
+    |   |   |-- xero_c2/
+    |   |   |-- alembic/
+    |   |   |-- Dockerfile
+    |   |   |-- requirements.txt
+    |   |   `-- requirements-dev.txt
+    |   |-- beacon-handler/
+    |   |   |-- xero_beacon_handler/
+    |   |   |-- Dockerfile
+    |   |   `-- requirements.txt
+    |   `-- scanner/
+    |       |-- xero_scanner/
+    |       |-- Dockerfile
+    |       `-- requirements.txt
+    |-- docs/
+    |   `-- api/
+    |       |-- bff.openapi.yaml
+    |       |-- c2.openapi.yaml
+    |       |-- beacon-handler.openapi.yaml
+    |       `-- scanner.openapi.yaml
+    |-- tests/
+    |   |-- unit/
+    |   `-- integration/
+    |-- features/
     |-- scripts/
     |   |-- ci.py
     |   `-- openapi.py
-    |-- docs/
-    |   `-- api/
-    |       `-- openapi.yaml
-    |-- backend/
-    |   |-- app/
-    |   |-- alembic/
-    |   |-- tests/
-    |   |   |-- unit/
-    |   |   `-- integration/
-    |   |-- features/
-    |   |-- Dockerfile
-    |   |-- requirements.txt
-    |   `-- requirements-dev.txt
     `-- frontend/
         |-- src/
-        |   |-- components/
-        |   |-- pages/
-        |   `-- test/
         |-- e2e/
         |-- public/
-        |   `-- assets/
         |-- Dockerfile
         |-- package.json
         |-- playwright.config.ts
@@ -58,16 +78,28 @@ xero/
 
 | File | Purpose |
 | :--- | :--- |
-| `platform/docker-compose.yml` | Local UI/BFF stack: frontend, BFF backend, Postgres, Redis |
-| `platform/docker-compose.c2.yml` | Separate C2 backend stack: C2 backend, C2 Postgres, C2 Redis |
+| `platform/docker-compose.bff.yml` | Canonical local UI/BFF stack: frontend, BFF API, BFF Postgres, BFF Redis |
+| `platform/docker-compose.yml` | Temporary compatibility alias for the BFF stack |
+| `platform/docker-compose.c2.yml` | Separate C2 API stack: C2 API, C2 Postgres, C2 Redis |
+| `platform/docker-compose.handler.yml` | External beacon handler scaffold with optional C2 worker pairing/heartbeat |
+| `platform/docker-compose.scanner.yml` | External scanner scaffold with optional C2 worker pairing/heartbeat |
+
+## API Specs
+
+| Service | OpenAPI |
+| :--- | :--- |
+| BFF API | `platform/docs/api/bff.openapi.yaml` |
+| C2 API | `platform/docs/api/c2.openapi.yaml` |
+| Beacon handler scaffold | `platform/docs/api/beacon-handler.openapi.yaml` |
+| Scanner scaffold | `platform/docs/api/scanner.openapi.yaml` |
 
 ## Test Conventions
 
 | Type | Location | Runner |
 | :--- | :--- | :--- |
-| Backend unit | `platform/backend/tests/unit/` | pytest |
-| Backend integration | `platform/backend/tests/integration/` | pytest + docker compose |
-| Backend BDD | `platform/backend/features/` | behave |
+| Backend/service unit | `platform/tests/unit/` | pytest |
+| Backend/service integration | `platform/tests/integration/` | pytest + docker compose |
+| Backend BDD | `platform/features/` | behave |
 | Frontend unit | `platform/frontend/src/**/*.test.tsx` | vitest |
 | Beacon unit | `platform/beacons/go/.../*_test.go` | go test, planned |
 | E2E / Playwright | `platform/frontend/e2e/` | Playwright |
@@ -79,8 +111,11 @@ Every feature spec in `spec/features/` defines required unit, integration, and P
 
 - Platform: **Xero**
 - API prefix: `/api/v1`
-- Local BFF role: `XERO_SERVICE_ROLE=bff`
-- C2 backend role: `XERO_SERVICE_ROLE=c2`
+- Local BFF package: `xero_bff`
+- C2 API package: `xero_c2`
+- Beacon handler scaffold package: `xero_beacon_handler`
+- Scanner scaffold package: `xero_scanner`
+- Shared Python package: `xero_common`
 - C# beacon project, when implemented: `XeroBeacon.csproj`
 
 ## UI Development Requirement

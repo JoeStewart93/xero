@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -15,9 +16,16 @@ def with_pythonpath(env: dict[str, str] | None = None) -> dict[str, str]:
     merged = os.environ.copy()
     if env:
         merged.update(env)
-    backend_path = str(PLATFORM_ROOT / "backend")
+    paths = [
+        str(PLATFORM_ROOT / "common" / "python"),
+        str(PLATFORM_ROOT / "services" / "bff-api"),
+        str(PLATFORM_ROOT / "services" / "c2-api"),
+        str(PLATFORM_ROOT / "services" / "beacon-handler"),
+        str(PLATFORM_ROOT / "services" / "scanner"),
+    ]
     existing = merged.get("PYTHONPATH")
-    merged["PYTHONPATH"] = backend_path if not existing else f"{backend_path}{os.pathsep}{existing}"
+    joined = os.pathsep.join(paths)
+    merged["PYTHONPATH"] = joined if not existing else f"{joined}{os.pathsep}{existing}"
     return merged
 
 
@@ -45,10 +53,10 @@ def command_backend_lint() -> int:
             "-m",
             "ruff",
             "check",
-            "backend/app",
-            "backend/alembic",
-            "backend/tests",
-            "backend/features",
+            "common/python",
+            "services",
+            "tests",
+            "features",
             "scripts",
         ],
         env=with_pythonpath(),
@@ -56,15 +64,15 @@ def command_backend_lint() -> int:
 
 
 def command_backend_unit() -> int:
-    return run([sys.executable, "-m", "pytest", "backend/tests/unit"], env=with_pythonpath())
+    return run([sys.executable, "-m", "pytest", "tests/unit"], env=with_pythonpath())
 
 
 def command_backend_integration() -> int:
-    return run([sys.executable, "-m", "pytest", "backend/tests/integration"], env=with_pythonpath())
+    return run([sys.executable, "-m", "pytest", "tests/integration"], env=with_pythonpath())
 
 
 def command_backend_behave() -> int:
-    return run([sys.executable, "-m", "behave", "backend/features"], env=with_pythonpath())
+    return run([sys.executable, "-m", "behave", "features"], env=with_pythonpath())
 
 
 def command_openapi_export() -> int:
@@ -91,6 +99,31 @@ def command_playwright() -> int:
     return run([node_bin("npm"), "--prefix", "frontend", "run", "test:e2e"])
 
 
+def command_go_protocol_test() -> int:
+    protocol_root = PLATFORM_ROOT / "protocol" / "go"
+    if shutil.which("go"):
+        return run(["go", "test", "./..."], cwd=protocol_root)
+    docker = shutil.which("docker")
+    if not docker:
+        print("Go toolchain and Docker fallback are unavailable.", file=sys.stderr)
+        return 1
+    return run(
+        [
+            docker,
+            "run",
+            "--rm",
+            "-v",
+            f"{PLATFORM_ROOT / 'protocol'}:/workspace/protocol",
+            "-w",
+            "/workspace/protocol/go",
+            "golang:1.26",
+            "go",
+            "test",
+            "./...",
+        ]
+    )
+
+
 def command_fail_probe() -> int:
     return 1
 
@@ -104,6 +137,7 @@ COMMANDS = {
     "openapi-check": command_openapi_check,
     "frontend-lint": command_frontend_lint,
     "frontend-test": command_frontend_test,
+    "go-protocol-test": command_go_protocol_test,
     "frontend-build": command_frontend_build,
     "playwright": command_playwright,
     "fail-probe": command_fail_probe,

@@ -37,7 +37,8 @@ async function loginAndConnectC2(page: Page) {
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
 
   await expect(page.getByLabel(/C2 Connected/)).toBeVisible();
-  await expect(page.getByLabel('Realtime Connected')).toBeVisible({ timeout: 10_000 });
+  await page.goto(`${baseURL}/home`);
+  await expect(page.getByTestId('home-realtime-status')).toHaveText('connected', { timeout: 10_000 });
 }
 
 async function registerBeacon(fingerprint: string, hostname: string) {
@@ -98,7 +99,7 @@ function ageBeaconPastStaleThreshold(beaconId: string) {
   );
 }
 
-test('beacon heartbeat updates registry and stale transition updates Home counts', async ({ page }) => {
+test('beacon heartbeat updates Beacons overview and stale transition updates Home counts', async ({ page }) => {
   test.setTimeout(70_000);
   test.skip(!(await c2IsAvailable()), 'C2 backend stack is not available');
 

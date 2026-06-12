@@ -1,36 +1,24 @@
 import {
-  Activity,
-  Boxes,
   Check,
   ChevronDown,
-  Crosshair,
-  FolderKanban,
-  Gauge,
-  HeartPulse,
-  Home,
-  Layers3,
-  ListChecks,
   LogIn,
   LogOut,
   Plug,
-  RadioTower,
-  Settings,
   ShieldCheck,
   Unplug,
 } from 'lucide-react';
 import { ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 
+import { getSectionDefinition, healthNav, primaryNav, ShellSection } from '../navigation';
 import {
+  GLOBAL_SCOPE_LABEL,
   readProjectScopeSnapshot,
   subscribeProjectScopeChanged,
   writeActiveProjectId,
 } from '../projectScopeStorage';
 import { useAuth } from '../useAuth';
 import { useC2Connection } from '../useC2Connection';
-import { useRealtime } from '../useRealtime';
-
-type ShellSection = 'beacons' | 'health' | 'home' | 'projects' | 'recon' | 'settings';
 
 interface AppShellProps {
   children: ReactNode;
@@ -40,68 +28,6 @@ interface AppShellProps {
   toolbar?: ReactNode;
   wide?: boolean;
 }
-
-interface PrimaryNavItem {
-  enabled: boolean;
-  icon: typeof Gauge;
-  label: string;
-  requiresC2?: boolean;
-  shortLabel: string;
-  to: string;
-}
-
-interface SubNavItem {
-  enabled: boolean;
-  icon: typeof Gauge;
-  label: string;
-  requiresC2?: boolean;
-  to: string;
-}
-
-const primaryNav: PrimaryNavItem[] = [
-  { label: 'Home', shortLabel: 'Home', to: '/home', icon: Home, enabled: true },
-  { label: 'Projects', shortLabel: 'Projects', to: '/projects', icon: FolderKanban, enabled: true, requiresC2: true },
-  { label: 'Recon', shortLabel: 'Recon', to: '/recon', icon: Crosshair, enabled: true, requiresC2: true },
-  { label: 'Beacons', shortLabel: 'Beacons', to: '/beacons', icon: RadioTower, enabled: true, requiresC2: true },
-  { label: 'Reporting', shortLabel: 'Reporting', to: '/reporting', icon: ListChecks, enabled: false, requiresC2: true },
-  { label: 'Inventory', shortLabel: 'Inventory', to: '/inventory', icon: Boxes, enabled: false, requiresC2: true },
-  { label: 'Assets', shortLabel: 'Assets', to: '/assets', icon: Layers3, enabled: false, requiresC2: true },
-  { label: 'Settings', shortLabel: 'Settings', to: '/settings', icon: Settings, enabled: true },
-];
-
-const subNavBySection: Record<ShellSection, SubNavItem[]> = {
-  health: [
-    { label: 'Readiness', to: '/health', icon: HeartPulse, enabled: true },
-    { label: 'Liveness', to: '/health/live', icon: Activity, enabled: false },
-  ],
-  beacons: [
-    { label: 'Registry', to: '/beacons', icon: RadioTower, enabled: true, requiresC2: true },
-  ],
-  home: [
-    { label: 'Overview', to: '/home', icon: Home, enabled: true },
-  ],
-  projects: [
-    { label: 'Projects', to: '/projects', icon: FolderKanban, enabled: true, requiresC2: true },
-  ],
-  recon: [
-    { label: 'Tools', to: '/recon', icon: Crosshair, enabled: true, requiresC2: true },
-    { label: 'Runs', to: '/recon/runs', icon: ListChecks, enabled: false, requiresC2: true },
-    { label: 'Activity', to: '/recon/activity', icon: Activity, enabled: false, requiresC2: true },
-  ],
-  settings: [
-    { label: 'C2 Backend', to: '/settings', icon: Settings, enabled: true },
-    { label: 'BFF', to: '/settings/bff', icon: Layers3, enabled: false },
-    { label: 'Access', to: '/settings/access', icon: Settings, enabled: false },
-  ],
-};
-
-const healthNav: PrimaryNavItem = {
-  label: 'Health',
-  shortLabel: 'Health',
-  to: '/health',
-  icon: HeartPulse,
-  enabled: true,
-};
 
 function activeClass(baseClass: string, isActive: boolean) {
   return isActive ? `${baseClass} is-active` : baseClass;
@@ -119,7 +45,14 @@ function DisabledNavButton({
   label: string;
 }) {
   return (
-    <button aria-disabled="true" className={className} disabled title={disabledReason ?? `${label} is planned`} type="button">
+    <button
+      aria-disabled="true"
+      aria-label={label}
+      className={className}
+      disabled
+      title={disabledReason ?? `${label} is planned`}
+      type="button"
+    >
       {children}
     </button>
   );
@@ -136,27 +69,22 @@ function c2HostLabel(baseUrl: string): string {
 export function AppShell({ children, description, section, title, toolbar, wide = false }: AppShellProps) {
   const { logout, session } = useAuth();
   const { connection } = useC2Connection();
-  const realtime = useRealtime();
   const [projectScope, setProjectScope] = useState(() => readProjectScopeSnapshot());
   const [isProjectScopeOpen, setProjectScopeOpen] = useState(false);
   const projectScopeSelectorRef = useRef<HTMLDivElement | null>(null);
   const projectScopeMenuId = useId();
-  const subNav = subNavBySection[section];
+  const subNav = getSectionDefinition(section).tabs;
   const hasC2Connection = Boolean(connection);
   const HealthIcon = healthNav.icon;
   const C2StatusIcon = hasC2Connection ? Plug : Unplug;
-  const realtimeLabel = {
-    connected: 'Realtime Connected',
-    connecting: 'Realtime Connecting',
-    degraded: 'Realtime Degraded',
-    disconnected: 'Realtime Disconnected',
-    reconnecting: 'Realtime Reconnecting',
-  }[realtime.status];
   const c2Host = connection ? c2HostLabel(connection.baseUrl) : '';
   const activeProject = useMemo(
     () => projectScope.projects.find((project) => project.id === projectScope.activeProjectId),
     [projectScope.activeProjectId, projectScope.projects],
   );
+  const scopeLabel = activeProject?.name ?? GLOBAL_SCOPE_LABEL;
+  const scopeTitle = `Scope: ${scopeLabel}`;
+  const c2Title = hasC2Connection ? `C2 Connected: ${c2Host}` : 'C2 Disconnected';
 
   useEffect(() => subscribeProjectScopeChanged(() => setProjectScope(readProjectScopeSnapshot())), []);
 
@@ -196,48 +124,52 @@ export function AppShell({ children, description, section, title, toolbar, wide 
     <div className="app-shell">
       <main className="shell-main">
         <header className="shell-topbar">
-          <div className="shell-title-block">
-            <div>
-              <h1>{title}</h1>
-              {description && <p>{description}</p>}
-            </div>
+          <div className="shell-left-stack">
+            <h1 className="sr-only">{title}</h1>
+            {description && <p className="sr-only">{description}</p>}
+
+            <nav className="sub-nav" aria-label={`${title} sections`}>
+              {subNav.map((item) => {
+                const Icon = item.icon;
+                const content = (
+                  <>
+                    <Icon aria-hidden="true" size={16} strokeWidth={2} />
+                    <span>{item.label}</span>
+                  </>
+                );
+
+                const isEnabled = item.enabled;
+                if (!isEnabled) {
+                  return (
+                    <DisabledNavButton
+                      className="sub-nav-tab sub-nav-tab--disabled"
+                      key={item.label}
+                      label={item.label}
+                    >
+                      {content}
+                    </DisabledNavButton>
+                  );
+                }
+
+                return (
+                  <NavLink
+                    aria-label={item.label}
+                    className={({ isActive }) => activeClass('sub-nav-tab', isActive)}
+                    end
+                    key={item.label}
+                    title={item.label}
+                    to={item.to}
+                  >
+                    {content}
+                  </NavLink>
+                );
+              })}
+            </nav>
           </div>
 
           <div className="shell-brand-banner" aria-hidden="true">
             <img src="/assets/xero-wordmark-topbar.png" alt="" />
           </div>
-
-          <nav className="sub-nav" aria-label={`${title} sections`}>
-            {subNav.map((item) => {
-              const Icon = item.icon;
-              const content = (
-                <>
-                  <Icon aria-hidden="true" size={16} strokeWidth={2} />
-                  <span>{item.label}</span>
-                </>
-              );
-
-              const isEnabled = item.enabled && (!item.requiresC2 || hasC2Connection);
-              if (!isEnabled) {
-                return (
-                  <DisabledNavButton
-                    className="sub-nav-tab sub-nav-tab--disabled"
-                    disabledReason={item.requiresC2 && !hasC2Connection ? 'Connect a Xero C2 backend in Settings.' : undefined}
-                    key={item.label}
-                    label={item.label}
-                  >
-                    {content}
-                  </DisabledNavButton>
-                );
-              }
-
-              return (
-                <NavLink className={({ isActive }) => activeClass('sub-nav-tab', isActive)} end key={item.label} to={item.to}>
-                  {content}
-                </NavLink>
-              );
-            })}
-          </nav>
 
           <div className="shell-actions">
             {toolbar}
@@ -245,8 +177,9 @@ export function AppShell({ children, description, section, title, toolbar, wide 
             {session ? (
               <>
                 <div
-                  className={`project-scope-selector ${activeProject ? 'project-scope-selector--active' : ''} ${isProjectScopeOpen ? 'is-open' : ''}`}
+                  className={`project-scope-selector project-scope-selector--active ${isProjectScopeOpen ? 'is-open' : ''}`}
                   ref={projectScopeSelectorRef}
+                  title={scopeTitle}
                 >
                   <ShieldCheck aria-hidden="true" size={15} strokeWidth={2.2} />
                   <button
@@ -255,15 +188,13 @@ export function AppShell({ children, description, section, title, toolbar, wide 
                     aria-haspopup="listbox"
                     aria-label="Active project scope"
                     className="project-scope-trigger"
-                    disabled={projectScope.projects.length === 0}
                     onClick={() => setProjectScopeOpen((current) => !current)}
+                    title={scopeTitle}
                     type="button"
                   >
                     <span className="project-scope-selector-copy">
                       <strong>Scope</strong>
-                      <span className="project-scope-value">
-                        {activeProject?.name ?? (projectScope.projects.length === 0 ? 'No projects' : 'Select project')}
-                      </span>
+                      <span className="project-scope-value">{scopeLabel}</span>
                     </span>
                     <ChevronDown aria-hidden="true" className="project-scope-chevron" size={14} strokeWidth={2.2} />
                   </button>
@@ -277,7 +208,7 @@ export function AppShell({ children, description, section, title, toolbar, wide 
                         type="button"
                       >
                         <span className="project-scope-option-check">{!activeProject ? <Check aria-hidden="true" size={12} strokeWidth={2.4} /> : null}</span>
-                        <span>Select project</span>
+                        <span>{GLOBAL_SCOPE_LABEL}</span>
                       </button>
                       {projectScope.projects.map((project) => {
                         const isSelected = project.id === activeProject?.id;
@@ -300,22 +231,10 @@ export function AppShell({ children, description, section, title, toolbar, wide 
                     </div>
                   ) : null}
                 </div>
-                <div
-                  aria-label={realtimeLabel}
-                  className={`realtime-status-pill realtime-status-pill--${realtime.status}`}
-                  title={realtime.error || realtimeLabel}
-                >
-                  <RadioTower aria-hidden="true" size={15} strokeWidth={2.25} />
-                  <span className="realtime-status-copy">
-                    <strong>{realtimeLabel}</strong>
-                    <span>
-                      {realtime.activeBeaconCount} active / {realtime.beaconCount} total
-                    </span>
-                  </span>
-                </div>
                 <Link
                   aria-label={hasC2Connection ? `C2 Connected to ${c2Host}` : 'C2 Disconnected'}
                   className={`c2-status-button ${hasC2Connection ? 'c2-status-button--connected' : 'c2-status-button--disconnected'}`}
+                  title={c2Title}
                   to="/settings"
                 >
                   <C2StatusIcon aria-hidden="true" size={15} strokeWidth={2.25} />
@@ -324,13 +243,13 @@ export function AppShell({ children, description, section, title, toolbar, wide 
                     {hasC2Connection && <span>{c2Host}</span>}
                   </span>
                 </Link>
-                <button className="shell-action-button" onClick={logout} type="button">
+                <button aria-label="Log out" className="shell-action-button" onClick={logout} title="Log out" type="button">
                   <LogOut aria-hidden="true" size={15} strokeWidth={2} />
                   <span>Log out</span>
                 </button>
               </>
             ) : (
-              <Link className="shell-action-button" to="/login">
+              <Link aria-label="Login" className="shell-action-button" title="Login" to="/login">
                 <LogIn aria-hidden="true" size={15} strokeWidth={2} />
                 <span>Login</span>
               </Link>
@@ -351,13 +270,12 @@ export function AppShell({ children, description, section, title, toolbar, wide 
                 <span>{item.shortLabel}</span>
               </>
             );
-            const isEnabled = item.enabled && (!item.requiresC2 || hasC2Connection);
+            const isEnabled = item.enabled;
 
             if (!isEnabled) {
               return (
                 <DisabledNavButton
                   className="side-nav-tab side-nav-tab--disabled"
-                  disabledReason={item.requiresC2 && !hasC2Connection ? 'Connect a Xero C2 backend in Settings.' : undefined}
                   key={item.label}
                   label={item.label}
                 >

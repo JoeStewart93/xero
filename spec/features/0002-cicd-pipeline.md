@@ -42,7 +42,7 @@ GitHub Actions pipeline for backend linting, OpenAPI drift checks, backend tests
 **Goal:** Build images and validate the local UI/BFF compose stack in CI.
 **Acceptance Criteria:**
 - [x] Docker images build without error.
-- [x] Compose integration tests run against `docker compose up -d --build`.
+- [x] Compose integration tests run against explicit BFF/C2 compose stacks.
 - [x] Playwright smoke suite passes against the frontend container.
 
 ## Feature Acceptance Criteria

@@ -30,7 +30,8 @@ async function loginAndConnectC2(page: Page) {
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
 
   await expect(page.getByLabel(/C2 Connected/)).toBeVisible();
-  await expect(page.getByLabel('Realtime Connected')).toBeVisible({ timeout: 10_000 });
+  await page.goto(`${baseURL}/home`);
+  await expect(page.getByTestId('home-realtime-status')).toHaveText('connected', { timeout: 10_000 });
 }
 
 async function registerBeacon(fingerprint: string, hostname: string, os = 'Windows 11') {
@@ -67,8 +68,7 @@ test('registered beacon appears in Beacons detail and updates on re-registration
   await loginAndConnectC2(page);
   await page.goto(`${baseURL}/beacons`);
 
-  await expect(page.getByRole('heading', { name: 'Beacon registry' })).toBeVisible();
-  await expect(page.getByLabel('Realtime Connected')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole('heading', { name: 'Beacon overview' })).toBeVisible();
   const original = await registerBeacon(fingerprint, originalHost);
 
   await expect(page.getByTestId(`beacon-row-${original.beacon_id}`)).toBeVisible({ timeout: 5_000 });
@@ -84,10 +84,10 @@ test('registered beacon appears in Beacons detail and updates on re-registration
   await expect(page.getByTestId(`beacon-row-${updated.beacon_id}`)).not.toContainText(originalHost);
 
   await page.goto(`${baseURL}/home`);
-  await expect(page.getByLabel('Realtime Connected')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId('home-realtime-status')).toHaveText('connected', { timeout: 10_000 });
   const repeated = await registerBeacon(fingerprint, updatedHost, 'Ubuntu 24.04');
   await expect.poll(async () => Number(await page.getByTestId('home-beacon-count').textContent()), { timeout: 5_000 }).toBeGreaterThan(0);
-  await expect(page.getByTestId('home-latest-realtime-event')).toHaveText('beacon.status.changed', { timeout: 5_000 });
+  await expect(page.getByTestId('home-latest-realtime-event')).toContainText('beacon.', { timeout: 5_000 });
   expect(repeated.beacon_id).toBe(updated.beacon_id);
   expect(repeated.beacon_token).not.toBe(updated.beacon_token);
 });

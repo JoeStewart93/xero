@@ -1,5 +1,6 @@
 import { KeyboardEvent, useMemo, useState } from 'react';
 import {
+  ArrowDownUp,
   Boxes,
   Cpu,
   Crosshair,
@@ -8,6 +9,8 @@ import {
   KeyRound,
   Network,
   RadioTower,
+  RotateCcw,
+  Search,
   Server,
   ShieldCheck,
   TerminalSquare,
@@ -20,63 +23,28 @@ import { AppShell } from '../components/AppShell';
 import { C2RequiredPanel } from '../components/C2RequiredPanel';
 import { useC2Connection } from '../useC2Connection';
 import { useRealtime } from '../useRealtime';
+import {
+  DEFAULT_BEACON_SORT_DIRECTION,
+  DEFAULT_BEACON_SORT_KEY,
+  BeaconSortDirection,
+  BeaconSortKey,
+  compactDateTime,
+  formatDateTime,
+  formatRelativeTime,
+  searchBeacon,
+  sortBeacons,
+  statusClass,
+  transportLabel,
+  transportState,
+} from './beaconDisplay';
 
-function formatDateTime(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString();
-}
-
-function statusClass(status: string): string {
-  return status.toLowerCase() === 'online' ? 'beacon-status beacon-status--online' : 'beacon-status beacon-status--offline';
-}
-
-function compactDateTime(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString(undefined, {
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    month: '2-digit',
-  });
-}
-
-function formatRelativeTime(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 1000));
-  if (elapsedSeconds < 45) {
-    return 'just now';
-  }
-  const elapsedMinutes = Math.floor(elapsedSeconds / 60);
-  if (elapsedMinutes < 60) {
-    return `${elapsedMinutes}m ago`;
-  }
-  const elapsedHours = Math.floor(elapsedMinutes / 60);
-  if (elapsedHours < 24) {
-    return `${elapsedHours}h ago`;
-  }
-  return `${Math.floor(elapsedHours / 24)}d ago`;
-}
-
-function DetailRow({ label, value }: { label: string; value: string | number | null }) {
+function DetailRow({ label, testId, value }: { label: string; testId?: string; value: string | number | null }) {
   return (
     <div className="beacon-detail-row">
       <span>{label}</span>
-      <strong>{value ?? '-'}</strong>
+      <strong data-testid={testId}>{value ?? '-'}</strong>
     </div>
   );
-}
-
-function sortBeacons(beacons: Beacon[]): Beacon[] {
-  return [...beacons].sort((left, right) => Date.parse(right.last_seen) - Date.parse(left.last_seen));
 }
 
 const hostOperations = [
@@ -207,13 +175,55 @@ function BeaconOperationsModal({
 export function BeaconsPage() {
   const { connection } = useC2Connection();
   const realtime = useRealtime();
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedBeaconId, setSelectedBeaconId] = useState('');
   const [operationBeaconId, setOperationBeaconId] = useState('');
-  const beacons = useMemo(() => sortBeacons(realtime.beacons), [realtime.beacons]);
+  const [sortKey, setSortKey] = useState<BeaconSortKey>(DEFAULT_BEACON_SORT_KEY);
+  const [sortDirection, setSortDirection] = useState<BeaconSortDirection>(DEFAULT_BEACON_SORT_DIRECTION);
+  const beacons = useMemo(
+    () => sortBeacons(realtime.beacons.filter((beacon) => searchBeacon(beacon, searchQuery.trim())), sortKey, sortDirection),
+    [realtime.beacons, searchQuery, sortDirection, sortKey],
+  );
   const selectedBeacon = beacons.find((beacon) => beacon.id === selectedBeaconId) ?? beacons[0] ?? null;
   const operationBeacon = beacons.find((beacon) => beacon.id === operationBeaconId) ?? null;
-  const activeBeaconCount = beacons.filter((beacon) => beacon.status.toLowerCase() === 'online').length;
-  const offlineBeaconCount = beacons.filter((beacon) => beacon.status.toLowerCase() === 'offline').length;
+  const activeBeaconCount = realtime.beacons.filter((beacon) => beacon.status.toLowerCase() === 'online').length;
+  const offlineBeaconCount = realtime.beacons.filter((beacon) => beacon.status.toLowerCase() === 'offline').length;
+
+  function handleSort(nextSortKey: BeaconSortKey): void {
+    if (nextSortKey === sortKey) {
+      setSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortKey(nextSortKey);
+    setSortDirection(nextSortKey === DEFAULT_BEACON_SORT_KEY ? DEFAULT_BEACON_SORT_DIRECTION : 'asc');
+  }
+
+  function handleResetSort(): void {
+    setSortKey(DEFAULT_BEACON_SORT_KEY);
+    setSortDirection(DEFAULT_BEACON_SORT_DIRECTION);
+  }
+
+  function sortLabel(candidate: BeaconSortKey): string {
+    if (candidate !== sortKey) {
+      return '';
+    }
+    return sortDirection === 'asc' ? 'Ascending' : 'Descending';
+  }
+
+  function renderSortHeader(name: BeaconSortKey, label: string) {
+    const active = name === sortKey;
+    return (
+      <button
+        aria-label={`Sort beacons by ${label}`}
+        className={`table-sort-button ${active ? 'is-active' : ''}`}
+        onClick={() => handleSort(name)}
+        type="button"
+      >
+        <span>{label}</span>
+        <em>{sortLabel(name)}</em>
+      </button>
+    );
+  }
 
   function openBeaconOperations(beacon: Beacon): void {
     setSelectedBeaconId(beacon.id);
@@ -227,16 +237,16 @@ export function BeaconsPage() {
   }
 
   return (
-    <AppShell description="Registered C2 beacon registry" section="beacons" title="Beacons" wide>
+    <AppShell description="Controlled systems reporting through the active C2 backend" section="beacons" title="Beacons" wide>
       {!connection ? (
         <C2RequiredPanel />
       ) : (
         <div className="beacons-workspace-grid">
-          <section className="workspace-panel beacons-roster-panel" aria-label="Beacon registry">
+          <section className="workspace-panel beacons-roster-panel" aria-label="Beacon overview">
             <div className="panel-header">
               <div>
-                <h2>Beacon registry</h2>
-                <p className="muted-text">Registered systems reporting through the active C2 backend.</p>
+                <h2>Beacon overview</h2>
+                <p className="muted-text">Controlled systems reporting through the active C2 backend.</p>
               </div>
               <div className="panel-icon" aria-hidden="true">
                 <RadioTower size={18} strokeWidth={2} />
@@ -246,7 +256,7 @@ export function BeaconsPage() {
             <div className="beacon-summary-strip">
               <div>
                 <span>Total</span>
-                <strong>{beacons.length}</strong>
+                <strong>{realtime.beacons.length}</strong>
               </div>
               <div>
                 <span>Online</span>
@@ -258,7 +268,7 @@ export function BeaconsPage() {
               </div>
             </div>
 
-            {beacons.length === 0 ? (
+            {realtime.beacons.length === 0 ? (
               <div className="beacon-empty-state" data-testid="beacons-empty-state">
                 <RadioTower aria-hidden="true" size={20} strokeWidth={2} />
                 <div>
@@ -267,62 +277,133 @@ export function BeaconsPage() {
                 </div>
               </div>
             ) : (
-              <div className="beacon-registry-wrap" data-testid="beacon-roster">
-                <table className="beacon-registry-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Host</th>
-                      <th scope="col">Operating system</th>
-                      <th scope="col">Internal IP</th>
-                      <th scope="col">External IP</th>
-                      <th scope="col">PID / Arch</th>
-                      <th scope="col">Last Heartbeat</th>
-                      <th scope="col">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {beacons.map((beacon) => {
-                      const selected = beacon.id === selectedBeacon?.id;
-                      return (
-                        <tr
-                          aria-label={`Host ${beacon.hostname}`}
-                          className={selected ? 'is-selected' : ''}
-                          data-testid={`beacon-row-${beacon.id}`}
-                          key={beacon.id}
-                          onClick={() => setSelectedBeaconId(beacon.id)}
-                          onDoubleClick={() => openBeaconOperations(beacon)}
-                          onKeyDown={(event) => handleRowKeyDown(event, beacon)}
-                          tabIndex={0}
-                        >
-                          <td>
-                            <div className="beacon-host-cell">
-                              <strong>{beacon.hostname}</strong>
-                              <span>{beacon.machine_fingerprint_hash}</span>
-                            </div>
-                          </td>
-                          <td>{beacon.os}</td>
-                          <td>{beacon.internal_ip}</td>
-                          <td>{beacon.external_ip ?? '-'}</td>
-                          <td>
-                            <span className="beacon-mono">
-                              {beacon.pid} / {beacon.architecture}
-                            </span>
-                          </td>
-                          <td>
-                            <span className="beacon-relative-time" data-testid={`beacon-relative-${beacon.id}`}>
-                              {formatRelativeTime(beacon.last_seen)}
-                            </span>
-                            <small className="beacon-absolute-time">{compactDateTime(beacon.last_seen)}</small>
-                          </td>
-                          <td>
-                            <span className={statusClass(beacon.status)}>{beacon.status}</span>
-                          </td>
+              <>
+                <div className="beacon-registry-toolbar">
+                  <label className="beacon-search-field">
+                    <Search aria-hidden="true" size={15} strokeWidth={2} />
+                    <input
+                      aria-label="Search beacons"
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      placeholder="Search host, IP, OS, fingerprint"
+                      value={searchQuery}
+                    />
+                  </label>
+                  <button
+                    aria-label="Toggle beacon sort direction"
+                    className="beacon-sort-direction"
+                    onClick={() => setSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'))}
+                    type="button"
+                  >
+                    <ArrowDownUp aria-hidden="true" size={14} strokeWidth={2} />
+                    <span>{sortDirection === 'asc' ? 'Asc' : 'Desc'}</span>
+                  </button>
+                  <button
+                    aria-label="Reset beacon sorting"
+                    className="beacon-sort-reset"
+                    onClick={handleResetSort}
+                    title="Reset sorting"
+                    type="button"
+                  >
+                    <RotateCcw aria-hidden="true" size={14} strokeWidth={2} />
+                    <span>Reset</span>
+                  </button>
+                  <span className="beacon-registry-count">
+                    {beacons.length} / {realtime.beacons.length}
+                  </span>
+                </div>
+
+                {beacons.length === 0 ? (
+                  <div className="beacon-empty-state" data-testid="beacons-search-empty-state">
+                    <Search aria-hidden="true" size={20} strokeWidth={2} />
+                    <div>
+                      <strong>No matching beacons.</strong>
+                      <span>Clear or adjust the search query to return beacon rows.</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="beacon-registry-wrap" data-testid="beacon-roster">
+                    <table className="beacon-registry-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">
+                            {renderSortHeader('hostname', 'Host')}
+                          </th>
+                          <th scope="col">
+                            {renderSortHeader('os', 'Operating system')}
+                          </th>
+                          <th scope="col">
+                            {renderSortHeader('internal_ip', 'Internal IP')}
+                          </th>
+                          <th scope="col">
+                            {renderSortHeader('external_ip', 'External IP')}
+                          </th>
+                          <th scope="col">
+                            <span className="table-head-label">PID / Arch</span>
+                          </th>
+                          <th scope="col">
+                            {renderSortHeader('last_seen', 'Last Heartbeat')}
+                          </th>
+                          <th scope="col">
+                            {renderSortHeader('transport_mode', 'Transport')}
+                          </th>
+                          <th scope="col">
+                            {renderSortHeader('status', 'Status')}
+                          </th>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                      </thead>
+                      <tbody>
+                        {beacons.map((beacon) => {
+                          const selected = beacon.id === selectedBeacon?.id;
+                          return (
+                            <tr
+                              aria-label={`Host ${beacon.hostname}`}
+                              className={selected ? 'is-selected' : ''}
+                              data-testid={`beacon-row-${beacon.id}`}
+                              key={beacon.id}
+                              onClick={() => setSelectedBeaconId(beacon.id)}
+                              onDoubleClick={() => openBeaconOperations(beacon)}
+                              onKeyDown={(event) => handleRowKeyDown(event, beacon)}
+                              tabIndex={0}
+                            >
+                              <td>
+                                <div className="beacon-host-cell">
+                                  <strong>{beacon.hostname}</strong>
+                                  <span>{beacon.machine_fingerprint_hash}</span>
+                                </div>
+                              </td>
+                              <td>{beacon.os}</td>
+                              <td>{beacon.internal_ip}</td>
+                              <td>{beacon.external_ip ?? '-'}</td>
+                              <td>
+                                <span className="beacon-mono">
+                                  {beacon.pid} / {beacon.architecture}
+                                </span>
+                              </td>
+                              <td>
+                                <span className="beacon-relative-time" data-testid={`beacon-relative-${beacon.id}`}>
+                                  {formatRelativeTime(beacon.last_seen)}
+                                </span>
+                                <small className="beacon-absolute-time">{compactDateTime(beacon.last_seen)}</small>
+                              </td>
+                              <td>
+                                <div className="beacon-transport-cell">
+                                  <strong>{transportLabel(beacon.transport_mode)}</strong>
+                                  <span className={statusClass(beacon.transport_connected ? 'online' : 'offline')}>
+                                    {transportState(beacon)}
+                                  </span>
+                                </div>
+                              </td>
+                              <td>
+                                <span className={statusClass(beacon.status)}>{beacon.status}</span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
             )}
           </section>
 
@@ -354,9 +435,28 @@ export function BeaconsPage() {
                   <DetailRow label="Operating system" value={selectedBeacon.os} />
                   <DetailRow label="Architecture" value={selectedBeacon.architecture} />
                   <DetailRow label="Process ID" value={selectedBeacon.pid} />
+                  <DetailRow
+                    label="Protocol version"
+                    testId="beacon-detail-protocol-version"
+                    value={selectedBeacon.protocol_version ? `v${selectedBeacon.protocol_version}` : null}
+                  />
+                  <DetailRow
+                    label="Transport"
+                    testId="beacon-detail-transport-mode"
+                    value={transportLabel(selectedBeacon.transport_mode)}
+                  />
+                  <DetailRow
+                    label="Transport state"
+                    testId="beacon-detail-transport-state"
+                    value={transportState(selectedBeacon)}
+                  />
                   <DetailRow label="Internal IP" value={selectedBeacon.internal_ip} />
                   <DetailRow label="External IP" value={selectedBeacon.external_ip} />
                   <DetailRow label="First seen" value={formatDateTime(selectedBeacon.first_seen)} />
+                  <DetailRow
+                    label="Transport last seen"
+                    value={selectedBeacon.transport_last_seen ? formatDateTime(selectedBeacon.transport_last_seen) : null}
+                  />
                   <DetailRow label="Last heartbeat" value={formatRelativeTime(selectedBeacon.last_seen)} />
                   <DetailRow label="Last seen" value={formatDateTime(selectedBeacon.last_seen)} />
                 </div>

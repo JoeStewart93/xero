@@ -8,9 +8,20 @@
 | Status | Complete |
 | MVP Phase | 1 |
 | Depends on | F0001 plus auth persistence scaffolding |
+| Superseded by (operational auth) | [F0074](0074-c2-operator-authentication.md) |
 
 ## Summary
 Username/password authentication with BCrypt-hashed PostgreSQL user records and JWT session tokens for local Xero UI/BFF access. This feature also seeds a default development operator and a default local administrator account.
+
+## Scope Evolution
+
+F0003 delivered **BFF-local bootstrap authentication** only. Current implementation lives in `platform/services/bff-api/xero_bff/main.py`.
+
+Platform operator identity, C2 session authority, and user management move to **[F0074](0074-c2-operator-authentication.md)** on the C2 API. Post-F0074 behavior:
+
+- `admin/admin` (BFF bootstrap admin) remains for first-run C2 URL configuration and BFF health access but **loses operational platform authority** (Beacons, Infrastructure, worker pairing, etc.).
+- BFF `operator/operator_password` dev seed is **removed or scoped equivalent to bootstrap** in development/test; see F0074 Stage 3.
+- Operational UI login authenticates against C2 when a backend URL is configured; the separate Settings C2 connect password workflow is removed by F0074.
 
 ## Requirements
 - FR-02: JWT authentication for local operator access.
@@ -80,7 +91,7 @@ Username/password authentication with BCrypt-hashed PostgreSQL user records and 
 
 ### System / Integration Tests
 - [x] Login via API; use token to access `/api/v1/me`.
-- [x] Login via API; use token to access `/api/v1/beacons`.
+- [x] Login via API; use token to access `/api/v1/me`.
 - [x] Unauthenticated protected health returns 401.
 - [x] Expired token rejected on subsequent requests.
 

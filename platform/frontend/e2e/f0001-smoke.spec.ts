@@ -47,12 +47,15 @@ test('valid operator login redirects to home when C2 is disconnected', async ({ 
   await expect(primaryNav.getByText('Projects', { exact: true })).toBeVisible();
   await expect(primaryNav.getByText('Recon', { exact: true })).toBeVisible();
   await expect(primaryNav.getByText('Beacons', { exact: true })).toBeVisible();
-  await expect(primaryNav.getByText('Reporting', { exact: true })).toBeVisible();
-  await expect(primaryNav.getByText('Inventory', { exact: true })).toBeVisible();
+  await expect(primaryNav.getByText('Exploits', { exact: true })).toBeVisible();
+  await expect(primaryNav.getByText('Payloads', { exact: true })).toBeVisible();
   await expect(primaryNav.getByText('Assets', { exact: true })).toBeVisible();
+  await expect(primaryNav.getByText('Reports', { exact: true })).toBeVisible();
+  await expect(primaryNav.getByText('Loot', { exact: true })).toBeVisible();
   await expect(primaryNav.getByText('Settings', { exact: true })).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'System' }).getByText('Health', { exact: true })).toBeVisible();
   await expect(primaryNav.getByText('Findings', { exact: true })).toHaveCount(0);
+  await expect(primaryNav.getByText('Inventory', { exact: true })).toHaveCount(0);
 });
 
 test('logout returns the operator to login', async ({ page }) => {

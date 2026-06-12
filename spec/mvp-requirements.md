@@ -1,9 +1,9 @@
 # Xero: MVP Requirements
-**Version:** 1.3.0
-**Date:** June 08, 2026
+**Version:** 1.4.0
+**Date:** June 09, 2026
 **Status:** Approved
 **Parent Document:** overview.md
-**Changelog:** Realigned MVP requirements with the implemented UI/BFF stack, separate C2 backend stack, local DB-backed auth, protected health UI, and current lifecycle navigation.
+**Changelog:** Realigned MVP requirements with split BFF/C2/handler/scanner service directories, separate compose files, separate OpenAPI specs, local DB-backed auth, protected health UI, current lifecycle navigation, and shared C2 infrastructure worker pairing.
 
 ---
 
@@ -19,24 +19,26 @@ Product code lives under `platform/`. Specifications live under `spec/`.
 
 ### 2.1 Platform APIs
 
-- **Framework:** Python FastAPI for both local BFF and C2 backend service roles. ([F0004](features/0004-fastapi-backend-foundation.md))
-- **Local BFF role:** `XERO_SERVICE_ROLE=bff`; owns operator auth, protected UI health, and C2 connection setup.
-- **C2 backend role:** `XERO_SERVICE_ROLE=c2`; owns C2 connection authentication, operator realtime, completed beacon registration, completed heartbeat/offline state, and future tasking APIs.
+- **Framework:** Python FastAPI for local BFF, C2 API, and current handler/scanner scaffolds. ([F0004](features/0004-fastapi-backend-foundation.md), [F0048](features/0048-service-boundary-refactor.md))
+- **Local BFF API:** `platform/services/bff-api/`; owns bootstrap auth, protected UI health, BFF bootstrap user persistence, and password changes.
+- **C2 API:** `platform/services/c2-api/`; owns C2 operator authentication, operator realtime, completed beacon registration, completed heartbeat/offline state, shared handler/scanner worker pairing, and future tasking APIs.
+- **Beacon handler and scanner scaffolds:** `platform/services/beacon-handler/` and `platform/services/scanner/`; health/readiness plus optional C2 worker pairing/heartbeat until their tunnel/execution features are implemented.
 
 ### 2.2 Deployment Model
 
-- `platform/docker-compose.yml` runs the local UI/BFF stack: frontend, backend/BFF, PostgreSQL, and Redis.
+- `platform/docker-compose.bff.yml` runs the local UI/BFF stack: frontend, BFF API, BFF PostgreSQL, and BFF Redis. `platform/docker-compose.yml` is a temporary compatibility alias.
 - `platform/docker-compose.c2.yml` runs a separate C2 backend stack: C2 backend, C2 PostgreSQL, and C2 Redis.
-- The UI can connect to a local or remote C2 backend from Settings using `C2_CONNECT_PASSWORD`.
+- `platform/docker-compose.handler.yml` and `platform/docker-compose.scanner.yml` run health/readiness plus optional worker-pairing scaffolds for external handler/scanner services.
+- The UI connects to a local or remote C2 backend configured in Settings. C2 operator login replaces the former `C2_CONNECT_PASSWORD` connect flow ([F0074](features/0074-c2-operator-authentication.md)).
 
 ### 2.3 Authentication (MVP)
 
-- Username/password + JWT for local operator access. ([F0003](features/0003-operator-authentication.md))
-- BCrypt password hashes stored in PostgreSQL.
-- Default development users: `operator/operator_password` and local administrator `admin/admin`.
-- Default credentials and JWT/C2 secrets are rejected outside development/test modes.
-- C2 backend connection uses a separate password/token flow via `/api/v1/c2/connect`.
-- Single operator/admin-style role model for MVP; MFA and richer RBAC are v2. ([F0104](features/0104-operator-mfa.md), [F0105](features/0105-multi-role-rbac.md))
+- Bootstrap username/password + JWT for BFF setup scope. ([F0003](features/0003-operator-authentication.md))
+- C2 operator username/password + operator JWT for platform access. ([F0074](features/0074-c2-operator-authentication.md))
+- BCrypt password hashes stored in PostgreSQL (BFF `users` for bootstrap; C2 `operators` for platform).
+- Default development bootstrap admin: `admin/admin` on BFF; default C2 admin seeded from `C2_ADMIN_USERNAME` / `C2_ADMIN_PASSWORD`.
+- Default credentials and JWT secrets are rejected outside development/test modes.
+- Single operator/admin-style role model on C2 for MVP; MFA and richer RBAC are v2. ([F0104](features/0104-operator-mfa.md), [F0105](features/0105-multi-role-rbac.md))
 
 ### 2.4 Beacon Languages
 
@@ -47,6 +49,7 @@ Product code lives under `platform/`. Specifications live under `spec/`.
 ### 2.5 Module System
 
 - **MVP built-in:** Scanning and enumeration. ([F0022](features/0022-port-scanning-module.md)-[F0037](features/0037-dns-enumeration.md))
+- **MVP Phase 5:** Exploit management, payload generation, post-exploitation orchestration. ([F0080](features/0080-exploit-management-system.md)-[F0083](features/0083-exploit-source-adapters.md))
 - **v2 deferred:** Credential harvesting, lateral movement, process injection. (F0101-F0103)
 - **Plugins:** Multi-language API and Python reference. ([F0041](features/0041-plugin-api.md), [F0042](features/0042-python-plugin-reference.md))
 
@@ -65,9 +68,10 @@ Product code lives under `platform/`. Specifications live under `spec/`.
 
 - React + TypeScript + Tailwind. ([F0007](features/0007-react-ui-shell.md))
 - Stitch MCP is a hard requirement and must be used first for UI development, redesign, restyling, or UI planning work.
-- Current routes: `/login`, `/home`, `/projects`, `/recon`, `/beacons`, `/settings`, `/health`.
+- Current routes: `/login`, `/home`, `/projects`, `/recon`, `/beacons`, `/exploits`, `/payloads`, `/assets`, `/reports`, `/loot`, `/settings`, `/health`.
+- C2 infrastructure worker management route: `/settings/infrastructure`; `/settings/c2` is a legacy redirect.
 - `/settings/health` redirects to `/health`.
-- Planned disabled side tabs: Reporting, Inventory, Assets.
+- Exploits, Payloads, Assets, Reports, and Loot currently include UI shell stubs unless their owning feature specs are complete. Inventory lives under Assets.
 
 ---
 
@@ -78,7 +82,8 @@ Product code lives under `platform/`. Specifications live under `spec/`.
 | **Core Foundation** | | | |
 | Docker Compose deploy | F0001 | P0 | Complete |
 | CI/CD pipeline | F0002 | P0 | Complete |
-| Operator authentication | F0003 | P0 | Complete |
+| Bootstrap authentication (BFF) | F0003 | P0 | Complete |
+| C2 operator authentication | F0074 | P1 | Planned |
 | FastAPI REST API | F0004 | P0 | Complete |
 | PostgreSQL database | F0005 | P0 | Complete |
 | Redis message bus | F0006 | P0 | Complete |
@@ -86,9 +91,11 @@ Product code lives under `platform/`. Specifications live under `spec/`.
 | Operator WebSocket realtime | F0008 | P0 | Complete |
 | Beacon registration | F0009 | P0 | Complete |
 | Heartbeat/keepalive | F0010 | P0 | Complete |
-| Beacon binary protocol | F0011 | P0 | Planned |
-| Beacon WebSocket transport | F0012 | P0 | Planned |
-| Beacon HTTP long-poll | F0013 | P0 | Planned |
+| Service boundary refactor | F0048 | P0 | Complete |
+| C2 infrastructure worker pairing | F0049 | P1 | Complete |
+| Beacon binary protocol | F0011 | P0 | Complete |
+| Beacon WebSocket transport | F0012 | P0 | Complete |
+| Beacon HTTP long-poll | F0013 | P0 | Complete |
 | Task queue | F0014 | P0 | Planned |
 | Go beacon agent | F0015 | P0 | Planned |
 | Command execution | F0016 | P0 | Planned |
@@ -126,6 +133,11 @@ Product code lives under `platform/`. Specifications live under `spec/`.
 | Distributed scan orchestration | F0046 | P1 | Planned |
 | Beacon pivot scanning/proxying | F0047 | P2 | Planned |
 | Handler load balancing | F0109 | P1 | Planned |
+| **Exploits & Payloads** | | | |
+| Exploit management system | F0080 | P0 | Planned |
+| Payload generation system | F0081 | P0 | Planned |
+| Post-exploitation orchestration | F0082 | P1 | Planned |
+| Exploit source adapters | F0083 | P1 | Planned |
 | **Post-MVP (v2)** | | | |
 | Process injection / token impersonation | F0101 | v2 | Deferred |
 | Credential harvesting | F0102 | v2 | Deferred |
@@ -137,6 +149,16 @@ Product code lives under `platform/`. Specifications live under `spec/`.
 | Memory-only beacon execution | F0108 | v2 | Deferred |
 | RabbitMQ message bus | F0110 | v2 | Deferred |
 
+| **Rootkit Suite (v2)** | | | |
+| Rootkit suite overview | F0200 | v2 | Deferred |
+| Linux LKM rootkit | F0201 | v2 | Deferred |
+| Linux eBPF rootkit | F0202 | v2 | Deferred |
+| Windows rootkit | F0203 | v2 | Deferred |
+| Rootkit persistence | F0204 | v2 | Deferred |
+| Rootkit communication | F0205 | v2 | Deferred |
+| Rootkit evasion | F0206 | v2 | Deferred |
+| Rootkit build server | F0207 | v2 | Deferred |
+
 Full specs: [features/README.md](features/README.md)
 
 ---
@@ -146,19 +168,19 @@ Full specs: [features/README.md](features/README.md)
 ```text
 +-----------------------------------------------------------------+
 |                   XERO UI (React + TypeScript)                  |
-|  Home | Projects | Recon | Beacons | Reporting* | Inventory*    |
-|  Assets* | Settings | Health                                      |
+|  Home | Projects | Recon | Beacons | Exploits* | Payloads*      |
+|  Assets* | Reports* | Loot* | Settings | Health                  |
 +-----------------------------------------------------------------+
                          |
                          | REST + local JWT
 +------------------------v----------------------------------------+
 |                 LOCAL XERO BFF (FastAPI)                        |
-|  Auth | Protected health | C2 connection setup | Local admin     |
+|  Bootstrap auth | Protected BFF health | C2 URL config | Bootstrap admin |
 +-----------------------------------------------------------------+
          |                         |
     PostgreSQL                   Redis
          |
-         | C2 token flow from Settings
+         | C2 operator JWT from login (F0074)
          v
 +-----------------------------------------------------------------+
 |                 XERO C2 BACKEND (FastAPI)                       |
@@ -168,14 +190,19 @@ Full specs: [features/README.md](features/README.md)
          |                         |
     PostgreSQL                   Redis
          |
-         +-------- Embedded handler path (default) --+--> [ Go Beacons ]
-         +-------- External handlers (planned) ------+--> [ Go Beacons ]
-         +-------- Embedded scanner path (default) --+--> [ Recon Targets ]
-         +-------- External scanners (planned) ------+--> [ Recon Targets ]
-         +-------- Beacon pivot path (planned) ------+--> [ Internal Targets ]
+          +-------- Embedded handler path (default) --+--> [ Go Beacons ]
+          +-------- External handlers (paired; tunnel planned) --> [ Go Beacons ]
+          +-------- Embedded scanner path (default) --+--> [ Recon Targets ]
+          +-------- External scanners (paired; execution planned) --> [ Recon Targets ]
+          +-------- Beacon pivot path (planned) ------+--> [ Internal Targets ]
+          +-------- Exploit/Payload generation ------+--> [ Target Systems ]
+
+[ Beacon Handler Service Scaffold ] health/readiness + C2 pairing heartbeat
+[ Scanner Service Scaffold ]        health/readiness + C2 pairing heartbeat
+[ Exploit/Payload System ]          multi-source aggregation, generation, orchestration
 ```
 
-`*` Planned side tabs are visible but disabled until their features are implemented.
+`*` Shell stubs are visible and routeable, but feature behavior remains planned until the owning feature specs are implemented.
 
 See [architecture/](architecture/README.md).
 
@@ -197,7 +224,7 @@ Phases map to [features/README.md](features/README.md) groupings:
 ### Phase 2: Core C2 (Weeks 3-4) - F0008-F0015
 ### Phase 3: Tasking & Modules (Weeks 5-6) - F0016-F0028
 ### Phase 4: Assets & Grouping (Weeks 7-8) - F0030-F0034
-### Phase 5: Polish & Integration (Weeks 9-10) - F0029, F0035-F0047, F0109
+### Phase 5: Polish & Integration (Weeks 9-10) - F0029, F0035-F0047, F0049, F0080-F0083, F0109
 
 Each feature must pass unit, integration, and Playwright tests per its spec before marking Complete.
 
@@ -208,7 +235,7 @@ Each feature must pass unit, integration, and Playwright tests per its spec befo
 - Local UI/BFF and C2 backend are separate service roles.
 - The C2 backend can run locally or remotely.
 - The C2 backend is the embedded/default beacon handler and embedded/default scanner when external infrastructure is absent.
-- Local administrator account exists by default in development/test and can later be disabled by an admin workflow.
+- Local administrator (bootstrap) account exists by default in development/test on BFF; C2 operator accounts and disablement are managed on C2 ([F0074](features/0074-c2-operator-authentication.md)).
 - Health UI is authenticated; root health/readiness endpoints remain public for container checks.
 - Stitch MCP is required first for UI development and UI planning.
 
@@ -218,17 +245,20 @@ Each feature must pass unit, integration, and Playwright tests per its spec befo
 
 | Term | Definition |
 | :--- | :--- |
-| **Beacon (Agent)** | Payload on an authorized target system |
+| **Beacon (Agent)** | C2 agent/check-in/control entity on an authorized target system |
+| **Asset** | Durable inventory entity such as a host, service, domain, cloud resource, or relationship, whether or not it has an active beacon |
 | **Xero UI** | Operator web dashboard served by the frontend container |
-| **Xero BFF** | Local backend-for-frontend service for auth, protected health, and C2 connection setup |
+| **Xero BFF** | Local backend-for-frontend service for bootstrap auth, protected health, and C2 URL configuration |
 | **Xero C2 Backend** | C2 service managing beacons, tasks, keys, embedded handler/scanner defaults, handler routing, and scanner orchestration |
 | **Embedded Handler** | Default beacon connection role inside the C2 backend |
 | **External Handler** | Dedicated relay between beacons and C2 backend |
 | **Embedded Scanner** | Default scanner role inside the C2 backend |
-| **External Scanner** | Dedicated scanner worker registered to C2 |
+| **External Scanner** | Dedicated scanner worker paired to C2; scan execution remains feature-owned |
+| **Infrastructure** | C2 workers, handlers, scanners, transport, protocol status, and provisioning setup |
+| **Infrastructure Worker** | Shared C2 record for embedded, external, or C2-managed handler/scanner identity and heartbeat |
 | **Beacon Pivot** | Later beacon-hosted scanner/proxy route for explicit project scope |
 | **Task** | One-shot command or module invocation |
-| **Session** | Persistent interactive channel such as shell, file browser, or registry |
+| **Session** | Operator interaction channel with a beacon, such as shell, file browser, or Windows Registry Explorer |
 | **Profile** | Beacon comms config: sleep, jitter, traffic shaping |
 | **mTLS** | Beacon mutual TLS to handlers; not operator MFA |
 

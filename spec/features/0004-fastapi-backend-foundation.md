@@ -10,10 +10,10 @@
 | Depends on | F0001 |
 
 ## Summary
-FastAPI application skeleton with routing, middleware, OpenAPI docs, CORS, and structured project layout under platform/backend/.
+FastAPI application skeleton with routing, middleware, OpenAPI docs, CORS, and structured service layouts. F0048 split the original backend foundation into `platform/services/bff-api/`, `platform/services/c2-api/`, `platform/services/beacon-handler/`, `platform/services/scanner/`, and shared `platform/common/python/xero_common/` code.
 
 ## Completion Note
-Foundation scaffolding was created during F0001-F0003 and formally completed under F0004. Current code exposes the FastAPI app, config loading, CORS, JSON exception handling, OpenAPI generation, public `/health` and `/ready`, protected `/api/v1/health` and `/api/v1/ready`, local auth routes, and C2 connection routes.
+Foundation scaffolding was created during F0001-F0003 and formally completed under F0004. Current code exposes separate FastAPI apps for BFF and C2, config loading, CORS, JSON exception handling, per-service OpenAPI generation, public `/health` and `/ready`, protected BFF `/api/v1/health` and `/api/v1/ready`, local auth routes, C2 connection routes, and handler/scanner health scaffolds.
 
 ## Requirements
 - FR-01: Python FastAPI backend
@@ -26,7 +26,7 @@ Foundation scaffolding was created during F0001-F0003 and formally completed und
 ### Stage 1: App skeleton
 **Goal:** Create main FastAPI app with lifespan and config.
 **Acceptance Criteria:**
-- [x] platform/backend/app/main.py exposes FastAPI app
+- [x] BFF and C2 service packages expose FastAPI apps
 - [x] Config loaded from environment via config.py
 - [x] GET /health returns 200
 
@@ -64,3 +64,8 @@ Foundation scaffolding was created during F0001-F0003 and formally completed und
 ### Playwright Tests
 - [x] Frontend health indicator shows backend reachable after login
 - [x] API docs link in settings is not exposed; `/docs` host accessibility is covered by integration tests
+
+## Follow-up (F0074)
+
+- C2 API gains operator auth routes (`POST /api/v1/auth/login`, `GET /api/v1/me`, `POST /api/v1/auth/password`).
+- BFF auth routes remain for bootstrap scope only; `POST /api/v1/c2/connect` is removed from C2.

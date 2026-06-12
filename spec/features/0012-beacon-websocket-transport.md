@@ -5,12 +5,12 @@
 |---|---|
 | ID | F0012 |
 | Priority | P0 |
-| Status | Planned |
+| Status | Complete |
 | MVP Phase | 2 |
 | Depends on | F0009, F0011 |
 
 ## Summary
-Primary WebSocket transport layer for beacon-to-C2/handler communication, carrying binary protocol frames over TLS-upgraded persistent connections with backpressure handling.
+Primary WebSocket transport layer for beacon-to-C2 communication, carrying F0011 binary protocol frames over persistent WebSocket connections with backpressure handling, duplicate replacement, encrypted ACKs, redacted security events, and operator-visible transport state.
 
 ## Requirements
 - FR-02: WebSocket as primary beacon transport
@@ -18,51 +18,76 @@ Primary WebSocket transport layer for beacon-to-C2/handler communication, carryi
 - Binary WebSocket frames carrying protocol codec payloads
 - Per-beacon connection registry with graceful close
 - Ping/pong keepalive at transport layer
+- C2-token-protected transport status endpoint for operator UI observability
 
 ## Stages
 
 ### Stage 1: Beacon WS endpoint
 **Goal:** Expose /ws/beacon for authenticated binary frame exchange.
 **Acceptance Criteria:**
-- [ ] Beacon connects with registration token or beacon_id
-- [ ] Binary frames decoded via protocol codec
-- [ ] Text frames rejected with protocol error close code
+- [x] New beacons connect with subprotocol `xero.beacon.v1` and send encrypted `REGISTER` within the registration timeout.
+- [x] Existing beacons reconnect with `beacon_id` plus bearer token via `Authorization` or `bearer.<token>` subprotocol.
+- [x] Binary frames decode through the shared F0011 protocol codec.
+- [x] Text frames are rejected with a protocol close code and redacted security event.
+- [x] Malformed, tampered, replayed, and oversized frames close without 500s.
 
 ### Stage 2: Connection manager
 **Goal:** Track active beacon WebSocket connections by beacon_id.
 **Acceptance Criteria:**
-- [ ] Duplicate connection for same beacon_id closes older socket
-- [ ] Disconnect updates beacon status via heartbeat stale logic
-- [ ] Connection count exposed in /health metrics
+- [x] Duplicate connection for same beacon_id closes older socket with duplicate close code.
+- [x] Disconnect clears only the matching active connection and updates transport connected state immediately.
+- [x] Beacon online/offline status remains owned by heartbeat stale logic.
+- [x] Active connection count and WebSocket limits are exposed through C2-token-protected `GET /api/v1/transport`.
 
 ### Stage 3: Backpressure and ping
 **Goal:** Handle slow consumers and transport keepalive.
 **Acceptance Criteria:**
-- [ ] Send buffer limit closes connection if exceeded
-- [ ] Server sends WS ping every 30s; missing pong triggers disconnect
-- [ ] Large frames chunked per WebSocket max frame size config
+- [x] Bounded send queue closes overloaded connections.
+- [x] Uvicorn native WebSocket ping interval, ping timeout, and max message bytes are configured from `C2_BEACON_WS_*` env values.
+- [x] Encrypted HEARTBEAT frames update `last_seen`, `protocol_last_seen`, `transport_last_seen`, status, and runtime metadata.
+- [x] Large frames up to the configured WebSocket max message size round-trip without corruption; app-level chunking remains out of scope for F0017.
+
+### Stage 4: Harness reuse and UI observability
+**Goal:** Share protocol processing and expose transport state to operators.
+**Acceptance Criteria:**
+- [x] HTTP harness and WebSocket transport share decoding, replay checks, receipt recording, REGISTER handling, ACK creation, and security-event logging.
+- [x] `REGISTER` rotates the beacon token and returns it only inside the encrypted ACK.
+- [x] `TASK_POLL` returns encrypted no-task ACKs until F0014.
+- [x] `TASK_RESULT` records protocol frame receipts and returns `receipt=stored` without task-result domain storage.
+- [x] Settings/C2 shows protocol status, active WebSocket count, queue size, max message bytes, registration timeout, heartbeat timeout, and ping settings.
+- [x] Beacons roster/detail show transport mode and connected/disconnected state.
 
 ## Feature Acceptance Criteria
 
-- [ ] Beacon maintains persistent WS connection for task poll and result delivery
-- [ ] Binary frames round-trip without corruption at 1MB payload size
-- [ ] Duplicate beacon connection handled without message cross-talk
+- [x] Beacon maintains persistent WS connection for registration, heartbeat, task poll, and result receipt ACKs.
+- [x] Binary frames round-trip without corruption at roughly 1MB wire-frame size.
+- [x] Duplicate beacon connection handled without message cross-talk.
+- [x] Invalid frames log redacted security events and never expose token/key/plaintext material.
+- [x] Public `/health` and `/ready` remain simple container health contracts; transport metrics live behind C2 auth.
 
 ## Test Plan
 
 ### Unit Tests
-- [ ] test_beacon_ws_accepts_binary_frame
-- [ ] test_beacon_ws_rejects_text_frame
-- [ ] test_duplicate_connection_closes_prior
-- [ ] test_ping_pong_keepalive
-- [ ] test_backpressure_disconnect
+- [x] WebSocket accepts encrypted REGISTER and returns encrypted ACK with token.
+- [x] Existing beacon authenticates with `beacon_id` and token.
+- [x] Text frames are rejected.
+- [x] Duplicate connection closes prior socket and avoids cross-talk.
+- [x] HMAC tamper, replay, malformed, and oversized frames log security events and do not 500.
+- [x] Send-queue backpressure closes overloaded connection.
+- [x] HEARTBEAT updates beacon transport and heartbeat metadata.
+- [x] Transport status endpoint requires C2 auth and reports active count.
 
 ### System / Integration Tests
-- [ ] Test beacon connects via WS; sends REGISTER frame; receives ACK
-- [ ] Disconnect WS; beacon marked offline after stale threshold
-- [ ] Send 100 sequential frames; all decoded without loss
+- [x] Compose C2 accepts WebSocket REGISTER fixture and lists beacon as WebSocket transport.
+- [x] Roughly 1MB binary frame round-trips without corruption.
+- [x] 100 sequential frames are ACKed and receipt count matches.
+- [x] Disconnect clears active transport count immediately; stale/offline behavior remains heartbeat-owned.
 
 ### Playwright Tests
-- [ ] Settings shows active WebSocket beacon connection count
-- [ ] Beacon transport column shows WebSocket in beacon detail
-- [ ] Disconnect event reflected in dashboard within 5 seconds
+- [x] Settings/C2 shows active WebSocket beacon connection count.
+- [x] Beacon roster/detail shows WebSocket transport for a binary-registered beacon.
+- [x] Disconnect event is reflected in Settings/C2 within 5 seconds.
+
+## Completion Evidence
+
+- Backend lint, unit, behave, integration, OpenAPI export/check, Go protocol tests, frontend lint/unit/build, Docker BFF+C2 stacks, full Playwright E2E, and Browser sanity validation passed on June 11, 2026.

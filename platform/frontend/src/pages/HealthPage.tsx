@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshCw, ServerCog } from 'lucide-react';
+import { RadioTower, RefreshCw, ServerCog } from 'lucide-react';
 
 import { DependencyStatus, ReadinessResponse, getReadiness } from '../api';
 import { AppShell } from '../components/AppShell';
 import { useAuth } from '../useAuth';
+import { useRealtime } from '../useRealtime';
 
 type HealthState =
   | { kind: 'loading' }
@@ -12,6 +13,20 @@ type HealthState =
 
 function normalizeStatus(status: DependencyStatus | undefined): DependencyStatus {
   return status ?? 'unknown';
+}
+
+function realtimeReadinessStatus(status: string): DependencyStatus {
+  if (status === 'connected') {
+    return 'healthy';
+  }
+  if (status === 'degraded' || status === 'disconnected') {
+    return 'unhealthy';
+  }
+  return 'unknown';
+}
+
+function formatRealtimeStatus(status: string): string {
+  return status.replace(/^\w/, (firstLetter) => firstLetter.toUpperCase());
 }
 
 function StatusRow({
@@ -39,6 +54,7 @@ function StatusRow({
 
 export function HealthPage() {
   const { session } = useAuth();
+  const realtime = useRealtime();
   const [state, setState] = useState<HealthState>({ kind: 'loading' });
 
   const refreshReadiness = useCallback(() => {
@@ -110,7 +126,7 @@ export function HealthPage() {
       section="health"
       title="System health"
       toolbar={
-        <button className="secondary-button" type="button" onClick={refreshReadiness}>
+        <button aria-label="Refresh" className="secondary-button" title="Refresh readiness" type="button" onClick={refreshReadiness}>
           <RefreshCw aria-hidden="true" size={15} strokeWidth={2} />
           <span>Refresh</span>
         </button>
@@ -146,6 +162,19 @@ export function HealthPage() {
             status={statuses.redis}
             testId="redis-status"
           />
+          <StatusRow
+            label="Operator realtime"
+            description={`${formatRealtimeStatus(realtime.status)} stream, ${realtime.activeBeaconCount} active / ${realtime.beaconCount} total beacons`}
+            status={realtimeReadinessStatus(realtime.status)}
+            testId="realtime-status"
+          />
+        </div>
+
+        <div className="health-realtime-strip" aria-label="Realtime details">
+          <RadioTower aria-hidden="true" size={15} strokeWidth={2} />
+          <span>Latest event</span>
+          <strong>{realtime.latestEvent?.type ?? 'none'}</strong>
+          {realtime.error ? <em>{realtime.error}</em> : null}
         </div>
 
         {state.kind === 'loading' && <p className="supporting-text">Checking service readiness...</p>}

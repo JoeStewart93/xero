@@ -30,7 +30,11 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     }
     try {
       const response = await getC2Beacons(connection.baseUrl, connection.accessToken);
-      setBeacons(response.items);
+      setBeacons((current) => {
+        const merged = new Map(current.map((beacon) => [beacon.id, beacon]));
+        response.items.forEach((beacon) => merged.set(beacon.id, beacon));
+        return [...merged.values()];
+      });
       setError('');
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : 'Unable to reconcile realtime state.';

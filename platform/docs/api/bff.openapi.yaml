@@ -1,0 +1,271 @@
+openapi: 3.1.0
+info:
+  title: Xero BFF API
+  version: 0.1.0
+paths:
+  /health:
+    get:
+      tags:
+      - health
+      summary: Health
+      operationId: health_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+                title: Response Health Health Get
+  /ready:
+    get:
+      tags:
+      - health
+      summary: Ready
+      operationId: ready_ready_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /auth/login:
+    post:
+      tags:
+      - auth
+      summary: Login
+      operationId: login_auth_login_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/health:
+    get:
+      tags:
+      - operator
+      - health
+      summary: Api Health
+      operationId: api_health_api_v1_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+                title: Response Api Health Api V1 Health Get
+        '429':
+          description: Rate limit exceeded
+      security:
+      - OAuth2PasswordBearer: []
+  /api/v1/ready:
+    get:
+      tags:
+      - operator
+      - health
+      summary: Api Ready
+      operationId: api_ready_api_v1_ready_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '429':
+          description: Rate limit exceeded
+      security:
+      - OAuth2PasswordBearer: []
+  /api/v1/me:
+    get:
+      tags:
+      - operator
+      summary: Current Operator
+      operationId: current_operator_api_v1_me_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperatorResponse'
+        '429':
+          description: Rate limit exceeded
+      security:
+      - OAuth2PasswordBearer: []
+  /api/v1/auth/password:
+    post:
+      tags:
+      - operator
+      summary: Change Password
+      operationId: change_password_api_v1_auth_password_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordChangeRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '429':
+          description: Rate limit exceeded
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - OAuth2PasswordBearer: []
+components:
+  schemas:
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    LoginRequest:
+      properties:
+        username:
+          type: string
+          maxLength: 64
+          minLength: 1
+          title: Username
+        password:
+          type: string
+          maxLength: 72
+          minLength: 1
+          title: Password
+      type: object
+      required:
+      - username
+      - password
+      title: LoginRequest
+    OperatorResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        username:
+          type: string
+          title: Username
+        role:
+          type: string
+          title: Role
+          default: operator
+        is_enabled:
+          type: boolean
+          title: Is Enabled
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - username
+      - is_enabled
+      - created_at
+      title: OperatorResponse
+    PasswordChangeRequest:
+      properties:
+        current_password:
+          type: string
+          maxLength: 72
+          minLength: 1
+          title: Current Password
+        new_password:
+          type: string
+          maxLength: 72
+          minLength: 1
+          title: New Password
+      type: object
+      required:
+      - current_password
+      - new_password
+      title: PasswordChangeRequest
+    StatusResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+      type: object
+      required:
+      - status
+      title: StatusResponse
+    TokenResponse:
+      properties:
+        access_token:
+          type: string
+          title: Access Token
+        token_type:
+          type: string
+          title: Token Type
+          default: bearer
+        expires_at:
+          type: string
+          format: date-time
+          title: Expires At
+        operator:
+          $ref: '#/components/schemas/OperatorResponse'
+      type: object
+      required:
+      - access_token
+      - expires_at
+      - operator
+      title: TokenResponse
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+  securitySchemes:
+    OAuth2PasswordBearer:
+      type: oauth2
+      flows:
+        password:
+          scopes: {}
+          tokenUrl: /auth/login

@@ -15,6 +15,7 @@ export interface DiscoveryProject {
 export const PROJECT_STORAGE_KEY = 'xero.discovery.projects';
 export const ACTIVE_PROJECT_STORAGE_KEY = 'xero.discovery.activeProjectId';
 export const PROJECT_SCOPE_CHANGED_EVENT = 'xero:project-scope-changed';
+export const GLOBAL_SCOPE_LABEL = 'Global';
 
 export function createLocalId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;

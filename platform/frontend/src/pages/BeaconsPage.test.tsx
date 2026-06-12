@@ -320,6 +320,45 @@ describe('BeaconsPage', () => {
     expect(screen.getByText('urgent')).toBeTruthy();
   });
 
+  it('filters command history from the command queue modal', async () => {
+    const completedTask = {
+      ...queuedTask,
+      args: { command: 'hostname', shell_type: 'auto', timeout_seconds: 60 },
+      completed_at: '2026-06-08T14:09:00Z',
+      id: '55555555-5555-5555-5555-555555555555',
+      status: 'completed',
+    };
+    apiMocks.getTasks.mockResolvedValue({ items: [completedTask] });
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 1,
+      beacons: [beaconOne],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 0,
+      status: 'connected',
+    });
+
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    expect(await screen.findByText('hostname')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Search command history'), { target: { value: 'host' } });
+    fireEvent.change(screen.getByLabelText('Filter task status'), { target: { value: 'completed' } });
+
+    await waitFor(() => {
+      expect(apiMocks.getTasks).toHaveBeenLastCalledWith('http://localhost:18001', 'c2-token', {
+        beaconId: beaconOne.id,
+        command: 'host',
+        limit: 20,
+        status: 'completed',
+      });
+    });
+    expect(screen.getAllByText('completed').length).toBeGreaterThan(0);
+    expect(screen.getByText('completed 1m ago')).toBeTruthy();
+  });
+
   it('cancels a queued task from the command queue modal', async () => {
     apiMocks.getTasks.mockResolvedValueOnce({ items: [queuedTask] }).mockResolvedValueOnce({
       items: [{ ...queuedTask, cancelled_at: '2026-06-08T14:09:00Z', status: 'cancelled' }],
@@ -343,6 +382,6 @@ describe('BeaconsPage', () => {
     await waitFor(() => {
       expect(apiMocks.cancelTask).toHaveBeenCalledWith('http://localhost:18001', 'c2-token', queuedTask.id);
     });
-    expect(await screen.findByText('cancelled')).toBeTruthy();
+    expect((await screen.findAllByText('cancelled')).length).toBeGreaterThan(0);
   });
 });

@@ -24,6 +24,7 @@ from xero_c2.models import (
     ProtocolFrameReceipt,
     ProtocolSecurityEvent,
     Task,
+    TaskAuditEvent,
     WorkerEvent,
 )
 from xero_c2.protocol import HEARTBEAT, REGISTER, TASK_POLL, TASK_RESULT
@@ -437,6 +438,28 @@ def test_task_api_creates_lists_and_cancels_queued_task(c2_client):
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
 
+    audit = c2_client.get(f"/api/v1/tasks/{task['id']}/audit", headers={"Authorization": f"Bearer {token}"})
+    audit_events = audit.json()["items"]
+    assert audit.status_code == 200
+    assert [event["event_type"] for event in audit_events] == ["task.cancelled", "task.queued"]
+    assert {event["actor_subject"] for event in audit_events} == {"xero-ui-client"}
+
+
+def test_task_api_filters_history_by_command(c2_client):
+    registered = register_beacon(c2_client)
+    token = connect_c2(c2_client)
+
+    matching = create_shell_task(c2_client, token, registered["beacon_id"], command="whoami /groups")
+    create_shell_task(c2_client, token, registered["beacon_id"], command="hostname")
+
+    listed = c2_client.get(
+        f"/api/v1/tasks?beacon_id={registered['beacon_id']}&command=whoami",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()["items"]] == [matching["id"]]
+
 
 def test_task_api_rejects_invalid_task_requests(c2_client):
     registered = register_beacon(c2_client)
@@ -490,6 +513,15 @@ def test_protocol_task_poll_dispatches_highest_priority_task(protocol_c2_client)
     with SessionFactory() as session:
         normal_task = session.get(Task, uuid.UUID(normal["id"]))
         urgent_task = session.get(Task, uuid.UUID(urgent["id"]))
+        audit_events = (
+            session.execute(
+                select(TaskAuditEvent)
+                .where(TaskAuditEvent.task_id == uuid.UUID(urgent["id"]))
+                .order_by(TaskAuditEvent.occurred_at)
+            )
+            .scalars()
+            .all()
+        )
 
     assert poll_response.status_code == 200
     assert ack["task"]["id"] == urgent["id"]
@@ -497,6 +529,7 @@ def test_protocol_task_poll_dispatches_highest_priority_task(protocol_c2_client)
     assert normal_task is not None and normal_task.status == "queued"
     assert urgent_task is not None and urgent_task.status == "dispatched"
     assert urgent_task.dispatched_at is not None
+    assert [event.event_type for event in audit_events] == ["task.queued", "task.dispatched"]
 
 
 def test_task_result_updates_known_task_status(protocol_c2_client):
@@ -519,7 +552,15 @@ def test_task_result_updates_known_task_status(protocol_c2_client):
         "/api/v1/protocol/frames",
         content=encode_protocol_test_frame(
             TASK_RESULT,
-            {"beacon_id": registered["beacon_id"], "task_id": task["id"], "status": "completed", "stdout": "redacted"},
+            {
+                "beacon_id": registered["beacon_id"],
+                "exit_code": 0,
+                "status": "completed",
+                "stdout": "redacted",
+                "task_id": task["id"],
+                "timed_out": False,
+                "truncated": False,
+            },
         ),
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
     )
@@ -529,6 +570,15 @@ def test_task_result_updates_known_task_status(protocol_c2_client):
     SessionFactory = get_session_factory(settings.database_url)
     with SessionFactory() as session:
         stored = session.get(Task, uuid.UUID(task["id"]))
+        audit_events = (
+            session.execute(
+                select(TaskAuditEvent)
+                .where(TaskAuditEvent.task_id == uuid.UUID(task["id"]))
+                .order_by(TaskAuditEvent.occurred_at)
+            )
+            .scalars()
+            .all()
+        )
 
     assert result_response.status_code == 200
     assert ack["receipt"] == "stored"
@@ -538,6 +588,9 @@ def test_task_result_updates_known_task_status(protocol_c2_client):
     assert stored.status == "completed"
     assert stored.completed_at is not None
     assert "stdout" not in stored.args
+    assert [event.event_type for event in audit_events] == ["task.queued", "task.dispatched", "task.completed"]
+    assert audit_events[-1].actor_subject == f"beacon:{registered['beacon_id']}"
+    assert audit_events[-1].event_metadata == {"exit_code": 0, "timed_out": False, "truncated": False}
 
 
 def test_cancel_dispatched_task_returns_conflict(protocol_c2_client):

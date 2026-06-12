@@ -106,6 +106,7 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert "protocol_security_events" in inspector.get_table_names()
     assert "protocol_frame_receipts" in inspector.get_table_names()
     assert "tasks" in inspector.get_table_names()
+    assert "task_audit_events" in inspector.get_table_names()
     assert "artifacts" in inspector.get_table_names()
     assert "beacon_builds" in inspector.get_table_names()
     assert "protocol_version" in {column["name"] for column in inspector.get_columns("beacons")}
@@ -116,6 +117,18 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert {"beacon_id", "module", "args", "status", "priority", "dispatched_at", "cancelled_at"}.issubset(
         task_columns
     )
+    task_audit_columns = {column["name"] for column in inspector.get_columns("task_audit_events")}
+    assert {
+        "task_id",
+        "beacon_id",
+        "module",
+        "command",
+        "actor_subject",
+        "event_type",
+        "task_status",
+        "metadata",
+        "occurred_at",
+    }.issubset(task_audit_columns)
     artifact_columns = {column["name"] for column in inspector.get_columns("artifacts")}
     assert {
         "namespace",
@@ -134,7 +147,7 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     )
     with engine.connect() as connection:
         context = MigrationContext.configure(connection, opts={"version_table": "c2_alembic_version"})
-        assert context.get_current_heads() == ("c2_0009_artifact_storage",)
+        assert context.get_current_heads() == ("c2_0010_task_audit_events",)
 
 
 def test_generic_crud_helpers_work_with_service_models(tmp_path):

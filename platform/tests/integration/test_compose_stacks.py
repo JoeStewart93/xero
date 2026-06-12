@@ -90,14 +90,24 @@ def transport_status(token: str) -> dict:
     return response.json()
 
 
-def create_c2_task(token: str, beacon_id: str, *, command: str, priority: str = "normal") -> dict:
+def create_c2_task(
+    token: str,
+    beacon_id: str,
+    *,
+    command: str,
+    priority: str = "normal",
+    timeout_seconds: int | None = None,
+) -> dict:
+    args = {"command": command}
+    if timeout_seconds is not None:
+        args["timeout_seconds"] = timeout_seconds
     response = httpx.post(
         f"{C2_URL}/api/v1/tasks",
         headers=c2_auth_headers(token),
         json={
             "beacon_id": beacon_id,
             "module": "shell",
-            "args": {"command": command},
+            "args": args,
             "priority": priority,
         },
         timeout=10,
@@ -106,10 +116,14 @@ def create_c2_task(token: str, beacon_id: str, *, command: str, priority: str = 
     return response.json()
 
 
-def list_c2_tasks(token: str, beacon_id: str) -> list[dict]:
+def list_c2_tasks(token: str, beacon_id: str, *, command: str | None = None) -> list[dict]:
+    params = {"beacon_id": beacon_id}
+    if command is not None:
+        params["command"] = command
     response = httpx.get(
-        f"{C2_URL}/api/v1/tasks?beacon_id={beacon_id}",
+        f"{C2_URL}/api/v1/tasks",
         headers=c2_auth_headers(token),
+        params=params,
         timeout=10,
     )
     response.raise_for_status()
@@ -551,6 +565,34 @@ def test_c2_stack_go_beacon_registers_and_completes_shell_task(tmp_path):
     beacon = listed.json()
     assert beacon["transport_mode"] == "websocket"
     assert beacon["protocol_version"] == 1
+
+
+def test_c2_stack_go_beacon_records_command_history_and_timeout(tmp_path):
+    require_url(C2_URL, "C2")
+    wait_for_service_health("docker-compose.c2.yml", "c2-api")
+
+    c2_token = c2_access_token()
+    protocol = protocol_metadata(c2_token)
+    fingerprint = f"integration-go-timeout-{time.time_ns()}"
+
+    first = run_go_beacon_once(tmp_path, protocol=protocol, fingerprint=fingerprint)
+    assert first.returncode == 0
+    state_file = tmp_path / "go-beacon-state" / "beacon-state.json"
+    beacon_id = json.loads(state_file.read_text(encoding="utf-8"))["beacon_id"]
+
+    task = create_c2_task(
+        c2_token,
+        beacon_id,
+        command="sleep 2",
+        priority="urgent",
+        timeout_seconds=1,
+    )
+    second = run_go_beacon_once(tmp_path, protocol=protocol, fingerprint=fingerprint)
+    assert second.returncode == 0
+
+    searched = {item["id"]: item for item in list_c2_tasks(c2_token, beacon_id, command="sleep")}
+    assert searched[task["id"]]["status"] == "failed"
+    assert "stdout" not in searched[task["id"]]
 
 
 def test_c2_stack_cancelled_task_is_skipped_by_beacon_poll():

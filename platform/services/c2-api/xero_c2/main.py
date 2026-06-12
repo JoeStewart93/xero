@@ -9,7 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
-from sqlalchemy import select
+from sqlalchemy import String, cast, select
 from sqlalchemy.orm import Session
 from xero_common.database import session_factory_for_settings
 from xero_common.models import utc_now
@@ -69,7 +69,7 @@ from xero_c2.infrastructure_workers import (
     record_worker_event,
     run_worker_stale_monitor,
 )
-from xero_c2.models import Artifact, Beacon, BeaconBuild, InfrastructureWorker, ProtocolSecurityEvent, Task
+from xero_c2.models import Artifact, Beacon, BeaconBuild, InfrastructureWorker, ProtocolSecurityEvent, Task, TaskAuditEvent
 from xero_c2.protocol import (
     ACK,
     CURRENT_PROTOCOL_VERSION,
@@ -105,6 +105,7 @@ from xero_c2.realtime import (
     run_operator_websocket,
     websocket_origin_allowed,
 )
+from xero_c2.task_audit import public_task_audit_event, record_task_audit_event
 from xero_c2.schemas import (
     BeaconBuildCreateRequest,
     BeaconBuildListResponse,
@@ -128,6 +129,8 @@ from xero_c2.schemas import (
     ProtocolSecurityEventListResponse,
     ProtocolSecurityEventResponse,
     TaskCreateRequest,
+    TaskAuditEventListResponse,
+    TaskAuditEventResponse,
     TaskListResponse,
     TaskResponse,
     TaskStatus,
@@ -388,14 +391,19 @@ def worker_bearer_token(authorization: str | None) -> str:
     return token
 
 
-def authorize_c2_token(settings, authorization: str | None) -> None:
+def authorize_c2_token(settings, authorization: str | None) -> dict:
     scheme, _, token = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not token:
         raise auth_exception()
     try:
-        decode_c2_access_token(token, settings)
+        return decode_c2_access_token(token, settings)
     except AuthTokenError:
         raise auth_exception() from None
+
+
+def actor_subject_from_claims(claims: dict) -> str:
+    subject = claims.get("operator_id") or claims.get("sub") or "xero-ui-client"
+    return str(subject)
 
 
 def create_app() -> FastAPI:
@@ -1070,7 +1078,8 @@ def create_app() -> FastAPI:
         session: DbSession,
         authorization: Annotated[str | None, Header()] = None,
     ) -> TaskResponse:
-        authorize_c2_token(settings, authorization)
+        claims = authorize_c2_token(settings, authorization)
+        actor_subject = actor_subject_from_claims(claims)
         try:
             beacon_id = uuid.UUID(payload.beacon_id)
         except ValueError as exc:
@@ -1092,6 +1101,13 @@ def create_app() -> FastAPI:
         )
         session.add(task)
         session.flush()
+        record_task_audit_event(
+            session,
+            task,
+            actor_subject=actor_subject,
+            event_type="task.queued",
+            message="Operator queued shell task.",
+        )
         try:
             await request.app.state.task_queue_service.enqueue(getattr(request.app.state, "redis_client", None), task)
         except TaskQueueUnavailable:
@@ -1116,15 +1132,19 @@ def create_app() -> FastAPI:
         session: DbSession,
         authorization: Annotated[str | None, Header()] = None,
         beacon_id: Annotated[uuid.UUID | None, Query()] = None,
+        command: Annotated[str | None, Query(min_length=1, max_length=256)] = None,
         status_filter: Annotated[TaskStatus | None, Query(alias="status")] = None,
         limit: Annotated[int, Query(ge=1, le=100)] = 50,
     ) -> TaskListResponse:
         authorize_c2_token(settings, authorization)
-        query = select(Task).order_by(Task.created_at.desc()).limit(limit)
+        query = select(Task).order_by(Task.created_at.desc())
         if beacon_id is not None:
             query = query.where(Task.beacon_id == beacon_id)
+        if command is not None:
+            query = query.where(cast(Task.args["command"].as_string(), String).ilike(f"%{command.strip()}%"))
         if status_filter is not None:
             query = query.where(Task.status == status_filter)
+        query = query.limit(limit)
         tasks = session.execute(query).scalars().all()
         return TaskListResponse(items=[TaskResponse(**public_task(task)) for task in tasks])
 
@@ -1140,6 +1160,31 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
         return TaskResponse(**public_task(task))
 
+    @api_router.get("/tasks/{task_id}/audit", response_model=TaskAuditEventListResponse, tags=["tasks"])
+    def list_task_audit_events(
+        task_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    ) -> TaskAuditEventListResponse:
+        authorize_c2_token(settings, authorization)
+        task = session.get(Task, task_id)
+        if task is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+        events = (
+            session.execute(
+                select(TaskAuditEvent)
+                .where(TaskAuditEvent.task_id == task_id)
+                .order_by(TaskAuditEvent.occurred_at.desc(), TaskAuditEvent.created_at.desc())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+        return TaskAuditEventListResponse(
+            items=[TaskAuditEventResponse(**public_task_audit_event(event)) for event in events]
+        )
+
     @api_router.delete("/tasks/{task_id}", response_model=TaskResponse, tags=["tasks"])
     async def delete_task(
         task_id: uuid.UUID,
@@ -1147,7 +1192,8 @@ def create_app() -> FastAPI:
         session: DbSession,
         authorization: Annotated[str | None, Header()] = None,
     ) -> TaskResponse:
-        authorize_c2_token(settings, authorization)
+        claims = authorize_c2_token(settings, authorization)
+        actor_subject = actor_subject_from_claims(claims)
         task = session.get(Task, task_id)
         if task is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
@@ -1156,6 +1202,7 @@ def create_app() -> FastAPI:
             request.app.state.task_queue_service,
             getattr(request.app.state, "redis_client", None),
             task,
+            actor_subject=actor_subject,
         )
         session.commit()
         session.refresh(task)

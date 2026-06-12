@@ -166,6 +166,31 @@ class Task(BaseModel):
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class TaskAuditEvent(BaseModel):
+    __tablename__ = "task_audit_events"
+
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    beacon_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("beacons.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    module: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    command: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+    actor_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    task_status: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    event_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+
+
 class Artifact(BaseModel):
     __tablename__ = "artifacts"
 

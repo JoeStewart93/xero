@@ -160,7 +160,7 @@ flowchart TD
 \\\
 
 F0005 completes the shared PostgreSQL persistence foundation; F0009 completes the beacon registration table and opaque token material; F0010 completes beacon heartbeat profile fields and \eacon_events\, while session/task/asset/handler/plugin domain persistence remains with dependent feature specs.
-F0006 completes the shared Redis foundation; F0008 completes operator WebSocket delivery through Redis pub/sub, while real task queues remain with F0014.
+F0006 completes the shared Redis foundation; F0008 completes operator WebSocket delivery through Redis pub/sub, and F0014 completes real per-beacon task queues.
 F0049 completes shared handler/scanner worker pairing, heartbeat, stale detection, Settings > Infrastructure inventory, and local scaffold provisioning. Scanner modules use the embedded C2 scanner by default; scanner job eligibility/execution, distributed scan sharding, and beacon pivot execution are planned in F0045-F0047.
 **Recon modules (F0050-F0073)** expand scanning capabilities with masscan, nmap, whois, HTTP enumeration, enrichment APIs, network protocols, cloud recon, and beacon-side execution. F0069 provides the scanner Docker image with all tools; F0070 manages external API keys; F0071 ingests results into assets; F0072 integrates with reporting; F0073 enables beacon-side recon.
 **Exploit & Payload system (F0080-F0083)** provides multi-source exploit aggregation, multi-language payload generation, encoder/obfuscator pipeline, and post-exploitation orchestration. F0080 manages the exploit catalog and suggestions; F0081 generates payloads in Go, Python, PowerShell, Bash, Rust, C#; F0082 orchestrates chained execution; F0083 integrates Metasploit, ExploitDB, and custom sources.

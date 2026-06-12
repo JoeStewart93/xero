@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     beacon_ws_max_message_bytes: int = Field(default=1_048_576, ge=128, alias="C2_BEACON_WS_MAX_MESSAGE_BYTES")
     beacon_longpoll_timeout_seconds: int = Field(default=60, gt=0, alias="C2_BEACON_LONGPOLL_TIMEOUT_SECONDS")
     beacon_longpoll_max_frame_bytes: int = Field(default=1_048_576, ge=128, alias="C2_BEACON_LONGPOLL_MAX_FRAME_BYTES")
+    task_default_timeout_seconds: int = Field(default=60, gt=0, alias="C2_TASK_DEFAULT_TIMEOUT_SECONDS")
+    task_max_timeout_seconds: int = Field(default=3600, gt=0, alias="C2_TASK_MAX_TIMEOUT_SECONDS")
+    task_retention_days: int = Field(default=30, gt=0, alias="C2_TASK_RETENTION_DAYS")
 
     @field_validator("api_v1_prefix")
     @classmethod
@@ -119,6 +122,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def reject_dev_auth_defaults_outside_local_modes(self) -> "Settings":
         local_modes = {"development", "test"}
+        if self.task_default_timeout_seconds > self.task_max_timeout_seconds:
+            raise ValueError("C2_TASK_DEFAULT_TIMEOUT_SECONDS must be <= C2_TASK_MAX_TIMEOUT_SECONDS")
         if self.app_env.lower() not in local_modes:
             if self.jwt_secret_key == DEV_JWT_SECRET or len(self.jwt_secret_key) < 32:
                 raise ValueError("C2_JWT_SECRET_KEY must be set to a non-default value outside development/test")

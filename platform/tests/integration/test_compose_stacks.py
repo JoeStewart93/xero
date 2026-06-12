@@ -90,6 +90,32 @@ def transport_status(token: str) -> dict:
     return response.json()
 
 
+def create_c2_task(token: str, beacon_id: str, *, command: str, priority: str = "normal") -> dict:
+    response = httpx.post(
+        f"{C2_URL}/api/v1/tasks",
+        headers=c2_auth_headers(token),
+        json={
+            "beacon_id": beacon_id,
+            "module": "shell",
+            "args": {"command": command},
+            "priority": priority,
+        },
+        timeout=10,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def list_c2_tasks(token: str, beacon_id: str) -> list[dict]:
+    response = httpx.get(
+        f"{C2_URL}/api/v1/tasks?beacon_id={beacon_id}",
+        headers=c2_auth_headers(token),
+        timeout=10,
+    )
+    response.raise_for_status()
+    return response.json()["items"]
+
+
 def register_c2_beacon(hostname: str) -> dict:
     response = httpx.post(
         f"{C2_URL}/api/v1/beacons/register",
@@ -392,6 +418,110 @@ def test_c2_stack_websocket_large_frame_and_sequential_receipts():
     assert protocol_receipt_count(beacon_id, (TASK_POLL, TASK_RESULT)) == 101
 
 
+def test_c2_stack_websocket_task_queue_priority_and_history():
+    require_url(C2_URL, "C2")
+    wait_for_service_health("docker-compose.c2.yml", "c2-api")
+
+    c2_token = c2_access_token()
+    protocol = protocol_metadata(c2_token)
+    event_id = time.time_ns()
+
+    with ws_connect(
+        websocket_url("/ws/beacon"),
+        subprotocols=["xero.beacon.v1"],
+        open_timeout=10,
+        proxy=None,
+    ) as websocket:
+        websocket.send(
+            encode_protocol_frame(
+                protocol,
+                REGISTER,
+                {
+                    "machine_fingerprint_hash": f"integration-ws-task-{event_id}",
+                    "hostname": f"integration-ws-task-{event_id}",
+                    "os": "Windows 11",
+                    "architecture": "x64",
+                    "internal_ip": "10.55.0.10",
+                    "external_ip": "198.51.100.55",
+                    "pid": 5555,
+                    "supported_versions": [1],
+                },
+            )
+        )
+        register_ack_frame = websocket.recv(timeout=10)
+        assert isinstance(register_ack_frame, bytes)
+        beacon_id = decode_protocol_ack(register_ack_frame)["beacon_id"]
+
+        normal = create_c2_task(c2_token, beacon_id, command="normal", priority="normal")
+        urgent = create_c2_task(c2_token, beacon_id, command="urgent", priority="urgent")
+        create_c2_task(c2_token, beacon_id, command="low", priority="low")
+
+        websocket.send(encode_protocol_frame(protocol, TASK_POLL, {"beacon_id": beacon_id}))
+        task_ack_frame = websocket.recv(timeout=10)
+        assert isinstance(task_ack_frame, bytes)
+        task_ack = decode_protocol_ack(task_ack_frame)
+        assert task_ack["task"]["id"] == urgent["id"]
+        assert task_ack["task"]["args"]["command"] == "urgent"
+
+        websocket.send(
+            encode_protocol_frame(
+                protocol,
+                TASK_RESULT,
+                {"beacon_id": beacon_id, "task_id": urgent["id"], "status": "completed"},
+            )
+        )
+        result_ack_frame = websocket.recv(timeout=10)
+        assert isinstance(result_ack_frame, bytes)
+        assert decode_protocol_ack(result_ack_frame)["task"]["status"] == "completed"
+
+    tasks = {task["id"]: task for task in list_c2_tasks(c2_token, beacon_id)}
+    assert tasks[urgent["id"]]["status"] == "completed"
+    assert tasks[normal["id"]]["status"] == "queued"
+
+
+def test_c2_stack_cancelled_task_is_skipped_by_beacon_poll():
+    require_url(C2_URL, "C2")
+    wait_for_service_health("docker-compose.c2.yml", "c2-api")
+
+    c2_token = c2_access_token()
+    protocol = protocol_metadata(c2_token)
+    event_id = time.time_ns()
+
+    with ws_connect(
+        websocket_url("/ws/beacon"),
+        subprotocols=["xero.beacon.v1"],
+        open_timeout=10,
+        proxy=None,
+    ) as websocket:
+        websocket.send(
+            encode_protocol_frame(
+                protocol,
+                REGISTER,
+                {
+                    "machine_fingerprint_hash": f"integration-ws-cancel-{event_id}",
+                    "hostname": f"integration-ws-cancel-{event_id}",
+                    "os": "Ubuntu 24.04",
+                    "architecture": "x64",
+                    "internal_ip": "10.56.0.10",
+                    "external_ip": "198.51.100.56",
+                    "pid": 5656,
+                    "supported_versions": [1],
+                },
+            )
+        )
+        register_ack_frame = websocket.recv(timeout=10)
+        assert isinstance(register_ack_frame, bytes)
+        beacon_id = decode_protocol_ack(register_ack_frame)["beacon_id"]
+        task = create_c2_task(c2_token, beacon_id, command="cancel-me", priority="urgent")
+        cancelled = httpx.delete(f"{C2_URL}/api/v1/tasks/{task['id']}", headers=c2_auth_headers(c2_token), timeout=10)
+        cancelled.raise_for_status()
+
+        websocket.send(encode_protocol_frame(protocol, TASK_POLL, {"beacon_id": beacon_id}))
+        ack_frame = websocket.recv(timeout=10)
+        assert isinstance(ack_frame, bytes)
+        assert decode_protocol_ack(ack_frame)["task"] is None
+
+
 def test_c2_stack_accepts_longpoll_frame_post_and_lists_transport():
     require_url(C2_URL, "C2")
     wait_for_service_health("docker-compose.c2.yml", "c2-api")
@@ -427,6 +557,37 @@ def test_c2_stack_accepts_longpoll_frame_post_and_lists_transport():
     assert beacon["transport_mode"] == "long-poll"
     assert beacon["transport_connected"] is False
     assert transport_status(c2_token)["transport_mode_counts"]["long-poll"] >= 1
+
+
+def test_c2_stack_longpoll_returns_queued_task_frame():
+    require_url(C2_URL, "C2")
+    wait_for_service_health("docker-compose.c2.yml", "c2-api")
+
+    c2_token = c2_access_token()
+    protocol = protocol_metadata(c2_token)
+    event_id = time.time_ns()
+    registered = register_c2_beacon(f"integration-longpoll-task-{event_id}")
+    beacon_id = registered["beacon_id"]
+    heartbeat = httpx.post(
+        f"{C2_URL}/api/v1/beacons/{beacon_id}/frame",
+        content=encode_protocol_frame(protocol, HEARTBEAT, {"beacon_id": beacon_id}),
+        headers={"Authorization": f"Bearer {registered['beacon_token']}", "Content-Type": "application/octet-stream"},
+        timeout=10,
+    )
+    heartbeat.raise_for_status()
+    task = create_c2_task(c2_token, beacon_id, command="longpoll-task", priority="urgent")
+
+    poll = httpx.get(
+        f"{C2_URL}/api/v1/beacons/{beacon_id}/poll?timeout_seconds=2",
+        headers={"Authorization": f"Bearer {registered['beacon_token']}"},
+        timeout=10,
+    )
+    poll.raise_for_status()
+    ack = decode_protocol_ack(poll.content)
+
+    assert ack["acknowledged_message_type"] == TASK_POLL
+    assert ack["task"]["id"] == task["id"]
+    assert list_c2_tasks(c2_token, beacon_id)[0]["status"] == "dispatched"
 
 
 def test_c2_stack_longpoll_timeout_returns_204():

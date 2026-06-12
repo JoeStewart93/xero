@@ -401,6 +401,169 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/tasks:
+    post:
+      tags:
+      - tasks
+      summary: Create Task
+      operationId: create_task_api_v1_tasks_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskCreateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - tasks
+      summary: List Tasks
+      operationId: list_tasks_api_v1_tasks_get
+      parameters:
+      - name: beacon_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Beacon Id
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - cancelled
+            - completed
+            - dispatched
+            - failed
+            - queued
+            - running
+            type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/tasks/{task_id}:
+    get:
+      tags:
+      - tasks
+      summary: Get Task
+      operationId: get_task_api_v1_tasks__task_id__get
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Task Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - tasks
+      summary: Delete Task
+      operationId: delete_task_api_v1_tasks__task_id__delete
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Task Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/beacons/register:
     post:
       tags:
@@ -1160,6 +1323,123 @@ components:
       - message
       - occurred_at
       title: ProtocolSecurityEventResponse
+    TaskCreateRequest:
+      properties:
+        beacon_id:
+          type: string
+          title: Beacon Id
+        module:
+          type: string
+          const: shell
+          title: Module
+          default: shell
+        args:
+          additionalProperties: true
+          type: object
+          title: Args
+        priority:
+          type: string
+          enum:
+          - high
+          - low
+          - normal
+          - urgent
+          title: Priority
+          default: normal
+      type: object
+      required:
+      - beacon_id
+      title: TaskCreateRequest
+    TaskListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/TaskResponse'
+          type: array
+          title: Items
+      type: object
+      title: TaskListResponse
+    TaskResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        beacon_id:
+          type: string
+          title: Beacon Id
+        module:
+          type: string
+          title: Module
+        args:
+          additionalProperties: true
+          type: object
+          title: Args
+        status:
+          type: string
+          enum:
+          - cancelled
+          - completed
+          - dispatched
+          - failed
+          - queued
+          - running
+          title: Status
+        priority:
+          type: string
+          enum:
+          - high
+          - low
+          - normal
+          - urgent
+          title: Priority
+        queued_at:
+          type: string
+          format: date-time
+          title: Queued At
+        dispatched_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Dispatched At
+        running_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Running At
+        completed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Completed At
+        cancelled_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Cancelled At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - beacon_id
+      - module
+      - args
+      - status
+      - priority
+      - queued_at
+      - created_at
+      - updated_at
+      title: TaskResponse
     TransportStatusResponse:
       properties:
         active_websocket_connections:

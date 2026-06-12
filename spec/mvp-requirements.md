@@ -62,7 +62,7 @@ Product code lives under `platform/`. Specifications live under `spec/`.
 
 - **PostgreSQL:** Persistence foundation is complete with SQLAlchemy sessions, Alembic migrations, pool configuration, model primitives, and CRUD helpers. Domain tables remain scoped to dependent features. ([F0005](features/0005-postgresql-persistence.md))
 - **Redis:** Message bus foundation is complete with async client setup, queue, pub/sub, cache, and protected API rate-limit primitives. ([F0006](features/0006-redis-message-bus.md))
-- Operator WebSocket fan-out is complete via `events:operator`. Real task queues remain scoped to dependent features. ([F0008](features/0008-operator-websocket-realtime.md), [F0014](features/0014-task-queue.md))
+- Operator WebSocket fan-out is complete via `events:operator`; queued task lifecycle events now publish through the same channel. ([F0008](features/0008-operator-websocket-realtime.md), [F0014](features/0014-task-queue.md))
 
 ### 2.8 UI Development
 
@@ -96,7 +96,7 @@ Product code lives under `platform/`. Specifications live under `spec/`.
 | Beacon binary protocol | F0011 | P0 | Complete |
 | Beacon WebSocket transport | F0012 | P0 | Complete |
 | Beacon HTTP long-poll | F0013 | P0 | Complete |
-| Task queue | F0014 | P0 | Planned |
+| Task queue | F0014 | P0 | Complete |
 | Go beacon agent | F0015 | P0 | Planned |
 | Command execution | F0016 | P0 | Planned |
 | Result collection | F0017 | P0 | Planned |

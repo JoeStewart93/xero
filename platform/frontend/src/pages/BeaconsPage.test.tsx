@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,6 +9,19 @@ const mocks = vi.hoisted(() => ({
   useAuth: vi.fn(),
   useC2Connection: vi.fn(),
   useRealtime: vi.fn(),
+}));
+
+const apiMocks = vi.hoisted(() => ({
+  cancelTask: vi.fn(),
+  createShellTask: vi.fn(),
+  getTasks: vi.fn(),
+}));
+
+vi.mock('../api', async (importOriginal) => ({
+  ...((await importOriginal()) as object),
+  cancelTask: apiMocks.cancelTask,
+  createShellTask: apiMocks.createShellTask,
+  getTasks: apiMocks.getTasks,
 }));
 
 vi.mock('../useAuth', () => ({
@@ -73,6 +86,22 @@ const beaconThree: Beacon = {
   transport_mode: 'long-poll',
 };
 
+const queuedTask = {
+  args: { command: 'whoami', shell_type: 'auto', timeout_seconds: 60 },
+  beacon_id: beaconOne.id,
+  cancelled_at: null,
+  completed_at: null,
+  created_at: '2026-06-08T14:08:00Z',
+  dispatched_at: null,
+  id: '44444444-4444-4444-4444-444444444444',
+  module: 'shell',
+  priority: 'urgent',
+  queued_at: '2026-06-08T14:08:00Z',
+  running_at: null,
+  status: 'queued',
+  updated_at: '2026-06-08T14:08:00Z',
+} as const;
+
 function renderBeaconsPage() {
   return render(
     <MemoryRouter>
@@ -118,6 +147,9 @@ describe('BeaconsPage', () => {
       offlineBeaconCount: 0,
       status: 'connected',
     });
+    apiMocks.getTasks.mockResolvedValue({ items: [] });
+    apiMocks.createShellTask.mockResolvedValue(queuedTask);
+    apiMocks.cancelTask.mockResolvedValue({ ...queuedTask, cancelled_at: '2026-06-08T14:09:00Z', status: 'cancelled' });
   });
 
   afterEach(() => {
@@ -252,5 +284,65 @@ describe('BeaconsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close host operations' }));
 
     expect(screen.queryByRole('dialog', { name: 'Host operations for beacon-alpha' })).toBeNull();
+  });
+
+  it('queues a shell task from the command queue modal', async () => {
+    apiMocks.getTasks.mockResolvedValueOnce({ items: [] }).mockResolvedValueOnce({ items: [queuedTask] });
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 1,
+      beacons: [beaconOne],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 0,
+      status: 'connected',
+    });
+
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    expect(await screen.findByText('No tasks queued for this beacon.')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Shell command'), { target: { value: 'whoami' } });
+    fireEvent.change(screen.getByLabelText('Task priority'), { target: { value: 'urgent' } });
+    fireEvent.click(screen.getByRole('button', { name: /Queue/ }));
+
+    await waitFor(() => {
+      expect(apiMocks.createShellTask).toHaveBeenCalledWith(
+        'http://localhost:18001',
+        'c2-token',
+        beaconOne.id,
+        { command: 'whoami', shell_type: 'auto', timeout_seconds: 60 },
+        'urgent',
+      );
+    });
+    expect(await screen.findByText('whoami')).toBeTruthy();
+    expect(screen.getByText('urgent')).toBeTruthy();
+  });
+
+  it('cancels a queued task from the command queue modal', async () => {
+    apiMocks.getTasks.mockResolvedValueOnce({ items: [queuedTask] }).mockResolvedValueOnce({
+      items: [{ ...queuedTask, cancelled_at: '2026-06-08T14:09:00Z', status: 'cancelled' }],
+    });
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 1,
+      beacons: [beaconOne],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 0,
+      status: 'connected',
+    });
+
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    expect(await screen.findByText('whoami')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Cancel task whoami/ }));
+
+    await waitFor(() => {
+      expect(apiMocks.cancelTask).toHaveBeenCalledWith('http://localhost:18001', 'c2-token', queuedTask.id);
+    });
+    expect(await screen.findByText('cancelled')).toBeTruthy();
   });
 });

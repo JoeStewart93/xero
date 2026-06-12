@@ -52,7 +52,7 @@ Primary WebSocket transport layer for beacon-to-C2 communication, carrying F0011
 **Acceptance Criteria:**
 - [x] HTTP harness and WebSocket transport share decoding, replay checks, receipt recording, REGISTER handling, ACK creation, and security-event logging.
 - [x] `REGISTER` rotates the beacon token and returns it only inside the encrypted ACK.
-- [x] `TASK_POLL` returns encrypted no-task ACKs until F0014.
+- [x] `TASK_POLL` returned encrypted no-task ACKs before F0014; F0014 now dispatches queued tasks over the same ACK path.
 - [x] `TASK_RESULT` records protocol frame receipts and returns `receipt=stored` without task-result domain storage.
 - [x] Settings/C2 shows protocol status, active WebSocket count, queue size, max message bytes, registration timeout, heartbeat timeout, and ping settings.
 - [x] Beacons roster/detail show transport mode and connected/disconnected state.

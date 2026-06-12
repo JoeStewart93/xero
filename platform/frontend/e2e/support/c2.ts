@@ -72,6 +72,27 @@ export async function postProtocolFrame(accessToken: string, frame: Buffer) {
   }
 }
 
+export async function postProtocolFrameBody(accessToken: string, frame: Buffer) {
+  const api = await request.newContext();
+  try {
+    const response = await api.post(`${c2BaseURL}/api/v1/protocol/frames`, {
+      data: frame,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/octet-stream',
+      },
+      timeout: 10_000,
+    });
+    return {
+      body: await response.body(),
+      ok: response.ok(),
+      status: response.status(),
+    };
+  } finally {
+    await api.dispose();
+  }
+}
+
 export async function registerBeacon(hostname: string) {
   const api = await request.newContext();
   try {

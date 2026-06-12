@@ -59,7 +59,7 @@ from xero_c2.infrastructure_workers import (
     record_worker_event,
     run_worker_stale_monitor,
 )
-from xero_c2.models import Beacon, InfrastructureWorker, ProtocolSecurityEvent
+from xero_c2.models import Beacon, InfrastructureWorker, ProtocolSecurityEvent, Task
 from xero_c2.protocol import (
     ACK,
     CURRENT_PROTOCOL_VERSION,
@@ -70,6 +70,7 @@ from xero_c2.protocol import (
     PAYLOAD_ENCRYPTION_ALGORITHM,
     PROTOCOL_ERROR,
     REGISTER,
+    TASK_POLL,
     ProtocolError,
     decode_frame,
     private_key_public_b64,
@@ -111,6 +112,10 @@ from xero_c2.schemas import (
     ProtocolInfoResponse,
     ProtocolSecurityEventListResponse,
     ProtocolSecurityEventResponse,
+    TaskCreateRequest,
+    TaskListResponse,
+    TaskResponse,
+    TaskStatus,
     TransportStatusResponse,
     WorkerHeartbeatRequest,
     WorkerHeartbeatResponse,
@@ -119,6 +124,20 @@ from xero_c2.schemas import (
     WorkerRegistrationRequest,
     WorkerRegistrationResponse,
     WorkerStopResponse,
+)
+from xero_c2.task_queue import (
+    TASK_STATUS_QUEUED,
+    TaskQueueService,
+    TaskQueueUnavailable,
+    cancel_task,
+    dispatch_next_task,
+    encode_task_ack_frame,
+    public_task,
+    requeue_dispatched_task,
+    task_delivery_payload,
+    task_event_type,
+    task_queue_unavailable_exception,
+    validate_task_timeout,
 )
 
 
@@ -197,6 +216,19 @@ def public_protocol_security_event(event: ProtocolSecurityEvent) -> dict:
     }
 
 
+async def publish_task_event(app: FastAPI, settings, event_type: str, task_payload: dict) -> None:
+    redis_client = getattr(app.state, "redis_client", None)
+    event = await publish_operator_event(
+        redis_client,
+        settings,
+        event_type,
+        data={"task": task_payload},
+        scope={"beacon_id": task_payload["beacon_id"], "task_id": task_payload["id"]},
+    )
+    if redis_client is None:
+        await app.state.operator_realtime_hub.broadcast(event)
+
+
 def pairing_command(settings, *, kind: str, token: str, name: str) -> str:
     service = "beacon-handler" if kind == "beacon-handler" else "scanner"
     compose_file = "docker-compose.handler.yml" if kind == "beacon-handler" else "docker-compose.scanner.yml"
@@ -247,7 +279,64 @@ def validate_longpoll_frame_beacon(decoded, beacon_id: uuid.UUID) -> None:
             "BEACON_ID_MISMATCH",
             "Frame beacon_id does not match the authenticated beacon",
             status_code=status.HTTP_403_FORBIDDEN,
+    )
+
+
+async def attach_dispatched_task_to_ack(
+    app: FastAPI,
+    session: Session,
+    settings,
+    *,
+    beacon_id: uuid.UUID | None,
+    ack_payload: dict,
+) -> dict | None:
+    if beacon_id is None:
+        return None
+    task = await dispatch_next_task(
+        session,
+        settings,
+        app.state.task_queue_service,
+        getattr(app.state, "redis_client", None),
+        beacon_id=beacon_id,
+    )
+    if task is None:
+        return None
+    task_payload = public_task(task)
+    ack_payload["task"] = task_delivery_payload(task)
+    return task_payload
+
+
+async def build_next_longpoll_task_frame(app: FastAPI, settings, beacon_id: uuid.UUID) -> tuple[bytes, dict] | None:
+    if not app.state.beacon_longpoll_manager.is_active(beacon_id):
+        return None
+    SessionFactory = session_factory_for_settings(settings)
+    with SessionFactory() as session:
+        beacon = session.get(Beacon, beacon_id)
+        if beacon is None or not beacon.protocol_session_id or not beacon.protocol_peer_public_key_b64:
+            return None
+        task = await dispatch_next_task(
+            session,
+            settings,
+            app.state.task_queue_service,
+            getattr(app.state, "redis_client", None),
+            beacon_id=beacon_id,
         )
+        if task is None:
+            return None
+        try:
+            frame = encode_task_ack_frame(settings, beacon, task, transport="long-poll")
+        except ProtocolError:
+            await requeue_dispatched_task(
+                session,
+                app.state.task_queue_service,
+                getattr(app.state, "redis_client", None),
+                task,
+            )
+            session.commit()
+            return None
+        task_payload = public_task(task)
+        session.commit()
+        return frame, task_payload
 
 
 def encrypted_protocol_error_response(settings, decoded, exc: ProtocolError) -> Response:
@@ -283,6 +372,7 @@ def create_app() -> FastAPI:
     realtime_hub = OperatorRealtimeHub(settings)
     beacon_transport_manager = BeaconTransportManager(queue_size=settings.beacon_ws_send_queue_size)
     beacon_longpoll_manager = BeaconLongPollManager()
+    task_queue_service = TaskQueueService(app_env=settings.app_env)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -290,6 +380,7 @@ def create_app() -> FastAPI:
         app.state.operator_realtime_hub = realtime_hub
         app.state.beacon_transport_manager = beacon_transport_manager
         app.state.beacon_longpoll_manager = beacon_longpoll_manager
+        app.state.task_queue_service = task_queue_service
         stale_monitor_task: asyncio.Task[None] | None = None
         worker_monitor_task: asyncio.Task[None] | None = None
         SessionFactory = session_factory_for_settings(settings)
@@ -321,6 +412,7 @@ def create_app() -> FastAPI:
     app.state.operator_realtime_hub = realtime_hub
     app.state.beacon_transport_manager = beacon_transport_manager
     app.state.beacon_longpoll_manager = beacon_longpoll_manager
+    app.state.task_queue_service = task_queue_service
 
     app.add_middleware(
         CORSMiddleware,
@@ -475,6 +567,15 @@ def create_app() -> FastAPI:
                 transport_mode="rest",
                 transport_connected=False,
             )
+            dispatched_task_payload = None
+            if decoded.message_type == TASK_POLL:
+                dispatched_task_payload = await attach_dispatched_task_to_ack(
+                    request.app,
+                    session,
+                    settings,
+                    beacon_id=beacon_id,
+                    ack_payload=ack_payload,
+                )
             record_frame_receipt(session, decoded, beacon_id=beacon_id)
             session.commit()
             if beacon_id is not None and decoded.message_type == REGISTER:
@@ -486,11 +587,28 @@ def create_app() -> FastAPI:
                         str(ack_payload.get("event_type", "beacon.registered")),
                         public_beacon(beacon),
                     )
+            if dispatched_task_payload is not None:
+                await publish_task_event(
+                    request.app,
+                    settings,
+                    task_event_type(dispatched_task_payload["status"]),
+                    dispatched_task_payload,
+                )
+            if ack_payload.get("task_event_type") and isinstance(ack_payload.get("task"), dict):
+                await publish_task_event(
+                    request.app,
+                    settings,
+                    str(ack_payload["task_event_type"]),
+                    ack_payload["task"],
+                )
             return encrypted_protocol_response(settings, decoded, ACK, ack_payload)
         except ProtocolError as exc:
             record_protocol_error(session, exc, metadata)
             session.commit()
             return protocol_error_response(exc)
+        except TaskQueueUnavailable:
+            session.rollback()
+            raise task_queue_unavailable_exception() from None
 
     @api_router.get(
         "/infrastructure/workers",
@@ -805,6 +923,106 @@ def create_app() -> FastAPI:
         await publish_worker_event(request.app, settings, "worker.status.changed", worker_payload)
         return WorkerStopResponse(status=worker.status, worker=InfrastructureWorkerResponse(**worker_payload))
 
+    @api_router.post("/tasks", response_model=TaskResponse, tags=["tasks"])
+    async def create_task(
+        payload: TaskCreateRequest,
+        request: Request,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> TaskResponse:
+        authorize_c2_token(settings, authorization)
+        try:
+            beacon_id = uuid.UUID(payload.beacon_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="beacon_id must be a UUID",
+            ) from exc
+        if session.get(Beacon, beacon_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
+
+        args = validate_task_timeout(settings, payload.args)
+        task = Task(
+            beacon_id=beacon_id,
+            module=payload.module,
+            args=args,
+            priority=payload.priority,
+            status=TASK_STATUS_QUEUED,
+            queued_at=utc_now(),
+        )
+        session.add(task)
+        session.flush()
+        try:
+            await request.app.state.task_queue_service.enqueue(getattr(request.app.state, "redis_client", None), task)
+        except TaskQueueUnavailable:
+            session.rollback()
+            raise task_queue_unavailable_exception() from None
+        session.commit()
+        session.refresh(task)
+
+        task_payload = public_task(task)
+        await publish_task_event(request.app, settings, "task.queued", task_payload)
+
+        delivered = await build_next_longpoll_task_frame(request.app, settings, beacon_id)
+        if delivered is not None:
+            frame, dispatched_task_payload = delivered
+            if await request.app.state.beacon_longpoll_manager.deliver_frame(beacon_id, frame):
+                await publish_task_event(request.app, settings, "task.dispatched", dispatched_task_payload)
+
+        return TaskResponse(**task_payload)
+
+    @api_router.get("/tasks", response_model=TaskListResponse, tags=["tasks"])
+    def list_tasks(
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+        beacon_id: Annotated[uuid.UUID | None, Query()] = None,
+        status_filter: Annotated[TaskStatus | None, Query(alias="status")] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    ) -> TaskListResponse:
+        authorize_c2_token(settings, authorization)
+        query = select(Task).order_by(Task.created_at.desc()).limit(limit)
+        if beacon_id is not None:
+            query = query.where(Task.beacon_id == beacon_id)
+        if status_filter is not None:
+            query = query.where(Task.status == status_filter)
+        tasks = session.execute(query).scalars().all()
+        return TaskListResponse(items=[TaskResponse(**public_task(task)) for task in tasks])
+
+    @api_router.get("/tasks/{task_id}", response_model=TaskResponse, tags=["tasks"])
+    def get_task(
+        task_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> TaskResponse:
+        authorize_c2_token(settings, authorization)
+        task = session.get(Task, task_id)
+        if task is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+        return TaskResponse(**public_task(task))
+
+    @api_router.delete("/tasks/{task_id}", response_model=TaskResponse, tags=["tasks"])
+    async def delete_task(
+        task_id: uuid.UUID,
+        request: Request,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> TaskResponse:
+        authorize_c2_token(settings, authorization)
+        task = session.get(Task, task_id)
+        if task is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+        task = await cancel_task(
+            session,
+            request.app.state.task_queue_service,
+            getattr(request.app.state, "redis_client", None),
+            task,
+        )
+        session.commit()
+        session.refresh(task)
+        task_payload = public_task(task)
+        await publish_task_event(request.app, settings, "task.cancelled", task_payload)
+        return TaskResponse(**task_payload)
+
     @api_router.post("/beacons/register", response_model=BeaconRegistrationResponse, tags=["beacons"])
     async def register_beacon(
         payload: BeaconRegistrationRequest,
@@ -960,6 +1178,19 @@ def create_app() -> FastAPI:
         if beacon_payload is not None:
             await publish_beacon_event(request.app, settings, "beacon.transport.changed", beacon_payload)
 
+        queued_task_frame = await build_next_longpoll_task_frame(request.app, settings, beacon_id)
+        if queued_task_frame is not None:
+            frame, task_payload = queued_task_frame
+            await publish_task_event(request.app, settings, "task.dispatched", task_payload)
+            await manager.unregister(beacon_id, poll.id)
+            with SessionFactory() as session:
+                beacon = update_beacon_longpoll_state(session, beacon_id, connected=False)
+                session.commit()
+                beacon_payload = public_beacon(beacon) if beacon is not None else None
+            if beacon_payload is not None:
+                await publish_beacon_event(request.app, settings, "beacon.transport.changed", beacon_payload)
+            return Response(content=frame, media_type="application/octet-stream")
+
         configured_timeout = settings.beacon_longpoll_timeout_seconds
         effective_timeout = (
             min(configured_timeout, timeout_seconds) if timeout_seconds is not None else configured_timeout
@@ -1018,6 +1249,15 @@ def create_app() -> FastAPI:
                 transport_mode="long-poll",
                 transport_connected=active_poll,
             )
+            dispatched_task_payload = None
+            if decoded.message_type == TASK_POLL:
+                dispatched_task_payload = await attach_dispatched_task_to_ack(
+                    request.app,
+                    session,
+                    settings,
+                    beacon_id=processed_beacon_id,
+                    ack_payload=ack_payload,
+                )
             record_frame_receipt(session, decoded, beacon_id=processed_beacon_id)
             session.commit()
 
@@ -1028,6 +1268,15 @@ def create_app() -> FastAPI:
                     await publish_beacon_event(request.app, settings, "beacon.transport.changed", beacon_payload)
                     if decoded.message_type == HEARTBEAT:
                         await publish_beacon_event(request.app, settings, "beacon.heartbeat", beacon_payload)
+            if dispatched_task_payload is not None:
+                await publish_task_event(request.app, settings, "task.dispatched", dispatched_task_payload)
+            if ack_payload.get("task_event_type") and isinstance(ack_payload.get("task"), dict):
+                await publish_task_event(
+                    request.app,
+                    settings,
+                    str(ack_payload["task_event_type"]),
+                    ack_payload["task"],
+                )
             return encrypted_protocol_response(settings, decoded, ACK, ack_payload)
         except ProtocolError as exc:
             record_protocol_error(session, exc, metadata, beacon_id=beacon_id)
@@ -1035,6 +1284,9 @@ def create_app() -> FastAPI:
             if decoded is not None:
                 return encrypted_protocol_error_response(settings, decoded, exc)
             return protocol_error_response(exc)
+        except TaskQueueUnavailable:
+            session.rollback()
+            raise task_queue_unavailable_exception() from None
 
     @api_router.get("/beacons", response_model=BeaconListResponse, tags=["beacons"])
     def list_beacons(

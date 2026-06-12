@@ -37,7 +37,7 @@
 | rootkit_build_jobs | Build server job tracking with target specs, status, progress, logs, and artifact URL | [F0207](../features/0207-rootkit-build-server.md) |
 | rootkit_events | Rootkit activity audit log including activation, deactivation, heartbeat, stealth mode changes | [F0200](../features/0200-rootkit-suite-overview.md) |
 
-Current implementation includes the BFF-owned `users` table (bootstrap accounts), the planned C2-owned `operators` table ([F0074](../features/0074-c2-operator-authentication.md)), the C2-owned F0009/F0010 beacons table with SHA-256 opaque token hash storage, heartbeat profile fields, stale/offline status, protocol version/session metadata, transport mode/connected/last-seen metadata, the C2-owned beacon_events audit table, F0011 protocol_security_events and protocol_frame_receipts, F0049 infrastructure_workers, worker_pairing_tokens, and worker_events, and the F0005/F0048 persistence foundation: SQLAlchemy session management, service-specific Alembic migrations, pool configuration, reusable UUID/timestamp model primitives, and generic CRUD helpers.
+Current implementation includes the BFF-owned `users` table (bootstrap accounts), the planned C2-owned `operators` table ([F0074](../features/0074-c2-operator-authentication.md)), the C2-owned F0009/F0010 beacons table with SHA-256 opaque token hash storage, heartbeat profile fields, stale/offline status, protocol version/session/public-key metadata, transport mode/connected/last-seen metadata, the C2-owned beacon_events audit table, F0011 protocol_security_events and protocol_frame_receipts, F0014 tasks, F0049 infrastructure_workers, worker_pairing_tokens, and worker_events, and the F0005/F0048 persistence foundation: SQLAlchemy session management, service-specific Alembic migrations, pool configuration, reusable UUID/timestamp model primitives, and generic CRUD helpers.
 
 All entities use UUID primary keys, created_at, and updated_at timestamps unless noted in feature specs.
 
@@ -46,7 +46,7 @@ All entities use UUID primary keys, created_at, and updated_at timestamps unless
 | Pattern | Key/Channel | Purpose | Feature |
 | :--- | :--- | :--- | :--- |
 | Readiness | n/a | Verify Redis dependency health for BFF/C2 stacks | [F0001](../features/0001-docker-compose-infrastructure.md) |
-| Task queue | queue:beacon:{id} | Pending tasks per beacon | [F0014](../features/0014-task-queue.md) |
+| Task queue | queue:beacon:{id}:{priority} | Pending task IDs per beacon and priority | [F0014](../features/0014-task-queue.md) |
 | Pub/sub | events:operator | Real-time UI updates | [F0008](../features/0008-operator-websocket-realtime.md) |
 | Session cache | session:{id} | Active session state | F0018 |
 | Handler health | handler:{id}:heartbeat | Planned handler liveness, capacity, and assignment health | [F0109](../features/0109-handler-load-balancing.md) |
@@ -58,7 +58,7 @@ All entities use UUID primary keys, created_at, and updated_at timestamps unless
 | Exploit cache | cache:exploits:{source} | Cached exploit catalog from external sources | [F0083](../features/0083-exploit-source-adapters.md) |
 | Payload cache | cache:payloads:{hash} | Generated payload binary cache | [F0081](../features/0081-payload-generation-system.md) |
 
-F0006 provides reusable Redis queue, pub/sub, cache, and rate-limit primitives. F0008 uses the pub/sub foundation for operator WebSocket fan-out on events:operator; real task queue usage, handler/scanner health, scan shard assignment, and session-specific behavior are introduced by their owning dependent features. F0207 uses Redis queue for build job distribution; F0205 uses Redis for rootkit heartbeat tracking. F0083 uses Redis for caching external exploit source data; F0081 uses Redis for caching generated payloads.
+F0006 provides reusable Redis queue, pub/sub, cache, and rate-limit primitives. F0008 uses the pub/sub foundation for operator WebSocket fan-out on events:operator. F0014 uses per-beacon priority lists for pending task IDs; handler/scanner health, scan shard assignment, and session-specific behavior are introduced by their owning dependent features. F0207 uses Redis queue for build job distribution; F0205 uses Redis for rootkit heartbeat tracking. F0083 uses Redis for caching external exploit source data; F0081 uses Redis for caching generated payloads.
 
 ## Migrations
 

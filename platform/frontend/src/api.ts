@@ -153,6 +153,36 @@ export interface TransportStatus {
   websocket_send_queue_size: number;
 }
 
+export type TaskPriority = 'high' | 'low' | 'normal' | 'urgent';
+export type TaskStatus = 'cancelled' | 'completed' | 'dispatched' | 'failed' | 'queued' | 'running';
+export type ShellType = 'auto' | 'bash' | 'cmd' | 'powershell';
+
+export interface ShellTaskArgs {
+  command: string;
+  shell_type?: ShellType;
+  timeout_seconds?: number;
+}
+
+export interface Task {
+  args: Record<string, unknown>;
+  beacon_id: string;
+  cancelled_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  dispatched_at: string | null;
+  id: string;
+  module: string;
+  priority: TaskPriority;
+  queued_at: string;
+  running_at: string | null;
+  status: TaskStatus;
+  updated_at: string;
+}
+
+export interface TaskListResponse {
+  items: Task[];
+}
+
 export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/$/, '');
 export const DEFAULT_C2_BASE_URL = (import.meta.env.VITE_DEFAULT_C2_BASE_URL ?? 'http://localhost:8001').replace(/\/$/, '');
 
@@ -324,4 +354,47 @@ export async function getProtocolSecurityEvents(
 
 export async function getTransportStatus(baseUrl: string, accessToken: string): Promise<TransportStatus> {
   return c2Fetch<TransportStatus>(baseUrl, accessToken, '/api/v1/transport');
+}
+
+export async function getTasks(
+  baseUrl: string,
+  accessToken: string,
+  options: { beaconId?: string; limit?: number; status?: TaskStatus } = {},
+): Promise<TaskListResponse> {
+  const params = new URLSearchParams();
+  if (options.beaconId) {
+    params.set('beacon_id', options.beaconId);
+  }
+  if (options.status) {
+    params.set('status', options.status);
+  }
+  if (options.limit) {
+    params.set('limit', String(options.limit));
+  }
+  const query = params.toString();
+  return c2Fetch<TaskListResponse>(baseUrl, accessToken, `/api/v1/tasks${query ? `?${query}` : ''}`);
+}
+
+export async function createShellTask(
+  baseUrl: string,
+  accessToken: string,
+  beaconId: string,
+  args: ShellTaskArgs,
+  priority: TaskPriority = 'normal',
+): Promise<Task> {
+  return c2Fetch<Task>(baseUrl, accessToken, '/api/v1/tasks', {
+    method: 'POST',
+    body: JSON.stringify({
+      args,
+      beacon_id: beaconId,
+      module: 'shell',
+      priority,
+    }),
+  });
+}
+
+export async function cancelTask(baseUrl: string, accessToken: string, taskId: string): Promise<Task> {
+  return c2Fetch<Task>(baseUrl, accessToken, `/api/v1/tasks/${taskId}`, {
+    method: 'DELETE',
+  });
 }

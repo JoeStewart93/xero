@@ -34,6 +34,7 @@ class Beacon(BaseModel):
     beacon_token_issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     protocol_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     protocol_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    protocol_peer_public_key_b64: Mapped[str | None] = mapped_column(String(64), nullable=True)
     protocol_last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     transport_mode: Mapped[str] = mapped_column(String(32), default="rest", nullable=False, index=True)
     transport_connected: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)
@@ -143,3 +144,23 @@ class ProtocolFrameReceipt(BaseModel):
     payload_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     payload_size: Mapped[int] = mapped_column(Integer, nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class Task(BaseModel):
+    __tablename__ = "tasks"
+
+    beacon_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("beacons.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    module: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    args: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False, index=True)
+    priority: Mapped[str] = mapped_column(String(16), default="normal", nullable=False, index=True)
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    running_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

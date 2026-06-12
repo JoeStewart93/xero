@@ -6,10 +6,13 @@ import {
   writeStoredAuthSession,
 } from './authStorage';
 import {
+  cancelTask,
+  createShellTask,
   createWorkerPairingToken,
   getCurrentOperator,
   getProtocolInfo,
   getProtocolSecurityEvents,
+  getTasks,
   getTransportStatus,
   launchInfrastructureWorker,
   loginOperator,
@@ -234,5 +237,51 @@ describe('api client', () => {
     const [url] = firstFetchCall(fetchMock);
     expect(url).toBe('http://c2.local:8001/api/v1/transport');
     expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
+  });
+
+  it('calls C2 task endpoints with bearer auth', async () => {
+    const taskPayload = {
+      args: { command: 'whoami', shell_type: 'auto', timeout_seconds: 60 },
+      beacon_id: 'beacon-one',
+      cancelled_at: null,
+      completed_at: null,
+      created_at: new Date().toISOString(),
+      dispatched_at: null,
+      id: 'task-one',
+      module: 'shell',
+      priority: 'urgent',
+      queued_at: new Date().toISOString(),
+      running_at: null,
+      status: 'queued',
+      updated_at: new Date().toISOString(),
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [taskPayload] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(taskPayload), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...taskPayload, status: 'cancelled' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getTasks('http://c2.local:8001/', 'c2-token', { beaconId: 'beacon-one', limit: 10, status: 'queued' });
+    await createShellTask(
+      'http://c2.local:8001/',
+      'c2-token',
+      'beacon-one',
+      { command: 'whoami', shell_type: 'auto', timeout_seconds: 60 },
+      'urgent',
+    );
+    await cancelTask('http://c2.local:8001/', 'c2-token', 'task-one');
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://c2.local:8001/api/v1/tasks?beacon_id=beacon-one&status=queued&limit=10');
+    expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
+    expect(fetchMock.mock.calls[1][0]).toBe('http://c2.local:8001/api/v1/tasks');
+    expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)).toEqual({
+      args: { command: 'whoami', shell_type: 'auto', timeout_seconds: 60 },
+      beacon_id: 'beacon-one',
+      module: 'shell',
+      priority: 'urgent',
+    });
+    expect(fetchMock.mock.calls[2][0]).toBe('http://c2.local:8001/api/v1/tasks/task-one');
+    expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe('DELETE');
   });
 });

@@ -10,11 +10,11 @@
 | Depends on | F0009, F0011, F0012 |
 
 ## Summary
-Authenticated HTTP long-poll fallback transport for beacons that cannot hold WebSocket connections. F0013 provides the fallback transport harness: held poll requests, beacon-originated binary frame POSTs, shared F0011 protocol validation, transport observability, and UI status. Real task queues remain F0014, and Go beacon automatic fallback remains F0015.
+Authenticated HTTP long-poll fallback transport for beacons that cannot hold WebSocket connections. F0013 provides the fallback transport harness: held poll requests, beacon-originated binary frame POSTs, shared F0011 protocol validation, transport observability, and UI status. Real task queues are implemented by F0014, and Go beacon automatic fallback remains F0015.
 
 ## Requirements
 - FR-02: HTTP long-polling fallback when WebSocket is unavailable
-- `GET /api/v1/beacons/{id}/poll` holds up to the configured timeout and returns `204 No Content` until F0014 supplies task frames
+- `GET /api/v1/beacons/{id}/poll` holds up to the configured timeout and returns `204 No Content` when no queued task frame is available
 - `POST /api/v1/beacons/{id}/frame` accepts raw F0011 binary frames from an already registered/authenticated beacon
 - Same codec, encryption, HMAC, replay, receipt, and security-event path as WebSocket transport
 - C2-token-protected transport status exposes WebSocket and long-poll pressure
@@ -27,7 +27,7 @@ Authenticated HTTP long-poll fallback transport for beacons that cannot hold Web
 - [x] Poll requests require valid beacon bearer token authentication.
 - [x] Poll requests mark latest transport as `long-poll` and set `transport_connected=true` only while held.
 - [x] Duplicate active poll for the same beacon returns `409`.
-- [x] Timeout returns `204 No Content`; task delivery is a future F0014 hook.
+- [x] Timeout returns `204 No Content`; F0014 now supplies queued task frames through this hook.
 - [x] Poll cleanup clears only the matching active poll and publishes transport changes.
 
 ### Stage 2: Frame POST Endpoint
@@ -47,7 +47,7 @@ Authenticated HTTP long-poll fallback transport for beacons that cannot hold Web
 - [x] Beacons roster/detail show `Long-poll` mode and connected/disconnected state.
 
 ### Deferred To Later Features
-- [ ] F0014: Real task queues, task frames returned from poll, task status transitions, and queue interoperability.
+- [x] F0014: Real task queues, task frames returned from poll, task status transitions, and queue interoperability.
 - [ ] F0015: Go beacon automatic retry/fallback from WebSocket to long-poll.
 - [ ] F0017: Full task-result domain storage beyond protocol frame receipts.
 

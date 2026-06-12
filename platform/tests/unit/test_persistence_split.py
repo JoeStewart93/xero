@@ -105,12 +105,18 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert "worker_events" in inspector.get_table_names()
     assert "protocol_security_events" in inspector.get_table_names()
     assert "protocol_frame_receipts" in inspector.get_table_names()
+    assert "tasks" in inspector.get_table_names()
     assert "protocol_version" in {column["name"] for column in inspector.get_columns("beacons")}
+    assert "protocol_peer_public_key_b64" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "transport_mode" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "transport_connected" in {column["name"] for column in inspector.get_columns("beacons")}
+    task_columns = {column["name"] for column in inspector.get_columns("tasks")}
+    assert {"beacon_id", "module", "args", "status", "priority", "dispatched_at", "cancelled_at"}.issubset(
+        task_columns
+    )
     with engine.connect() as connection:
         context = MigrationContext.configure(connection, opts={"version_table": "c2_alembic_version"})
-        assert context.get_current_heads() == ("c2_0006_beacon_ws",)
+        assert context.get_current_heads() == ("c2_0007_task_queue",)
 
 
 def test_generic_crud_helpers_work_with_service_models(tmp_path):

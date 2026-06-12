@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import uuid
 
 from fastapi import HTTPException, status
@@ -30,6 +31,7 @@ from xero_c2.protocol import (
 )
 from xero_c2.protocol.constants import FRAME_HEADER, FRAME_HMAC_LENGTH, PROTOCOL_MAGIC
 from xero_c2.schemas import BeaconHeartbeatRequest, BeaconRegistrationRequest
+from xero_c2.task_queue import apply_task_result, public_task, task_event_type
 
 
 def protocol_supported_versions(settings) -> list[int]:
@@ -230,6 +232,7 @@ def process_protocol_register(
         )
     beacon.protocol_version = selected_version
     beacon.protocol_session_id = str(decoded.session_id)
+    beacon.protocol_peer_public_key_b64 = base64.b64encode(decoded.sender_public_key).decode("ascii")
     beacon.protocol_last_seen = now
     beacon.transport_mode = transport_mode
     beacon.transport_connected = transport_connected
@@ -297,6 +300,7 @@ def process_protocol_frame(
             )
         beacon.protocol_version = decoded.version
         beacon.protocol_session_id = str(decoded.session_id)
+        beacon.protocol_peer_public_key_b64 = base64.b64encode(decoded.sender_public_key).decode("ascii")
         beacon.protocol_last_seen = now
         beacon.transport_mode = transport_mode
         beacon.transport_connected = transport_connected
@@ -312,5 +316,10 @@ def process_protocol_frame(
     if decoded.message_type == TASK_POLL:
         ack_payload["task"] = None
     if decoded.message_type == TASK_RESULT:
+        if beacon_id is not None:
+            task = apply_task_result(session, beacon_id=beacon_id, payload=decoded.payload)
+            if task is not None:
+                ack_payload["task"] = public_task(task)
+                ack_payload["task_event_type"] = task_event_type(task.status)
         ack_payload["receipt"] = "stored"
     return beacon_id, ack_payload

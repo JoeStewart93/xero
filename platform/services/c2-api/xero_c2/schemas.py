@@ -4,7 +4,7 @@ import ipaddress
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class BeaconResponse(BaseModel):
@@ -164,6 +164,58 @@ class TransportStatusResponse(BaseModel):
     websocket_max_message_bytes: int
     longpoll_timeout_seconds: int
     longpoll_max_frame_bytes: int
+
+
+TaskPriority = Literal["high", "low", "normal", "urgent"]
+TaskStatus = Literal["cancelled", "completed", "dispatched", "failed", "queued", "running"]
+ShellType = Literal["auto", "bash", "cmd", "powershell"]
+
+
+class ShellTaskArgs(BaseModel):
+    command: str = Field(min_length=1, max_length=4096)
+    shell_type: ShellType = "auto"
+    timeout_seconds: int | None = Field(default=None, ge=1)
+
+    @field_validator("command")
+    @classmethod
+    def normalize_command(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Command cannot be blank")
+        return normalized
+
+
+class TaskCreateRequest(BaseModel):
+    beacon_id: str
+    module: Literal["shell"] = "shell"
+    args: dict = Field(default_factory=dict)
+    priority: TaskPriority = "normal"
+
+    @model_validator(mode="after")
+    def validate_args(self) -> TaskCreateRequest:
+        if self.module == "shell":
+            self.args = ShellTaskArgs.model_validate(self.args).model_dump(exclude_none=True)
+        return self
+
+
+class TaskResponse(BaseModel):
+    id: str
+    beacon_id: str
+    module: str
+    args: dict
+    status: TaskStatus
+    priority: TaskPriority
+    queued_at: datetime
+    dispatched_at: datetime | None = None
+    running_at: datetime | None = None
+    completed_at: datetime | None = None
+    cancelled_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskListResponse(BaseModel):
+    items: list[TaskResponse] = Field(default_factory=list)
 
 
 WorkerKind = Literal["beacon-handler", "scanner"]

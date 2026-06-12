@@ -95,7 +95,7 @@ Current beacon WebSocket behavior:
 - Existing beacons reconnect with `?beacon_id=<uuid>` plus bearer token in `Authorization` or `Sec-WebSocket-Protocol: xero.beacon.v1,bearer.<token>`.
 - Duplicate connections for the same beacon close the older socket with close code `4409`; disconnect clears only the matching active connection and leaves offline status to heartbeat stale logic.
 - Text, malformed, replayed, tampered, and oversized frames record redacted security events and close without 500s. Oversized WebSocket messages close with `1009`.
-- `HEARTBEAT` updates heartbeat, protocol, and transport timestamps. `TASK_POLL` returns no-task ACKs until F0014. `TASK_RESULT` records protocol receipts until F0017 owns full result storage.
+- `HEARTBEAT` updates heartbeat, protocol, and transport timestamps. `TASK_POLL` dispatches the highest-priority queued task or returns `task: null`. `TASK_RESULT` records protocol receipts and updates known task lifecycle state until F0017 owns full result storage.
 
 ## Handler -> C2 Backend
 
@@ -130,4 +130,4 @@ Beacon traffic will be configurable to mimic legitimate services such as CDN or 
 
 ## Future
 
-F0012 and F0013 carry F0011 binary frames over beacon WebSocket and HTTP long-poll transports. F0014 and F0017 add task queue and full result persistence semantics.
+F0012 and F0013 carry F0011 binary frames over beacon WebSocket and HTTP long-poll transports. F0014 adds queued task dispatch and lifecycle state. F0017 adds full result persistence semantics.

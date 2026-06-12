@@ -1,4 +1,4 @@
-import { KeyboardEvent, useMemo, useState } from 'react';
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowDownUp,
   Boxes,
@@ -9,18 +9,33 @@ import {
   KeyRound,
   Network,
   RadioTower,
+  RefreshCw,
   RotateCcw,
   Search,
+  Send,
   Server,
   ShieldCheck,
   TerminalSquare,
+  Trash2,
   X,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
-import type { Beacon } from '../api';
+import {
+  cancelTask,
+  createShellTask,
+  getTasks,
+} from '../api';
+import type {
+  Beacon,
+  ShellType,
+  Task,
+  TaskPriority,
+} from '../api';
 import { AppShell } from '../components/AppShell';
 import { C2RequiredPanel } from '../components/C2RequiredPanel';
+import type { C2Connection } from '../c2ConnectionContext';
+import type { OperatorRealtimeEvent } from '../operatorRealtime';
 import { useC2Connection } from '../useC2Connection';
 import { useRealtime } from '../useRealtime';
 import {
@@ -87,16 +102,127 @@ const hostOperations = [
 
 type HostOperationKey = (typeof hostOperations)[number]['key'];
 
+const taskPriorities: TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
+const shellTypes: ShellType[] = ['auto', 'cmd', 'powershell', 'bash'];
+
+function taskStatusLabel(status: string): string {
+  return status.replace(/-/g, ' ');
+}
+
+function taskCommand(task: Task): string {
+  const command = task.args.command;
+  return typeof command === 'string' ? command : task.module;
+}
+
+function taskMeta(task: Task): string {
+  const timeout = task.args.timeout_seconds;
+  const shellType = task.args.shell_type;
+  const shell = typeof shellType === 'string' ? shellType : 'auto';
+  const timeoutLabel = typeof timeout === 'number' ? `${timeout}s` : 'default';
+  return `${shell} / ${task.priority} / ${timeoutLabel}`;
+}
+
 function BeaconOperationsModal({
   beacon,
+  connection,
+  latestEvent,
   onClose,
 }: {
   beacon: Beacon;
+  connection: C2Connection;
+  latestEvent: OperatorRealtimeEvent | null;
   onClose: () => void;
 }) {
   const [selectedOperation, setSelectedOperation] = useState<HostOperationKey>('commands');
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [command, setCommand] = useState('');
+  const [shellType, setShellType] = useState<ShellType>('auto');
+  const [priority, setPriority] = useState<TaskPriority>('normal');
+  const [timeoutSeconds, setTimeoutSeconds] = useState('60');
+  const [taskError, setTaskError] = useState('');
+  const [isLoadingTasks, setIsLoadingTasks] = useState(false);
+  const [isSubmittingTask, setIsSubmittingTask] = useState(false);
+  const [cancellingTaskId, setCancellingTaskId] = useState('');
   const activeOperation = hostOperations.find((operation) => operation.key === selectedOperation) ?? hostOperations[0];
   const ActiveIcon = activeOperation.icon;
+  const queuedTaskCount = tasks.filter((task) => task.status === 'queued').length;
+
+  const loadTasks = useCallback(async () => {
+    setIsLoadingTasks(true);
+    try {
+      const response = await getTasks(connection.baseUrl, connection.accessToken, { beaconId: beacon.id, limit: 20 });
+      setTasks(response.items);
+      setTaskError('');
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : 'Unable to load task history.';
+      setTaskError(message);
+    } finally {
+      setIsLoadingTasks(false);
+    }
+  }, [beacon.id, connection.accessToken, connection.baseUrl]);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => void loadTasks(), 0);
+    return () => window.clearTimeout(handle);
+  }, [loadTasks]);
+
+  useEffect(() => {
+    if (!latestEvent?.type.startsWith('task.')) {
+      return;
+    }
+    if (latestEvent.scope.beacon_id && latestEvent.scope.beacon_id !== beacon.id) {
+      return;
+    }
+    const handle = window.setTimeout(() => void loadTasks(), 0);
+    return () => window.clearTimeout(handle);
+  }, [beacon.id, latestEvent?.id, latestEvent?.scope.beacon_id, latestEvent?.type, loadTasks]);
+
+  async function handleSubmitTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedCommand = command.trim();
+    const parsedTimeout = Number(timeoutSeconds);
+    if (!trimmedCommand) {
+      setTaskError('Command is required.');
+      return;
+    }
+    if (!Number.isInteger(parsedTimeout) || parsedTimeout < 1) {
+      setTaskError('Timeout must be a positive whole number.');
+      return;
+    }
+    setIsSubmittingTask(true);
+    try {
+      await createShellTask(
+        connection.baseUrl,
+        connection.accessToken,
+        beacon.id,
+        { command: trimmedCommand, shell_type: shellType, timeout_seconds: parsedTimeout },
+        priority,
+      );
+      setCommand('');
+      setTaskError('');
+      await loadTasks();
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : 'Unable to queue task.';
+      setTaskError(message);
+    } finally {
+      setIsSubmittingTask(false);
+    }
+  }
+
+  async function handleCancelTask(task: Task) {
+    setCancellingTaskId(task.id);
+    try {
+      const cancelled = await cancelTask(connection.baseUrl, connection.accessToken, task.id);
+      setTasks((current) => current.map((item) => (item.id === cancelled.id ? cancelled : item)));
+      setTaskError('');
+      await loadTasks();
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : 'Unable to cancel task.';
+      setTaskError(message);
+    } finally {
+      setCancellingTaskId('');
+    }
+  }
 
   return createPortal(
     <div className="beacon-operations-backdrop" role="presentation">
@@ -148,22 +274,128 @@ function BeaconOperationsModal({
               </div>
             </div>
 
-            <div className="beacon-operation-host-grid">
-              <DetailRow label="Hostname" value={beacon.hostname} />
-              <DetailRow label="Operating system" value={beacon.os} />
-              <DetailRow label="Internal IP" value={beacon.internal_ip} />
-              <DetailRow label="External IP" value={beacon.external_ip} />
-              <DetailRow label="Process ID" value={beacon.pid} />
-              <DetailRow label="Architecture" value={beacon.architecture} />
-            </div>
+            {activeOperation.key === 'commands' ? (
+              <div className="task-queue-panel">
+                <form className="task-command-form" onSubmit={handleSubmitTask}>
+                  <label>
+                    <span>Command</span>
+                    <input
+                      aria-label="Shell command"
+                      onChange={(event) => setCommand(event.target.value)}
+                      placeholder="whoami"
+                      value={command}
+                    />
+                  </label>
+                  <div className="task-command-grid">
+                    <label>
+                      <span>Shell</span>
+                      <select
+                        aria-label="Shell type"
+                        onChange={(event) => setShellType(event.target.value as ShellType)}
+                        value={shellType}
+                      >
+                        {shellTypes.map((item) => (
+                          <option key={item} value={item}>
+                            {item}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Priority</span>
+                      <select
+                        aria-label="Task priority"
+                        onChange={(event) => setPriority(event.target.value as TaskPriority)}
+                        value={priority}
+                      >
+                        {taskPriorities.map((item) => (
+                          <option key={item} value={item}>
+                            {item}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Timeout</span>
+                      <input
+                        aria-label="Timeout seconds"
+                        min={1}
+                        onChange={(event) => setTimeoutSeconds(event.target.value)}
+                        type="number"
+                        value={timeoutSeconds}
+                      />
+                    </label>
+                    <button className="primary-button task-submit-button" disabled={isSubmittingTask} type="submit">
+                      <Send aria-hidden="true" size={15} strokeWidth={2.2} />
+                      <span>{isSubmittingTask ? 'Queueing' : 'Queue'}</span>
+                    </button>
+                  </div>
+                </form>
 
-            <div className="beacon-operation-locked">
-              <ShieldCheck aria-hidden="true" size={17} strokeWidth={2} />
-              <div>
-                <strong>Selection staged.</strong>
-                <span>No operation has been dispatched to this host.</span>
+                <div className="task-queue-toolbar">
+                  <div>
+                    <strong>{queuedTaskCount}</strong>
+                    <span>queued</span>
+                  </div>
+                  <button className="secondary-button" onClick={() => void loadTasks()} type="button">
+                    <RefreshCw aria-hidden="true" size={15} strokeWidth={2.1} />
+                    <span>Refresh</span>
+                  </button>
+                </div>
+
+                {taskError ? <p className="task-queue-error" role="alert">{taskError}</p> : null}
+
+                <div className="task-list" data-testid="beacon-task-list">
+                  {isLoadingTasks ? (
+                    <div className="task-empty-state">Loading task history.</div>
+                  ) : tasks.length === 0 ? (
+                    <div className="task-empty-state">No tasks queued for this beacon.</div>
+                  ) : (
+                    tasks.map((task) => (
+                      <div className="task-row" key={task.id}>
+                        <div>
+                          <strong>{taskCommand(task)}</strong>
+                          <span>{taskMeta(task)}</span>
+                        </div>
+                        <div>
+                          <span className={`task-status task-status--${task.status}`}>{taskStatusLabel(task.status)}</span>
+                          {task.status === 'queued' ? (
+                            <button
+                              aria-label={`Cancel task ${taskCommand(task)}`}
+                              className="task-cancel-button"
+                              disabled={cancellingTaskId === task.id}
+                              onClick={() => void handleCancelTask(task)}
+                              type="button"
+                            >
+                              <Trash2 aria-hidden="true" size={14} strokeWidth={2.1} />
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
-            </div>
+            ) : (
+              <>
+                <div className="beacon-operation-host-grid">
+                  <DetailRow label="Hostname" value={beacon.hostname} />
+                  <DetailRow label="Operating system" value={beacon.os} />
+                  <DetailRow label="Internal IP" value={beacon.internal_ip} />
+                  <DetailRow label="External IP" value={beacon.external_ip} />
+                  <DetailRow label="Process ID" value={beacon.pid} />
+                  <DetailRow label="Architecture" value={beacon.architecture} />
+                </div>
+
+                <div className="beacon-operation-locked">
+                  <ShieldCheck aria-hidden="true" size={17} strokeWidth={2} />
+                  <div>
+                    <strong>Selection staged.</strong>
+                    <span>No operation has been dispatched to this host.</span>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </section>
@@ -491,7 +723,14 @@ export function BeaconsPage() {
             )}
           </section>
 
-          {operationBeacon ? <BeaconOperationsModal beacon={operationBeacon} onClose={() => setOperationBeaconId('')} /> : null}
+          {operationBeacon ? (
+            <BeaconOperationsModal
+              beacon={operationBeacon}
+              connection={connection}
+              latestEvent={realtime.latestEvent}
+              onClose={() => setOperationBeaconId('')}
+            />
+          ) : null}
         </div>
       )}
     </AppShell>

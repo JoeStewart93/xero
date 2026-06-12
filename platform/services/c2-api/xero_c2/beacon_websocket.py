@@ -8,6 +8,7 @@ from fastapi import WebSocket
 from sqlalchemy.orm import Session
 from xero_common.database import session_factory_for_settings
 from xero_common.models import utc_now
+from xero_common.redis_bus import publish_operator_event
 
 from xero_c2.beacon_auth import find_authenticated_beacon
 from xero_c2.beacon_liveness import publish_beacon_event
@@ -21,7 +22,7 @@ from xero_c2.beacon_transport import (
     parse_websocket_subprotocols,
 )
 from xero_c2.models import Beacon
-from xero_c2.protocol import ACK, PROTOCOL_ERROR, REGISTER, DecodedFrame, ProtocolError, decode_frame
+from xero_c2.protocol import ACK, PROTOCOL_ERROR, REGISTER, TASK_POLL, DecodedFrame, ProtocolError, decode_frame
 from xero_c2.protocol_processing import (
     c2_protocol_private_key,
     encrypted_protocol_frame,
@@ -33,8 +34,28 @@ from xero_c2.protocol_processing import (
     record_protocol_error,
 )
 from xero_c2.realtime import close_forbidden, websocket_origin_allowed
+from xero_c2.task_queue import (
+    TaskQueueUnavailable,
+    dispatch_next_task,
+    public_task,
+    task_delivery_payload,
+    task_event_type,
+)
 
 PublicBeacon = Callable[[Beacon], dict]
+
+
+async def publish_task_event(app, settings, event_type: str, task_payload: dict) -> None:
+    redis_client = getattr(app.state, "redis_client", None)
+    event = await publish_operator_event(
+        redis_client,
+        settings,
+        event_type,
+        data={"task": task_payload},
+        scope={"beacon_id": task_payload["beacon_id"], "task_id": task_payload["id"]},
+    )
+    if redis_client is None:
+        await app.state.operator_realtime_hub.broadcast(event)
 
 
 def websocket_protocol_accepted(websocket: WebSocket) -> bool:
@@ -159,6 +180,7 @@ async def run_beacon_websocket(websocket: WebSocket, *, settings, public_beacon:
             close_code: int | None = None
             beacon_payload: dict | None = None
             event_type: str | None = None
+            task_events: list[tuple[str, dict]] = []
             with SessionFactory() as session:
                 try:
                     ensure_nonce_not_replayed(session, metadata)
@@ -184,6 +206,25 @@ async def run_beacon_websocket(websocket: WebSocket, *, settings, public_beacon:
                         transport_mode="websocket",
                         transport_connected=True,
                     )
+                    if decoded.message_type == TASK_POLL and beacon_id is not None:
+                        try:
+                            task = await dispatch_next_task(
+                                session,
+                                settings,
+                                websocket.app.state.task_queue_service,
+                                getattr(websocket.app.state, "redis_client", None),
+                                beacon_id=beacon_id,
+                            )
+                        except TaskQueueUnavailable as exc:
+                            raise ProtocolError(
+                                "TASK_QUEUE_UNAVAILABLE",
+                                "Task queue is unavailable",
+                                status_code=503,
+                            ) from exc
+                        if task is not None:
+                            task_payload = public_task(task)
+                            ack_payload["task"] = task_delivery_payload(task)
+                            task_events.append((task_event_type(task_payload["status"]), task_payload))
                     record_frame_receipt(session, decoded, beacon_id=beacon_id)
                     session.commit()
 
@@ -197,6 +238,8 @@ async def run_beacon_websocket(websocket: WebSocket, *, settings, public_beacon:
                         if beacon is not None:
                             beacon_payload = public_beacon(beacon)
                     event_type = str(ack_payload.get("event_type", "beacon.heartbeat"))
+                    if ack_payload.get("task_event_type") and isinstance(ack_payload.get("task"), dict):
+                        task_events.append((str(ack_payload["task_event_type"]), ack_payload["task"]))
                     ack_frame = encrypted_protocol_frame(settings, decoded, ACK, ack_payload)
                 except ProtocolError as exc:
                     record_protocol_error(session, exc, metadata, beacon_id=bound_beacon_id)
@@ -233,6 +276,8 @@ async def run_beacon_websocket(websocket: WebSocket, *, settings, public_beacon:
                     await publish_beacon_event(websocket.app, settings, "beacon.transport.changed", beacon_payload)
                 elif decoded.message_type == "HEARTBEAT":
                     await publish_beacon_event(websocket.app, settings, "beacon.heartbeat", beacon_payload)
+            for task_event_type_value, task_payload in task_events:
+                await publish_task_event(websocket.app, settings, task_event_type_value, task_payload)
     finally:
         if bound_beacon_id is not None and connection is not None:
             removed = await manager.unregister(bound_beacon_id, connection.id)

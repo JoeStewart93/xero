@@ -20,6 +20,7 @@ from xero_c2.models import (
     InfrastructureWorker,
     ProtocolFrameReceipt,
     ProtocolSecurityEvent,
+    Task,
     WorkerEvent,
 )
 from xero_c2.protocol import HEARTBEAT, REGISTER, TASK_POLL, TASK_RESULT
@@ -98,6 +99,21 @@ def register_payload(**overrides):
 
 def register_beacon(client, **overrides) -> dict:
     response = client.post("/api/v1/beacons/register", json=register_payload(**overrides))
+    assert response.status_code == 200
+    return response.json()
+
+
+def create_shell_task(client, token: str, beacon_id: str, *, command: str = "whoami", priority: str = "normal") -> dict:
+    response = client.post(
+        "/api/v1/tasks",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "beacon_id": beacon_id,
+            "module": "shell",
+            "args": {"command": command},
+            "priority": priority,
+        },
+    )
     assert response.status_code == 200
     return response.json()
 
@@ -202,6 +218,170 @@ def test_protocol_task_result_frame_records_receipt(protocol_c2_client):
 
     assert receipt.beacon_id == uuid.UUID(registered["beacon_id"])
     assert receipt.message_type == "TASK_RESULT"
+
+
+def test_task_api_creates_lists_and_cancels_queued_task(c2_client):
+    registered = register_beacon(c2_client)
+    token = connect_c2(c2_client)
+
+    task = create_shell_task(c2_client, token, registered["beacon_id"], command="hostname", priority="high")
+    listed = c2_client.get(
+        f"/api/v1/tasks?beacon_id={registered['beacon_id']}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    cancelled = c2_client.delete(f"/api/v1/tasks/{task['id']}", headers={"Authorization": f"Bearer {token}"})
+
+    assert task["status"] == "queued"
+    assert task["priority"] == "high"
+    assert task["args"] == {"command": "hostname", "shell_type": "auto", "timeout_seconds": 60}
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()["items"]] == [task["id"]]
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+
+
+def test_task_api_rejects_invalid_task_requests(c2_client):
+    registered = register_beacon(c2_client)
+    token = connect_c2(c2_client)
+
+    blank = c2_client.post(
+        "/api/v1/tasks",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"beacon_id": registered["beacon_id"], "module": "shell", "args": {"command": "   "}},
+    )
+    excessive_timeout = c2_client.post(
+        "/api/v1/tasks",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "beacon_id": registered["beacon_id"],
+            "module": "shell",
+            "args": {"command": "whoami", "timeout_seconds": 999999},
+        },
+    )
+    unknown = c2_client.post(
+        "/api/v1/tasks",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"beacon_id": str(uuid.uuid4()), "module": "shell", "args": {"command": "whoami"}},
+    )
+
+    assert blank.status_code == 422
+    assert excessive_timeout.status_code == 422
+    assert unknown.status_code == 404
+
+
+def test_protocol_task_poll_dispatches_highest_priority_task(protocol_c2_client):
+    token = connect_c2(protocol_c2_client)
+    register_response = protocol_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(REGISTER, register_payload(supported_versions=[1])),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+    registered = decode_protocol_response(register_response.content)
+    normal = create_shell_task(protocol_c2_client, token, registered["beacon_id"], command="normal", priority="normal")
+    urgent = create_shell_task(protocol_c2_client, token, registered["beacon_id"], command="urgent", priority="urgent")
+
+    poll_response = protocol_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(TASK_POLL, {"beacon_id": registered["beacon_id"]}),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+    ack = decode_protocol_response(poll_response.content)
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        normal_task = session.get(Task, uuid.UUID(normal["id"]))
+        urgent_task = session.get(Task, uuid.UUID(urgent["id"]))
+
+    assert poll_response.status_code == 200
+    assert ack["task"]["id"] == urgent["id"]
+    assert ack["task"]["args"]["command"] == "urgent"
+    assert normal_task is not None and normal_task.status == "queued"
+    assert urgent_task is not None and urgent_task.status == "dispatched"
+    assert urgent_task.dispatched_at is not None
+
+
+def test_task_result_updates_known_task_status(protocol_c2_client):
+    token = connect_c2(protocol_c2_client)
+    registered = decode_protocol_response(
+        protocol_c2_client.post(
+            "/api/v1/protocol/frames",
+            content=encode_protocol_test_frame(REGISTER, register_payload(supported_versions=[1])),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+        ).content
+    )
+    task = create_shell_task(protocol_c2_client, token, registered["beacon_id"])
+    protocol_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(TASK_POLL, {"beacon_id": registered["beacon_id"]}),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+
+    result_response = protocol_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(
+            TASK_RESULT,
+            {"beacon_id": registered["beacon_id"], "task_id": task["id"], "status": "completed", "stdout": "redacted"},
+        ),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+    ack = decode_protocol_response(result_response.content)
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        stored = session.get(Task, uuid.UUID(task["id"]))
+
+    assert result_response.status_code == 200
+    assert ack["receipt"] == "stored"
+    assert ack["task"]["status"] == "completed"
+    assert stored is not None
+    assert stored.status == "completed"
+    assert stored.completed_at is not None
+
+
+def test_cancel_dispatched_task_returns_conflict(protocol_c2_client):
+    token = connect_c2(protocol_c2_client)
+    registered = decode_protocol_response(
+        protocol_c2_client.post(
+            "/api/v1/protocol/frames",
+            content=encode_protocol_test_frame(REGISTER, register_payload(supported_versions=[1])),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+        ).content
+    )
+    task = create_shell_task(protocol_c2_client, token, registered["beacon_id"])
+    protocol_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(TASK_POLL, {"beacon_id": registered["beacon_id"]}),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+
+    response = protocol_c2_client.delete(f"/api/v1/tasks/{task['id']}", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 409
+
+
+def test_cancelled_queued_task_is_not_dispatched(protocol_c2_client):
+    token = connect_c2(protocol_c2_client)
+    registered = decode_protocol_response(
+        protocol_c2_client.post(
+            "/api/v1/protocol/frames",
+            content=encode_protocol_test_frame(REGISTER, register_payload(supported_versions=[1])),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+        ).content
+    )
+    task = create_shell_task(protocol_c2_client, token, registered["beacon_id"])
+    protocol_c2_client.delete(f"/api/v1/tasks/{task['id']}", headers={"Authorization": f"Bearer {token}"})
+
+    response = protocol_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(TASK_POLL, {"beacon_id": registered["beacon_id"]}),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+    ack = decode_protocol_response(response.content)
+
+    assert response.status_code == 200
+    assert ack["task"] is None
 
 
 def test_protocol_hmac_tamper_rejected_and_logged(protocol_c2_client):
@@ -399,6 +579,35 @@ def test_longpoll_frame_post_decodes_shared_protocol_messages(longpoll_c2_client
     assert [receipt.message_type for receipt in receipts] == ["HEARTBEAT", "TASK_POLL", "TASK_RESULT"]
 
 
+def test_longpoll_poll_returns_encrypted_queued_task(longpoll_c2_client):
+    registered = register_beacon(longpoll_c2_client)
+    token = connect_c2(longpoll_c2_client)
+    headers = {"Authorization": f"Bearer {registered['beacon_token']}", "Content-Type": "application/octet-stream"}
+    heartbeat_response = longpoll_c2_client.post(
+        f"/api/v1/beacons/{registered['beacon_id']}/frame",
+        content=encode_protocol_test_frame(HEARTBEAT, {"beacon_id": registered["beacon_id"]}),
+        headers=headers,
+    )
+    task = create_shell_task(longpoll_c2_client, token, registered["beacon_id"], command="id", priority="urgent")
+
+    poll_response = longpoll_c2_client.get(
+        f"/api/v1/beacons/{registered['beacon_id']}/poll",
+        headers={"Authorization": f"Bearer {registered['beacon_token']}"},
+    )
+    ack = decode_protocol_response(poll_response.content)
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        stored = session.get(Task, uuid.UUID(task["id"]))
+
+    assert heartbeat_response.status_code == 200
+    assert poll_response.status_code == 200
+    assert ack["acknowledged_message_type"] == TASK_POLL
+    assert ack["task"]["id"] == task["id"]
+    assert stored is not None and stored.status == "dispatched"
+
+
 def test_longpoll_frame_post_rejects_beacon_id_mismatch_with_encrypted_error(longpoll_c2_client):
     registered = register_beacon(longpoll_c2_client)
     frame = encode_protocol_test_frame(TASK_POLL, {"beacon_id": str(uuid.uuid4())})
@@ -517,6 +726,28 @@ def test_beacon_websocket_registers_and_returns_encrypted_ack(protocol_c2_client
         assert beacon.transport_connected is True
         assert beacon.transport_last_seen is not None
         assert receipt.message_type == "REGISTER"
+
+
+def test_beacon_websocket_task_poll_receives_queued_task(protocol_c2_client):
+    token = connect_c2(protocol_c2_client)
+
+    with protocol_c2_client.websocket_connect("/ws/beacon", subprotocols=["xero.beacon.v1"]) as websocket:
+        websocket.send_bytes(encode_protocol_test_frame(REGISTER, register_payload(supported_versions=[1])))
+        registered = decode_protocol_response(websocket.receive_bytes())
+        task = create_shell_task(protocol_c2_client, token, registered["beacon_id"], command="whoami", priority="high")
+
+        websocket.send_bytes(encode_protocol_test_frame(TASK_POLL, {"beacon_id": registered["beacon_id"]}))
+        ack = decode_protocol_response(websocket.receive_bytes())
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        stored = session.get(Task, uuid.UUID(task["id"]))
+
+    assert ack["acknowledged_message_type"] == TASK_POLL
+    assert ack["task"]["id"] == task["id"]
+    assert ack["task"]["args"]["command"] == "whoami"
+    assert stored is not None and stored.status == "dispatched"
 
 
 def test_beacon_websocket_existing_beacon_authenticates_with_token(protocol_c2_client):

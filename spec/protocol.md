@@ -63,6 +63,27 @@ The harness does not replace live transports.
 
 F0012 adds `GET /ws/beacon` as the primary live beacon transport. Clients must use subprotocol `xero.beacon.v1` and binary WebSocket messages. New beacons send encrypted `REGISTER` as the first frame and receive an encrypted `ACK` containing `beacon_id`, one-time `beacon_token`, selected protocol version, sleep, jitter, and `transport=websocket`. Existing beacons reconnect with `beacon_id` and a bearer beacon token via the `Authorization` header or `bearer.<token>` WebSocket subprotocol.
 
-The C2 backend shares F0011 decoding, replay checks, receipt recording, REGISTER handling, ACK creation, and redacted security-event logging between the HTTP harness and WebSocket transport. Valid inbound frames receive encrypted ACKs. `TASK_POLL` returns a no-task ACK until F0014 adds queues. `TASK_RESULT` records a protocol frame receipt and returns `receipt=stored`; full task-result storage remains F0017.
+The C2 backend shares F0011 decoding, replay checks, receipt recording, REGISTER handling, ACK creation, and redacted security-event logging between the HTTP harness and live transports. Valid inbound frames receive encrypted ACKs. `TASK_POLL` returns the highest-priority queued task for that beacon or `task: null` when no work is pending. `TASK_RESULT` records a protocol frame receipt, updates known task lifecycle status, and returns `receipt=stored`; full task-result body storage remains F0017.
+
+## Task Queue Payloads
+
+F0014 task ACKs are encrypted `ACK` frames with `acknowledged_message_type="TASK_POLL"` and either `task=null` or:
+
+```json
+{
+  "id": "task uuid",
+  "beacon_id": "beacon uuid",
+  "module": "shell",
+  "args": {
+    "command": "whoami",
+    "shell_type": "auto",
+    "timeout_seconds": 60
+  },
+  "priority": "normal",
+  "status": "dispatched"
+}
+```
+
+`TASK_RESULT` frames may include `task_id` and `status` values `running`, `completed`, `failed`, `ok`, or `error`. Known task IDs update task lifecycle state; unknown task IDs still produce protocol receipts for backward compatibility. stdout, stderr, exit codes, chunks, and downloadable result bodies are not persisted until F0017.
 
 `GET /api/v1/transport` is C2-token protected and reports active WebSocket beacon connections plus configured queue, timeout, ping, and max-message limits. Public `/health` and `/ready` remain container health contracts.

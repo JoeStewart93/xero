@@ -163,7 +163,6 @@ $env:FRONTEND_PORT="13000"
 $env:BACKEND_PORT="18000"
 $env:C2_BACKEND_PORT="18001"
 $env:FRONTEND_ORIGIN="http://localhost:13000"
-$env:VITE_API_BASE_URL="http://localhost:18000"
 $env:VITE_DEFAULT_C2_BASE_URL="http://localhost:18001"
 
 docker compose -f docker-compose.bff.yml up -d --build
@@ -178,7 +177,9 @@ http://localhost:13000
 
 When using alternate ports, connect Settings to the matching C2 URL, such as `http://localhost:18001`.
 
-`FRONTEND_ORIGIN` must match the browser origin exactly, or browser CORS checks will block login/C2 connection requests.
+The Docker frontend uses a same-origin nginx proxy for local BFF `/auth` and `/api` calls, so it does not need `VITE_API_BASE_URL` when `BACKEND_PORT` changes. Set `VITE_API_BASE_URL` only when serving the frontend outside the Docker compose frontend container.
+
+`FRONTEND_ORIGIN` must match the browser origin exactly for direct browser requests to the BFF API.
 
 ## Smoke Test The Stack
 

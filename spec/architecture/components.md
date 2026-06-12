@@ -2,7 +2,7 @@
 
 ## Xero UI
 
-React + TypeScript + Tailwind web dashboard for operators. It is served by the frontend container and talks to the local BFF using `VITE_API_BASE_URL`.
+React + TypeScript + Tailwind web dashboard for operators. It is served by the frontend container and talks to the local BFF through the container nginx same-origin `/auth` and `/api` proxy by default; `VITE_API_BASE_URL` is reserved for non-container or explicitly remote BFF overrides.
 
 **Current responsibilities:** Login screen (bootstrap and C2 operator modes), authenticated app shell, direct C2 operator realtime client/status, Home overview, Projects foundation, Recon foundation, C2-backed Beacons overview/detail route, Settings C2 URL configuration and connection status, Settings/Infrastructure worker inventory and pairing/provisioning workflow, protected Health page, and routeable shell stubs for Exploits, Payloads, Assets, Reports, and Loot. Inventory lives under Assets.
 

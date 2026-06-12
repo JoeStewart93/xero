@@ -42,6 +42,7 @@ def test_bff_compose_defines_ui_bff_stack_and_default_alias_matches():
     assert "XERO_SERVICE_ROLE" not in compose["services"]["bff-api"]["environment"]
     assert set(compose["volumes"]) == {"xero_bff_postgres_data", "xero_bff_redis_data"}
     assert compose["services"]["frontend"]["depends_on"]["bff-api"]["condition"] == "service_healthy"
+    assert compose["services"]["frontend"]["build"]["args"]["VITE_API_BASE_URL"] == "${VITE_API_BASE_URL:-}"
 
 
 def test_c2_compose_defines_c2_api_stack_without_bff_seed_env():

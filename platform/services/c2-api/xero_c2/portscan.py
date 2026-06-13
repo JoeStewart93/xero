@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import shutil
+import subprocess
 import time
 import uuid
+import xml.etree.ElementTree as ET
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
@@ -215,6 +218,24 @@ async def run_portscan_scan_job(
     args = PortScanArgs.model_validate(raw_args)
     hosts = expand_targets(args.targets)
     ports = parse_ports(args.port_range)
+    if should_use_nmap():
+        return await run_nmap_portscan_scan_job(app, settings, scan_job_id, args, hosts, ports, started_at)
+    return await run_tcp_connect_portscan_scan_job(app, settings, scan_job_id, args, hosts, ports, started_at)
+
+
+def should_use_nmap() -> bool:
+    return shutil.which("nmap") is not None and getattr(probe_tcp_connect, "__name__", "") == "probe_tcp_connect"
+
+
+async def run_tcp_connect_portscan_scan_job(
+    app: Any,
+    settings,
+    scan_job_id: uuid.UUID,
+    args: PortScanArgs,
+    hosts: list[str],
+    ports: list[int],
+    started_at: float,
+) -> ScanExecutionResult:
     probes = [Probe(host, port) for host in hosts for port in ports]
     state_counts = portscan_initial_state_counts()
     all_results: list[dict[str, Any]] = []
@@ -279,6 +300,185 @@ async def run_portscan_scan_job(
         probes_total=len(probes),
         next_sequence=sequence + 1,
     )
+
+
+async def run_nmap_portscan_scan_job(
+    app: Any,
+    settings,
+    scan_job_id: uuid.UUID,
+    args: PortScanArgs,
+    hosts: list[str],
+    ports: list[int],
+    started_at: float,
+) -> ScanExecutionResult:
+    executable = shutil.which("nmap")
+    if executable is None:
+        raise RuntimeError("NMAP executable is not available")
+
+    cmd = build_nmap_command(executable, args, hosts, ports)
+    timeout_seconds = max(30, min(900, int((len(hosts) * len(ports) * args.timeout_ms / 1000) + 30)))
+    completed = subprocess.run(
+        cmd,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=timeout_seconds,
+    )
+    if completed.returncode not in {0, 1} and not completed.stdout.strip():
+        stderr = completed.stderr.strip() or f"NMAP exited with code {completed.returncode}"
+        raise RuntimeError(stderr[:512])
+
+    all_results = parse_nmap_xml(completed.stdout, hosts, ports)
+    state_counts = portscan_initial_state_counts()
+    sequence = 0
+    completed_count = 0
+    pending_results: list[dict[str, Any]] = []
+    for result in all_results:
+        completed_count += 1
+        state_counts[result["state"]] += 1
+        pending_results.append(result)
+        if len(pending_results) >= SCAN_PROGRESS_BATCH_SIZE:
+            sequence += 1
+            await persist_scan_progress(
+                app,
+                settings,
+                scan_job_id,
+                sequence=sequence,
+                kind="progress",
+                results=pending_results,
+                completed=completed_count,
+                total=len(all_results),
+                state_counts=state_counts,
+            )
+            pending_results = []
+
+    if pending_results:
+        sequence += 1
+        await persist_scan_progress(
+            app,
+            settings,
+            scan_job_id,
+            sequence=sequence,
+            kind="progress",
+            results=pending_results,
+            completed=completed_count,
+            total=len(all_results),
+            state_counts=state_counts,
+        )
+
+    duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+    summary = {
+        "duration_ms": duration_ms,
+        "hosts_scanned": len(hosts),
+        "open_count": state_counts["open"],
+        "ports_scanned": len(all_results),
+        "scanner": "nmap",
+        "state_counts": state_counts,
+    }
+    return ScanExecutionResult(
+        results=all_results,
+        summary=summary,
+        state_counts=state_counts,
+        probes_completed=len(all_results),
+        probes_total=len(all_results),
+        next_sequence=sequence + 1,
+    )
+
+
+def build_nmap_command(executable: str, args: PortScanArgs, hosts: list[str], ports: list[int]) -> list[str]:
+    cmd = [
+        executable,
+        "-oX",
+        "-",
+        "-p",
+        ",".join(str(port) for port in ports),
+        f"-T{args.timing_template}",
+        "--host-timeout",
+        f"{max(10, int((len(ports) * args.timeout_ms / 1000) + 10))}s",
+        "-Pn",
+    ]
+    if not args.dns_resolution:
+        cmd.append("-n")
+    if args.scan_technique == "syn":
+        cmd.append("-sS")
+    elif args.scan_technique == "udp":
+        cmd.append("-sU")
+    else:
+        cmd.append("-sT")
+    if args.service_detection:
+        cmd.append("-sV")
+    if args.os_detection:
+        cmd.append("-O")
+    cmd.extend(hosts)
+    return cmd
+
+
+def parse_nmap_xml(xml_output: str, hosts: list[str], ports: list[int]) -> list[dict[str, Any]]:
+    try:
+        root = ET.fromstring(xml_output)
+    except ET.ParseError as exc:
+        raise RuntimeError("Unable to parse NMAP XML output") from exc
+
+    results_by_endpoint: dict[tuple[str, int], dict[str, Any]] = {}
+    known_hosts = set(hosts)
+    for host_node in root.findall("host"):
+        address_node = host_node.find("address")
+        host = address_node.get("addr") if address_node is not None else ""
+        if host not in known_hosts:
+            hostnames = [
+                item.get("name", "")
+                for item in host_node.findall("./hostnames/hostname")
+                if item.get("name")
+            ]
+            host = next((candidate for candidate in hostnames if candidate in known_hosts), host)
+        if not host:
+            continue
+        latency_ms = _nmap_host_latency_ms(host_node)
+        for port_node in host_node.findall("./ports/port"):
+            try:
+                port = int(port_node.get("portid", "0"))
+            except ValueError:
+                continue
+            if port not in ports:
+                continue
+            state_node = port_node.find("state")
+            state = normalize_nmap_state(state_node.get("state") if state_node is not None else None)
+            results_by_endpoint[(host, port)] = {
+                "host": host,
+                "latency_ms": latency_ms,
+                "port": port,
+                "state": state,
+            }
+
+    results = [
+        results_by_endpoint.get(
+            (host, port),
+            {"host": host, "latency_ms": 0.0, "port": port, "state": "filtered"},
+        )
+        for host in hosts
+        for port in ports
+    ]
+    return sorted(results, key=lambda item: (item["host"], item["port"]))
+
+
+def normalize_nmap_state(state: str | None) -> str:
+    if state in {"open", "closed", "filtered"}:
+        return state
+    if state in {"open|filtered", "unfiltered"}:
+        return "filtered"
+    return "closed"
+
+
+def _nmap_host_latency_ms(host_node: ET.Element) -> float:
+    times_node = host_node.find("times")
+    if times_node is None:
+        return 0.0
+    srtt = times_node.get("srtt")
+    if not srtt:
+        return 0.0
+    with suppress(ValueError):
+        return round(int(srtt) / 1000, 2)
+    return 0.0
 
 
 async def probe_tcp_connect(host: str, port: int, *, timeout_ms: int) -> dict[str, Any]:

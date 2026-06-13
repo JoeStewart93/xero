@@ -3,6 +3,7 @@ import { RadioTower, RefreshCw, ServerCog } from 'lucide-react';
 
 import { DependencyStatus, ReadinessResponse, getReadiness } from '../api';
 import { AppShell } from '../components/AppShell';
+import { formatRealtimeStatus, normalizeDependencyStatus, realtimeReadinessStatus } from '../healthStatus';
 import { useAuth } from '../useAuth';
 import { useRealtime } from '../useRealtime';
 
@@ -10,24 +11,6 @@ type HealthState =
   | { kind: 'loading' }
   | { kind: 'loaded'; data: ReadinessResponse }
   | { kind: 'error'; message: string };
-
-function normalizeStatus(status: DependencyStatus | undefined): DependencyStatus {
-  return status ?? 'unknown';
-}
-
-function realtimeReadinessStatus(status: string): DependencyStatus {
-  if (status === 'connected') {
-    return 'healthy';
-  }
-  if (status === 'degraded' || status === 'disconnected') {
-    return 'unhealthy';
-  }
-  return 'unknown';
-}
-
-function formatRealtimeStatus(status: string): string {
-  return status.replace(/^\w/, (firstLetter) => firstLetter.toUpperCase());
-}
 
 function StatusRow({
   label,
@@ -115,8 +98,8 @@ export function HealthPage() {
 
     return {
       backend: state.data.status === 'ready' ? 'healthy' as const : 'unhealthy' as const,
-      postgres: normalizeStatus(state.data.checks.postgres.status),
-      redis: normalizeStatus(state.data.checks.redis.status),
+      postgres: normalizeDependencyStatus(state.data.checks.postgres.status),
+      redis: normalizeDependencyStatus(state.data.checks.redis.status),
     };
   }, [state]);
 

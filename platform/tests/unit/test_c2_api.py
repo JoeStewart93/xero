@@ -193,6 +193,22 @@ def register_beacon(client, **overrides) -> dict:
     return response.json()
 
 
+def stub_dashboard_health(monkeypatch, *, status_value: str = "ready") -> None:
+    redis_check = {"status": "healthy"} if status_value == "ready" else {
+        "status": "unhealthy",
+        "error": "redis unavailable",
+    }
+    checks = {
+        "artifact_store": {"status": "healthy"},
+        "postgres": {"status": "healthy"},
+        "redis": redis_check,
+    }
+    monkeypatch.setattr(
+        "xero_c2.main.c2_readiness_report",
+        lambda _settings: {"checks": checks, "service": "xero-c2", "status": status_value},
+    )
+
+
 def traffic_profile_config(
     *,
     sleep_seconds: int = 11,
@@ -255,6 +271,102 @@ def test_c2_connect_and_session(c2_client):
     assert bad.status_code == 401
     assert session.status_code == 200
     assert session.json()["service_role"] == "c2"
+
+
+def test_dashboard_summary_requires_c2_auth(c2_client):
+    response = c2_client.get("/api/v1/dashboard/summary")
+
+    assert response.status_code == 401
+
+
+def test_dashboard_summary_api_response_shape(c2_client, monkeypatch):
+    stub_dashboard_health(monkeypatch)
+    token = connect_c2(c2_client)
+    response = c2_client.get("/api/v1/dashboard/summary", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["beacons"] == {"offline": 0, "online": 0, "total": 0}
+    assert payload["recent_tasks"] == []
+    assert payload["recent_activity"] == []
+    assert payload["generated_at"]
+    assert payload["c2_health"]["status"] in {"degraded", "ready"}
+    assert "postgres" in payload["c2_health"]["checks"]
+    assert "redis" in payload["c2_health"]["checks"]
+
+
+def test_dashboard_summary_counts_tasks_and_activity(c2_client, monkeypatch):
+    stub_dashboard_health(monkeypatch)
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    online = register_beacon(c2_client, hostname="online-host")
+    offline = register_beacon(c2_client, hostname="offline-host")
+    first_task = create_shell_task(c2_client, token, online["beacon_id"], command="hostname")
+    latest_task = create_shell_task(c2_client, token, offline["beacon_id"], command="whoami")
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        offline_beacon = session.get(Beacon, uuid.UUID(offline["beacon_id"]))
+        assert offline_beacon is not None
+        offline_beacon.status = BEACON_STATUS_OFFLINE
+        session.add(
+            BeaconEvent(
+                beacon_id=offline_beacon.id,
+                old_status="online",
+                new_status=BEACON_STATUS_OFFLINE,
+                reason="test-offline",
+            )
+        )
+        session.add(offline_beacon)
+        session.commit()
+
+    response = c2_client.get("/api/v1/dashboard/summary", headers=headers)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["beacons"] == {"offline": 1, "online": 1, "total": 2}
+    assert [task["id"] for task in payload["recent_tasks"]] == [latest_task["id"], first_task["id"]]
+    activity_types = [item["type"] for item in payload["recent_activity"]]
+    assert "beacon.status" in activity_types
+    assert "task.queued" in activity_types
+    offline_activity = next(item for item in payload["recent_activity"] if item["type"] == "beacon.status")
+    assert offline_activity["beacon_id"] == offline["beacon_id"]
+    assert offline_activity["status"] == "offline"
+    assert "offline-host" in offline_activity["label"]
+
+
+def test_dashboard_summary_caps_recent_tasks_and_activity(c2_client, monkeypatch):
+    stub_dashboard_health(monkeypatch)
+    token = connect_c2(c2_client)
+    beacon = register_beacon(c2_client)
+
+    task_ids = [
+        create_shell_task(c2_client, token, beacon["beacon_id"], command=f"echo {index}")["id"]
+        for index in range(12)
+    ]
+
+    response = c2_client.get("/api/v1/dashboard/summary", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["recent_tasks"]) == 10
+    assert len(payload["recent_activity"]) == 10
+    assert payload["recent_tasks"][0]["id"] == task_ids[-1]
+    assert payload["recent_tasks"][-1]["id"] == task_ids[-10]
+
+
+def test_dashboard_summary_surfaces_degraded_health(c2_client, monkeypatch):
+    token = connect_c2(c2_client)
+    stub_dashboard_health(monkeypatch, status_value="degraded")
+
+    response = c2_client.get("/api/v1/dashboard/summary", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["c2_health"]["status"] == "degraded"
+    assert payload["c2_health"]["checks"]["redis"]["status"] == "unhealthy"
+    assert payload["c2_health"]["checks"]["redis"]["error"] == "redis unavailable"
 
 
 def test_protocol_info_requires_c2_auth_and_exposes_public_metadata(c2_client):

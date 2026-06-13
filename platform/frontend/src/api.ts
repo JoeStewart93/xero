@@ -321,6 +321,41 @@ export interface TaskListResponse {
   items: Task[];
 }
 
+export interface DashboardBeaconCounts {
+  offline: number;
+  online: number;
+  total: number;
+}
+
+export interface DashboardActivityItem {
+  beacon_id: string | null;
+  detail: string | null;
+  id: string;
+  label: string;
+  occurred_at: string;
+  status: string | null;
+  task_id: string | null;
+  type: string;
+}
+
+export interface DashboardHealthCheck {
+  error?: string | null;
+  status: DependencyStatus | string;
+}
+
+export interface DashboardHealth {
+  checks: Record<string, DashboardHealthCheck>;
+  status: 'degraded' | 'ready';
+}
+
+export interface DashboardSummary {
+  beacons: DashboardBeaconCounts;
+  c2_health: DashboardHealth;
+  generated_at: string;
+  recent_activity: DashboardActivityItem[];
+  recent_tasks: Task[];
+}
+
 export interface TaskAuditEvent {
   actor_subject: string;
   beacon_id: string;
@@ -736,6 +771,10 @@ export async function getProtocolSecurityEvents(
 
 export async function getTransportStatus(baseUrl: string, accessToken: string): Promise<TransportStatus> {
   return c2Fetch<TransportStatus>(baseUrl, accessToken, '/api/v1/transport');
+}
+
+export async function getDashboardSummary(baseUrl: string, accessToken: string): Promise<DashboardSummary> {
+  return c2Fetch<DashboardSummary>(baseUrl, accessToken, '/api/v1/dashboard/summary');
 }
 
 export async function getTrafficProfiles(

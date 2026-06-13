@@ -37,10 +37,12 @@ from xero_c2.protocol import HEARTBEAT, REGISTER, SESSION_DATA, TASK_POLL, TASK_
 from xero_c2.protocol.codec import public_key_bytes
 from xero_c2.sessions import (
     DuplicateSessionAttachError,
+    FileListingCache,
     SessionRelayManager,
     apply_beacon_session_data,
     close_detached_after_grace,
     expire_idle_sessions,
+    parse_file_browser_request,
     terminal_data_b64,
 )
 from xero_c2.task_results import purge_expired_task_results
@@ -1442,6 +1444,158 @@ def test_shell_session_close_sends_session_data_and_marks_closed(protocol_c2_cli
     assert close_frame["op"] == "close"
     assert close_frame["reason"] == "operator"
     assert close_frame["session_id"] == session_payload["id"]
+
+
+def test_file_browser_session_open_sends_session_data_to_connected_beacon(protocol_c2_client, monkeypatch):
+    token = connect_c2(protocol_c2_client)
+    registered = register_beacon(protocol_c2_client)
+    attach_protocol_metadata(registered["beacon_id"])
+    sent_frames: list[bytes] = []
+
+    async def capture_send(_, frame: bytes) -> bool:
+        sent_frames.append(frame)
+        return True
+
+    monkeypatch.setattr(protocol_c2_client.app.state.beacon_transport_manager, "send_to_beacon", capture_send)
+
+    created = protocol_c2_client.post(
+        "/api/v1/sessions/file-browser",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"beacon_id": registered["beacon_id"], "root_path": "/home"},
+    )
+    session_payload = created.json()
+    open_frame = decode_protocol_response(sent_frames[0], expected_message_type=SESSION_DATA)
+
+    assert created.status_code == 200
+    assert session_payload["status"] == "opening"
+    assert session_payload["session_type"] == "file_browser"
+    assert open_frame["op"] == "open"
+    assert open_frame["beacon_id"] == registered["beacon_id"]
+    assert open_frame["session_id"] == session_payload["id"]
+    assert open_frame["session_type"] == "file_browser"
+    assert open_frame["root_path"] == "/home"
+
+
+def test_file_browser_session_data_preserves_request_id_and_cache_payload(c2_client):
+    registered = register_beacon(c2_client)
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        beacon = session.get(Beacon, uuid.UUID(registered["beacon_id"]))
+        assert beacon is not None
+        file_session = InteractiveSession(
+            actor_subject="operator:test",
+            beacon_id=beacon.id,
+            session_type="file_browser",
+            shell_type="none",
+            status="open",
+        )
+        session.add(file_session)
+        session.commit()
+        outcome = apply_beacon_session_data(
+            session,
+            beacon_id=beacon.id,
+            payload={
+                "beacon_id": registered["beacon_id"],
+                "entries": [
+                    {
+                        "modified_at": "2026-06-13T00:00:00Z",
+                        "name": "notes.txt",
+                        "path": "docs/notes.txt",
+                        "permissions": "-rw-r--r--",
+                        "size": 42,
+                        "type": "file",
+                    }
+                ],
+                "ok": True,
+                "op": "list_dir",
+                "path": "docs",
+                "request_id": "seq-1",
+                "session_id": str(file_session.id),
+                "session_type": "file_browser",
+            },
+        )
+
+    assert outcome.event_type == "session.file.response.received"
+    assert outcome.operator_message is not None
+    assert outcome.operator_message["op"] == "list_dir"
+    assert outcome.operator_message["request_id"] == "seq-1"
+    assert outcome.operator_message["path"] == "docs"
+    assert outcome.operator_message["entries"][0]["name"] == "notes.txt"
+    assert outcome.cache_listing is not None
+
+
+def test_file_browser_cache_returns_cached_listing_with_new_request_id():
+    async def scenario() -> dict | None:
+        cache = FileListingCache(ttl_seconds=5)
+        session_id = uuid.uuid4()
+        await cache.store(
+            session_id,
+            {
+                "entries": [{"name": "cached.txt", "path": "cached.txt", "type": "file"}],
+                "ok": True,
+                "op": "list_dir",
+                "path": "",
+                "request_id": "old-seq",
+                "session_id": str(session_id),
+            },
+        )
+        return await cache.get(session_id, "", request_id="new-seq")
+
+    cached = asyncio.run(scenario())
+
+    assert cached is not None
+    assert cached["cached"] is True
+    assert cached["request_id"] == "new-seq"
+    assert cached["entries"][0]["name"] == "cached.txt"
+
+
+def test_file_browser_access_error_keeps_session_open(c2_client):
+    registered = register_beacon(c2_client)
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        beacon = session.get(Beacon, uuid.UUID(registered["beacon_id"]))
+        assert beacon is not None
+        file_session = InteractiveSession(
+            actor_subject="operator:test",
+            beacon_id=beacon.id,
+            session_type="file_browser",
+            shell_type="none",
+            status="open",
+        )
+        session.add(file_session)
+        session.commit()
+        outcome = apply_beacon_session_data(
+            session,
+            beacon_id=beacon.id,
+            payload={
+                "beacon_id": registered["beacon_id"],
+                "error_code": "access_denied",
+                "message": "access denied",
+                "ok": False,
+                "op": "list_dir",
+                "path": "root",
+                "request_id": "seq-denied",
+                "session_id": str(file_session.id),
+                "session_type": "file_browser",
+            },
+        )
+        session.refresh(file_session)
+
+    assert outcome.event_type == "session.file.error"
+    assert outcome.operator_message is not None
+    assert outcome.operator_message["ok"] is False
+    assert outcome.operator_message["error_code"] == "access_denied"
+    assert outcome.operator_message["request_id"] == "seq-denied"
+    assert file_session.status == "open"
+
+
+def test_file_browser_request_rejects_traversal_above_root():
+    with pytest.raises(ValueError, match="traverse"):
+        parse_file_browser_request('{"op":"list_dir","request_id":"seq-1","path":"../secret"}')
 
 
 def test_shell_session_data_builds_terminal_output_message(c2_client):

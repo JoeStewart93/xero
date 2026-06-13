@@ -133,6 +133,8 @@ from xero_c2.schemas import (
     C2ConnectRequest,
     C2ConnectResponse,
     C2SessionResponse,
+    FileBrowserSessionCreateRequest,
+    FileBrowserSessionResponse,
     InfrastructureWorkerListResponse,
     InfrastructureWorkerResponse,
     PairingTokenCreateRequest,
@@ -140,6 +142,7 @@ from xero_c2.schemas import (
     ProtocolInfoResponse,
     ProtocolSecurityEventListResponse,
     ProtocolSecurityEventResponse,
+    SessionResponse,
     ShellSessionCreateRequest,
     ShellSessionResponse,
     TaskAuditEventListResponse,
@@ -160,14 +163,18 @@ from xero_c2.schemas import (
     WorkerStopResponse,
 )
 from xero_c2.sessions import (
+    FILE_BROWSER_SESSION_TYPE,
     SESSION_OP_CLOSE,
     SESSION_OP_OPEN,
+    FileListingCache,
     SessionRelayManager,
     apply_beacon_session_data,
     close_shell_session,
+    create_file_browser_session,
     create_shell_session,
     enqueue_session_data_frame,
     expire_idle_sessions,
+    public_session,
     public_shell_session,
     publish_session_event,
     publish_session_payload_event,
@@ -464,6 +471,7 @@ def create_app() -> FastAPI:
     beacon_transport_manager = BeaconTransportManager(queue_size=settings.beacon_ws_send_queue_size)
     beacon_longpoll_manager = BeaconLongPollManager()
     session_relay_manager = SessionRelayManager(queue_size=settings.session_ws_queue_size)
+    session_file_cache = FileListingCache(ttl_seconds=5)
     task_queue_service = TaskQueueService(app_env=settings.app_env)
 
     @asynccontextmanager
@@ -473,6 +481,7 @@ def create_app() -> FastAPI:
         app.state.beacon_transport_manager = beacon_transport_manager
         app.state.beacon_longpoll_manager = beacon_longpoll_manager
         app.state.session_relay_manager = session_relay_manager
+        app.state.session_file_cache = session_file_cache
         app.state.task_queue_service = task_queue_service
         stale_monitor_task: asyncio.Task[None] | None = None
         worker_monitor_task: asyncio.Task[None] | None = None
@@ -521,6 +530,7 @@ def create_app() -> FastAPI:
     app.state.beacon_transport_manager = beacon_transport_manager
     app.state.beacon_longpoll_manager = beacon_longpoll_manager
     app.state.session_relay_manager = session_relay_manager
+    app.state.session_file_cache = session_file_cache
     app.state.task_queue_service = task_queue_service
 
     app.add_middleware(
@@ -841,6 +851,11 @@ def create_app() -> FastAPI:
                     ack_payload["task_result"],
                 )
             if session_data_outcome is not None:
+                if session_data_outcome.cache_listing is not None:
+                    await request.app.state.session_file_cache.store(
+                        session_data_outcome.session_id,
+                        session_data_outcome.cache_listing,
+                    )
                 if session_data_outcome.operator_message is not None:
                     await request.app.state.session_relay_manager.deliver(
                         session_data_outcome.session_id,
@@ -1220,43 +1235,85 @@ def create_app() -> FastAPI:
         await publish_session_event(request.app, settings, "session.opening", shell_session)
         return ShellSessionResponse(**public_shell_session(shell_session))
 
-    @api_router.get("/sessions/{session_id}", response_model=ShellSessionResponse, tags=["sessions"])
-    def get_shell_session(
+    @api_router.post("/sessions/file-browser", response_model=FileBrowserSessionResponse, tags=["sessions"])
+    async def open_file_browser_session(
+        payload: FileBrowserSessionCreateRequest,
+        request: Request,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> FileBrowserSessionResponse:
+        claims = authorize_c2_token(settings, authorization)
+        actor_subject = actor_subject_from_claims(claims)
+        try:
+            beacon_id = uuid.UUID(payload.beacon_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="beacon_id must be a UUID",
+            ) from exc
+        beacon = session.get(Beacon, beacon_id)
+        if beacon is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
+        file_session = create_file_browser_session(session, beacon=beacon, actor_subject=actor_subject)
+        open_payload = session_frame_payload(
+            file_session,
+            SESSION_OP_OPEN,
+            root_path=payload.root_path,
+            session_type=FILE_BROWSER_SESSION_TYPE,
+        )
+        try:
+            await enqueue_session_data_frame(request.app, settings, session, file_session, open_payload)
+        except HTTPException:
+            session.rollback()
+            raise
+        session.commit()
+        session.refresh(file_session)
+        await publish_session_event(request.app, settings, "session.opening", file_session)
+        return FileBrowserSessionResponse(**public_session(file_session))
+
+    @api_router.get("/sessions/{session_id}", response_model=SessionResponse, tags=["sessions"])
+    def get_session(
         session_id: uuid.UUID,
         session: DbSession,
         authorization: Annotated[str | None, Header()] = None,
-    ) -> ShellSessionResponse:
+    ) -> SessionResponse:
         authorize_c2_token(settings, authorization)
         shell_session = session.get(InteractiveSession, session_id)
         if shell_session is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-        return ShellSessionResponse(**public_shell_session(shell_session))
+        return SessionResponse(**public_session(shell_session))
 
-    @api_router.delete("/sessions/{session_id}", response_model=ShellSessionResponse, tags=["sessions"])
-    async def close_shell_session_route(
+    @api_router.delete("/sessions/{session_id}", response_model=SessionResponse, tags=["sessions"])
+    async def close_session_route(
         session_id: uuid.UUID,
         request: Request,
         session: DbSession,
         authorization: Annotated[str | None, Header()] = None,
-    ) -> ShellSessionResponse:
+    ) -> SessionResponse:
         authorize_c2_token(settings, authorization)
         shell_session = session.get(InteractiveSession, session_id)
         if shell_session is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
         if shell_session.status not in {"closed", "failed"}:
-            close_payload = session_frame_payload(shell_session, SESSION_OP_CLOSE, reason="operator")
+            close_payload = session_frame_payload(
+                shell_session,
+                SESSION_OP_CLOSE,
+                reason="operator",
+                session_type=shell_session.session_type,
+            )
             with suppress(HTTPException):
                 await enqueue_session_data_frame(request.app, settings, session, shell_session, close_payload)
             close_shell_session(shell_session, reason="operator")
             session.add(shell_session)
             session.commit()
             session.refresh(shell_session)
+            await request.app.state.session_file_cache.clear_session(shell_session.id)
             await request.app.state.session_relay_manager.deliver(
                 shell_session.id,
-                {"op": "closed", "session": public_shell_session(shell_session)},
+                {"op": "closed", "session": public_session(shell_session)},
             )
             await publish_session_event(request.app, settings, "session.closed", shell_session)
-        return ShellSessionResponse(**public_shell_session(shell_session))
+        return SessionResponse(**public_session(shell_session))
 
     @api_router.post("/tasks", response_model=TaskResponse, tags=["tasks"])
     async def create_task(
@@ -1785,6 +1842,11 @@ def create_app() -> FastAPI:
                     ack_payload["task_result"],
                 )
             if session_data_outcome is not None:
+                if session_data_outcome.cache_listing is not None:
+                    await request.app.state.session_file_cache.store(
+                        session_data_outcome.session_id,
+                        session_data_outcome.cache_listing,
+                    )
                 if session_data_outcome.operator_message is not None:
                     await request.app.state.session_relay_manager.deliver(
                         session_data_outcome.session_id,

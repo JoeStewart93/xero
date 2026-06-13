@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -255,6 +256,102 @@ func TestRunOnceHandlesSessionDataOverWebSocket(t *testing.T) {
 	payload := <-responsePayload
 	if payload["session_id"] != sessionID || payload["op"] != "error" {
 		t.Fatalf("unexpected session response payload: %#v", payload)
+	}
+}
+
+func TestRunOnceHandlesFileBrowserSessionDataOverWebSocket(t *testing.T) {
+	serverPrivate, serverPublic := testProtocolKeys(t)
+	sessionID := "00000000-0000-0000-0000-000000000019"
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("hello from file browser"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	responsePayloads := make(chan map[string]any, 2)
+	upgrader := websocket.Upgrader{Subprotocols: []string{"xero.beacon.v1"}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade failed: %v", err)
+			return
+		}
+		defer conn.Close()
+		var lastDecoded *xeroprotocol.DecodedFrame
+		for range 2 {
+			_, raw, err := conn.ReadMessage()
+			if err != nil {
+				t.Errorf("read failed: %v", err)
+				return
+			}
+			decoded, err := xeroprotocol.Decode(raw, serverPrivate)
+			if err != nil {
+				t.Errorf("decode failed: %v", err)
+				return
+			}
+			lastDecoded = decoded
+			if err := conn.WriteMessage(websocket.BinaryMessage, ackFrame(t, serverPrivate, decoded, map[string]any{"task": nil})); err != nil {
+				t.Errorf("write ack failed: %v", err)
+				return
+			}
+		}
+		openPayload := map[string]any{"session_id": sessionID, "op": "open", "session_type": "file_browser", "root_path": root}
+		if err := conn.WriteMessage(websocket.BinaryMessage, protocolFrame(t, serverPrivate, lastDecoded, "SESSION_DATA", openPayload)); err != nil {
+			t.Errorf("write open failed: %v", err)
+			return
+		}
+		_, raw, err := conn.ReadMessage()
+		if err != nil {
+			t.Errorf("read open response failed: %v", err)
+			return
+		}
+		decoded, err := xeroprotocol.Decode(raw, serverPrivate)
+		if err != nil {
+			t.Errorf("decode open response failed: %v", err)
+			return
+		}
+		responsePayloads <- decoded.Payload
+
+		listPayload := map[string]any{"session_id": sessionID, "op": "list_dir", "session_type": "file_browser", "request_id": "seq-1", "path": ""}
+		if err := conn.WriteMessage(websocket.BinaryMessage, protocolFrame(t, serverPrivate, lastDecoded, "SESSION_DATA", listPayload)); err != nil {
+			t.Errorf("write list failed: %v", err)
+			return
+		}
+		_, raw, err = conn.ReadMessage()
+		if err != nil {
+			t.Errorf("read list response failed: %v", err)
+			return
+		}
+		decoded, err = xeroprotocol.Decode(raw, serverPrivate)
+		if err != nil {
+			t.Errorf("decode list response failed: %v", err)
+			return
+		}
+		responsePayloads <- decoded.Payload
+	}))
+	defer server.Close()
+
+	cfg := testAgentConfig(t, server.URL, serverPublic)
+	if err := state.Save(cfg.StatePath, state.RuntimeState{BeaconID: "beacon-existing", BeaconToken: "token-existing"}); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	opened := <-responsePayloads
+	listed := <-responsePayloads
+	if opened["op"] != "open_ack" || opened["session_type"] != "file_browser" {
+		t.Fatalf("unexpected open response: %#v", opened)
+	}
+	if listed["op"] != "list_dir" || listed["request_id"] != "seq-1" || listed["ok"] != true {
+		t.Fatalf("unexpected list response: %#v", listed)
+	}
+	entries, ok := listed["entries"].([]any)
+	if !ok || len(entries) != 1 {
+		t.Fatalf("expected one file entry, got %#v", listed["entries"])
 	}
 }
 

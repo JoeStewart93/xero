@@ -602,12 +602,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/sessions/file-browser:
+    post:
+      tags:
+      - sessions
+      summary: Open File Browser Session
+      operationId: open_file_browser_session_api_v1_sessions_file_browser_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FileBrowserSessionCreateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileBrowserSessionResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/sessions/{session_id}:
     get:
       tags:
       - sessions
-      summary: Get Shell Session
-      operationId: get_shell_session_api_v1_sessions__session_id__get
+      summary: Get Session
+      operationId: get_session_api_v1_sessions__session_id__get
       parameters:
       - name: session_id
         in: path
@@ -630,7 +664,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ShellSessionResponse'
+                $ref: '#/components/schemas/SessionResponse'
         '422':
           description: Validation Error
           content:
@@ -640,8 +674,8 @@ paths:
     delete:
       tags:
       - sessions
-      summary: Close Shell Session Route
-      operationId: close_shell_session_route_api_v1_sessions__session_id__delete
+      summary: Close Session Route
+      operationId: close_session_route_api_v1_sessions__session_id__delete
       parameters:
       - name: session_id
         in: path
@@ -664,7 +698,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ShellSessionResponse'
+                $ref: '#/components/schemas/SessionResponse'
         '422':
           description: Validation Error
           content:
@@ -1774,6 +1808,91 @@ components:
       - service_role
       - status
       title: C2SessionResponse
+    FileBrowserSessionCreateRequest:
+      properties:
+        beacon_id:
+          type: string
+          title: Beacon Id
+        root_path:
+          anyOf:
+          - type: string
+            maxLength: 1024
+          - type: 'null'
+          title: Root Path
+      type: object
+      required:
+      - beacon_id
+      title: FileBrowserSessionCreateRequest
+    FileBrowserSessionResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        beacon_id:
+          type: string
+          title: Beacon Id
+        session_type:
+          type: string
+          const: file_browser
+          title: Session Type
+        status:
+          type: string
+          enum:
+          - closed
+          - closing
+          - detached
+          - failed
+          - open
+          - opening
+          title: Status
+        actor_subject:
+          type: string
+          title: Actor Subject
+        opened_at:
+          type: string
+          format: date-time
+          title: Opened At
+        last_activity_at:
+          type: string
+          format: date-time
+          title: Last Activity At
+        detached_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Detached At
+        closed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Closed At
+        close_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Close Reason
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - beacon_id
+      - session_type
+      - status
+      - actor_subject
+      - opened_at
+      - last_activity_at
+      - created_at
+      - updated_at
+      title: FileBrowserSessionResponse
     HTTPValidationError:
       properties:
         detail:
@@ -2034,6 +2153,99 @@ components:
       - message
       - occurred_at
       title: ProtocolSecurityEventResponse
+    SessionResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        beacon_id:
+          type: string
+          title: Beacon Id
+        session_type:
+          type: string
+          enum:
+          - file_browser
+          - shell
+          title: Session Type
+        shell_type:
+          anyOf:
+          - type: string
+            enum:
+            - auto
+            - bash
+            - cmd
+            - powershell
+          - type: string
+          - type: 'null'
+          title: Shell Type
+        status:
+          type: string
+          enum:
+          - closed
+          - closing
+          - detached
+          - failed
+          - open
+          - opening
+          title: Status
+        actor_subject:
+          type: string
+          title: Actor Subject
+        opened_at:
+          type: string
+          format: date-time
+          title: Opened At
+        last_activity_at:
+          type: string
+          format: date-time
+          title: Last Activity At
+        detached_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Detached At
+        closed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Closed At
+        close_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Close Reason
+        rows:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Rows
+        cols:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Cols
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - beacon_id
+      - session_type
+      - status
+      - actor_subject
+      - opened_at
+      - last_activity_at
+      - created_at
+      - updated_at
+      title: SessionResponse
     ShellSessionCreateRequest:
       properties:
         beacon_id:

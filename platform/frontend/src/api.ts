@@ -156,7 +156,8 @@ export interface TransportStatus {
 export type TaskPriority = 'high' | 'low' | 'normal' | 'urgent';
 export type TaskStatus = 'cancelled' | 'completed' | 'dispatched' | 'failed' | 'queued' | 'running';
 export type ShellType = 'auto' | 'bash' | 'cmd' | 'powershell';
-export type ShellSessionStatus = 'closed' | 'closing' | 'detached' | 'failed' | 'open' | 'opening';
+export type SessionStatus = 'closed' | 'closing' | 'detached' | 'failed' | 'open' | 'opening';
+export type ShellSessionStatus = SessionStatus;
 export type BeaconBuildStatus = 'building' | 'failed' | 'queued' | 'succeeded';
 export type BeaconBuildTargetOS = 'linux' | 'windows';
 export type BeaconBuildTargetArch = 'amd64';
@@ -191,6 +192,26 @@ export interface ShellSessionCreateRequest {
   cols?: number;
   rows?: number;
   shell_type?: ShellType;
+}
+
+export interface FileBrowserSession {
+  actor_subject: string;
+  beacon_id: string;
+  close_reason: string | null;
+  closed_at: string | null;
+  created_at: string;
+  detached_at: string | null;
+  id: string;
+  last_activity_at: string;
+  opened_at: string;
+  session_type: 'file_browser';
+  status: SessionStatus;
+  updated_at: string;
+}
+
+export interface FileBrowserSessionCreateRequest {
+  beacon_id: string;
+  root_path?: string | null;
 }
 
 export interface Task {
@@ -612,6 +633,17 @@ export async function createShellSession(
   });
 }
 
+export async function createFileBrowserSession(
+  baseUrl: string,
+  accessToken: string,
+  payload: FileBrowserSessionCreateRequest,
+): Promise<FileBrowserSession> {
+  return c2Fetch<FileBrowserSession>(baseUrl, accessToken, '/api/v1/sessions/file-browser', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function getShellSession(baseUrl: string, accessToken: string, sessionId: string): Promise<ShellSession> {
   return c2Fetch<ShellSession>(baseUrl, accessToken, `/api/v1/sessions/${sessionId}`);
 }
@@ -622,7 +654,21 @@ export async function closeShellSession(baseUrl: string, accessToken: string, se
   });
 }
 
+export async function closeFileBrowserSession(
+  baseUrl: string,
+  accessToken: string,
+  sessionId: string,
+): Promise<FileBrowserSession> {
+  return c2Fetch<FileBrowserSession>(baseUrl, accessToken, `/api/v1/sessions/${sessionId}`, {
+    method: 'DELETE',
+  });
+}
+
 export function shellSessionWebSocketUrl(baseUrl: string, sessionId: string): string {
+  return sessionWebSocketUrl(baseUrl, sessionId);
+}
+
+export function sessionWebSocketUrl(baseUrl: string, sessionId: string): string {
   const url = new URL(baseUrl);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   url.pathname = `/ws/sessions/${encodeURIComponent(sessionId)}`;

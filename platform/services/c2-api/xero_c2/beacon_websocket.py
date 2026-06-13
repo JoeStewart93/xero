@@ -322,6 +322,11 @@ async def run_beacon_websocket(websocket: WebSocket, *, settings, public_beacon:
                     task_result_payload,
                 )
             if session_data_outcome is not None:
+                if session_data_outcome.cache_listing is not None:
+                    await websocket.app.state.session_file_cache.store(
+                        session_data_outcome.session_id,
+                        session_data_outcome.cache_listing,
+                    )
                 if session_data_outcome.operator_message is not None:
                     await websocket.app.state.session_relay_manager.deliver(
                         session_data_outcome.session_id,

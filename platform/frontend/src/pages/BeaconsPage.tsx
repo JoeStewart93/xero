@@ -7,9 +7,12 @@ import {
   Cpu,
   Crosshair,
   Download,
+  Eye,
+  File,
   FileArchive,
   FileText,
   Fingerprint,
+  Folder,
   KeyRound,
   Network,
   RadioTower,
@@ -27,7 +30,9 @@ import { createPortal } from 'react-dom';
 
 import {
   cancelTask,
+  closeFileBrowserSession,
   closeShellSession,
+  createFileBrowserSession,
   createShellSession,
   createShellTask,
   downloadTaskResultText,
@@ -36,6 +41,7 @@ import {
 } from '../api';
 import type {
   Beacon,
+  FileBrowserSession,
   ShellSession,
   ShellType,
   Task,
@@ -50,7 +56,7 @@ import type { OperatorRealtimeEvent } from '../operatorRealtime';
 import { useC2Connection } from '../useC2Connection';
 import { useRealtime } from '../useRealtime';
 import { ShellSessionClient } from '../shellSessionClient';
-import type { ShellSessionConnectionStatus, ShellSessionMessage } from '../shellSessionClient';
+import type { FileBrowserEntry, ShellSessionConnectionStatus, ShellSessionMessage } from '../shellSessionClient';
 import {
   DEFAULT_BEACON_SORT_DIRECTION,
   DEFAULT_BEACON_SORT_KEY,
@@ -92,11 +98,11 @@ const hostOperations = [
     status: 'Ready',
   },
   {
-    description: 'Inspect host files, collected artifacts, and secured output.',
+    description: 'Browse host files and preview safe text output.',
     icon: FileArchive,
     key: 'files',
-    label: 'Files & artifacts',
-    status: 'Planned',
+    label: 'Files',
+    status: 'Ready',
   },
   {
     description: 'Review credential material associated with this host.',
@@ -150,6 +156,29 @@ function formatBytes(value: number): string {
     return `${(value / 1024).toFixed(1)} KB`;
   }
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function filePathLabel(path: string): string {
+  return path || '/';
+}
+
+function fileBreadcrumbs(path: string): Array<{ label: string; path: string }> {
+  const parts = path.split('/').filter(Boolean);
+  const crumbs = [{ label: '/', path: '' }];
+  parts.forEach((part, index) => {
+    crumbs.push({ label: part, path: parts.slice(0, index + 1).join('/') });
+  });
+  return crumbs;
+}
+
+function fileErrorMessage(message: ShellSessionMessage): string {
+  if (message.message) {
+    return message.message;
+  }
+  if (message.error_code) {
+    return message.error_code.replace(/_/g, ' ');
+  }
+  return 'File browser operation failed.';
 }
 
 function resultOutput(result: TaskResult, stream: 'stderr' | 'stdout'): string {
@@ -215,7 +244,7 @@ function ShellSessionPanel({
   }, []);
 
   const handleSessionMessage = useCallback((message: ShellSessionMessage) => {
-    if (message.session) {
+    if (message.session?.session_type === 'shell') {
       setSession(message.session);
     }
     if (message.op === 'attached') {
@@ -393,6 +422,305 @@ function ShellSessionPanel({
       <pre aria-hidden="true" className="shell-session-transcript" data-testid="shell-session-transcript">
         {terminalTranscript}
       </pre>
+    </div>
+  );
+}
+
+function FileBrowserPanel({
+  beacon,
+  connection,
+}: {
+  beacon: Beacon;
+  connection: C2Connection;
+}) {
+  const clientRef = useRef<ShellSessionClient | null>(null);
+  const hasRequestedRootRef = useRef(false);
+  const requestCounterRef = useRef(0);
+  const [connectionStatus, setConnectionStatus] = useState<ShellSessionConnectionStatus>('disconnected');
+  const [currentPath, setCurrentPath] = useState('');
+  const [entries, setEntries] = useState<FileBrowserEntry[]>([]);
+  const [error, setError] = useState('');
+  const [isClosingSession, setIsClosingSession] = useState(false);
+  const [isLoadingPath, setIsLoadingPath] = useState(false);
+  const [isOpeningSession, setIsOpeningSession] = useState(false);
+  const [preview, setPreview] = useState<{
+    content: string;
+    encoding: string;
+    path: string;
+    size: number;
+    truncated: boolean;
+  } | null>(null);
+  const [session, setSession] = useState<FileBrowserSession | null>(null);
+  const activeSession = Boolean(session && !['closed', 'failed'].includes(session.status));
+
+  const sendFileRequest = useCallback((op: 'list_dir' | 'read_file' | 'stat', path: string, refresh = false) => {
+    requestCounterRef.current += 1;
+    const requestId = `file-${requestCounterRef.current}`;
+    clientRef.current?.sendMessage({
+      op,
+      path,
+      refresh,
+      request_id: requestId,
+    });
+    return requestId;
+  }, []);
+
+  const loadDirectory = useCallback((path: string, refresh = false) => {
+    setIsLoadingPath(true);
+    setError('');
+    sendFileRequest('list_dir', path, refresh);
+  }, [sendFileRequest]);
+
+  const requestInitialRoot = useCallback(() => {
+    if (hasRequestedRootRef.current) {
+      return;
+    }
+    hasRequestedRootRef.current = true;
+    window.setTimeout(() => loadDirectory(''), 0);
+  }, [loadDirectory]);
+
+  const handleFileMessage = useCallback((message: ShellSessionMessage) => {
+    if (message.session?.session_type === 'file_browser') {
+      setSession(message.session);
+    }
+    if (message.op === 'attached' || message.op === 'opened') {
+      setError('');
+      requestInitialRoot();
+      return;
+    }
+    if (message.op === 'list_dir') {
+      setIsLoadingPath(false);
+      if (message.ok === false) {
+        setError(fileErrorMessage(message));
+        return;
+      }
+      setCurrentPath(message.path ?? '');
+      setEntries(message.entries ?? []);
+      setPreview(null);
+      setError('');
+      return;
+    }
+    if (message.op === 'read_file') {
+      if (message.ok === false) {
+        setPreview(null);
+        setError(fileErrorMessage(message));
+        return;
+      }
+      setPreview({
+        content: message.content ?? '',
+        encoding: message.encoding ?? 'utf-8',
+        path: message.path ?? '',
+        size: message.size ?? 0,
+        truncated: Boolean(message.truncated),
+      });
+      setError('');
+      return;
+    }
+    if (message.op === 'closed') {
+      clientRef.current?.stop();
+      return;
+    }
+    if (message.op === 'error') {
+      setError(fileErrorMessage(message));
+    }
+  }, [requestInitialRoot]);
+
+  const handleSessionStatus = useCallback((status: ShellSessionConnectionStatus, message?: string) => {
+    setConnectionStatus(status);
+    if (message) {
+      setError(message);
+    } else if (status === 'connected') {
+      setError('');
+    }
+  }, []);
+
+  useEffect(() => () => clientRef.current?.stop(), []);
+
+  useEffect(() => {
+    if (activeSession && connectionStatus === 'connected') {
+      requestInitialRoot();
+    }
+  }, [activeSession, connectionStatus, requestInitialRoot]);
+
+  async function handleOpenSession(): Promise<void> {
+    setIsOpeningSession(true);
+    setError('');
+    setEntries([]);
+    setPreview(null);
+    setCurrentPath('');
+    hasRequestedRootRef.current = false;
+    try {
+      const created = await createFileBrowserSession(connection.baseUrl, connection.accessToken, {
+        beacon_id: beacon.id,
+      });
+      setSession(created);
+      clientRef.current?.stop();
+      const client = new ShellSessionClient({
+        accessToken: connection.accessToken,
+        baseUrl: connection.baseUrl,
+        onMessage: handleFileMessage,
+        onStatusChange: handleSessionStatus,
+        sessionId: created.id,
+      });
+      clientRef.current = client;
+      client.start();
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : 'Unable to open file browser.';
+      setError(message);
+    } finally {
+      setIsOpeningSession(false);
+    }
+  }
+
+  async function handleCloseSession(): Promise<void> {
+    if (!session) {
+      return;
+    }
+    setIsClosingSession(true);
+    setError('');
+    try {
+      if (clientRef.current?.isOpen()) {
+        clientRef.current.closeSession();
+      } else {
+        const closed = await closeFileBrowserSession(connection.baseUrl, connection.accessToken, session.id);
+        setSession(closed);
+      }
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : 'Unable to close file browser.';
+      setError(message);
+    } finally {
+      setIsClosingSession(false);
+    }
+  }
+
+  function handleEntryOpen(entry: FileBrowserEntry): void {
+    if (entry.type === 'directory') {
+      loadDirectory(entry.path);
+      return;
+    }
+    sendFileRequest('read_file', entry.path);
+  }
+
+  return (
+    <div className="file-browser-panel">
+      <div className="shell-session-toolbar">
+        <button
+          className="primary-button shell-session-action"
+          disabled={activeSession || isOpeningSession || !beacon.transport_connected}
+          onClick={() => void handleOpenSession()}
+          type="button"
+        >
+          <Folder aria-hidden="true" size={15} strokeWidth={2.2} />
+          <span>{isOpeningSession ? 'Opening' : 'Open'}</span>
+        </button>
+        <button
+          className="secondary-button shell-session-action"
+          disabled={!activeSession || isClosingSession}
+          onClick={() => void handleCloseSession()}
+          type="button"
+        >
+          <X aria-hidden="true" size={15} strokeWidth={2.2} />
+          <span>{isClosingSession ? 'Closing' : 'Close'}</span>
+        </button>
+        <button
+          aria-label="Refresh current directory"
+          className="secondary-button shell-session-action"
+          disabled={!activeSession || isLoadingPath}
+          onClick={() => loadDirectory(currentPath, true)}
+          type="button"
+        >
+          <RefreshCw aria-hidden="true" size={15} strokeWidth={2.2} />
+          <span>{isLoadingPath ? 'Loading' : 'Refresh'}</span>
+        </button>
+      </div>
+
+      <div className="shell-session-status-strip">
+        <span data-testid="file-browser-status">{session?.status ?? connectionStatus}</span>
+        <span>{connectionStatus}</span>
+        <span>{beacon.transport_connected ? 'Transport online' : 'Transport offline'}</span>
+      </div>
+
+      {error ? <p className="task-queue-error" role="alert">{error}</p> : null}
+
+      <div className="file-browser-breadcrumbs" aria-label="File browser breadcrumbs">
+        {fileBreadcrumbs(currentPath).map((crumb) => (
+          <button
+            disabled={!activeSession || crumb.path === currentPath}
+            key={crumb.path || 'root'}
+            onClick={() => loadDirectory(crumb.path)}
+            type="button"
+          >
+            {crumb.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="file-browser-grid">
+        <div className="file-browser-table-wrap">
+          <table className="file-browser-table">
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Type</th>
+                <th scope="col">Size</th>
+                <th scope="col">Modified</th>
+                <th scope="col">Mode</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.length === 0 ? (
+                <tr>
+                  <td colSpan={5}>
+                    <span className="file-browser-empty">{activeSession ? 'No entries.' : 'Open a file browser session.'}</span>
+                  </td>
+                </tr>
+              ) : (
+                entries.map((entry) => {
+                  const EntryIcon = entry.type === 'directory' ? Folder : entry.type === 'file' ? FileText : File;
+                  return (
+                    <tr key={entry.path}>
+                      <td>
+                        <button className="file-browser-entry-button" onClick={() => handleEntryOpen(entry)} type="button">
+                          <EntryIcon aria-hidden="true" size={15} strokeWidth={2.1} />
+                          <span>{entry.name}</span>
+                        </button>
+                      </td>
+                      <td>{entry.type}</td>
+                      <td>{entry.type === 'directory' ? '-' : formatBytes(entry.size)}</td>
+                      <td>{entry.modified_at ? compactDateTime(entry.modified_at) : '-'}</td>
+                      <td>
+                        <span className="beacon-mono">{entry.permissions}</span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <aside className="file-preview-panel" aria-label="File preview">
+          <div className="task-result-panel-head">
+            <div>
+              <strong>Preview</strong>
+              <span>{preview ? filePathLabel(preview.path) : filePathLabel(currentPath)}</span>
+            </div>
+            <Eye aria-hidden="true" size={15} strokeWidth={2.1} />
+          </div>
+          {preview ? (
+            <>
+              <div className="task-result-meta">
+                <span>{formatBytes(preview.size)}</span>
+                <span>{preview.encoding}</span>
+                <span>{preview.truncated ? 'Truncated' : 'Complete'}</span>
+              </div>
+              <pre className="file-preview-output" data-testid="file-preview-output">{preview.content}</pre>
+            </>
+          ) : (
+            <div className="task-empty-state">Select a text file to preview.</div>
+          )}
+        </aside>
+      </div>
     </div>
   );
 }
@@ -804,6 +1132,8 @@ function BeaconOperationsModal({
               </div>
             ) : activeOperation.key === 'session' ? (
               <ShellSessionPanel beacon={beacon} connection={connection} />
+            ) : activeOperation.key === 'files' ? (
+              <FileBrowserPanel beacon={beacon} connection={connection} />
             ) : (
               <>
                 <div className="beacon-operation-host-grid">

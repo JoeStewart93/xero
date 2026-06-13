@@ -9,6 +9,7 @@ import {
   cancelTask,
   closeShellSession,
   createBeaconBuild,
+  createFileBrowserSession,
   createShellSession,
   createShellTask,
   createWorkerPairingToken,
@@ -362,7 +363,7 @@ describe('api client', () => {
     expect(fetchMock.mock.calls[7][0]).toBe('http://c2.local:8001/api/v1/tasks/task-one/result/artifacts/artifact-one');
   });
 
-  it('calls C2 shell session endpoints and builds the session websocket URL', async () => {
+  it('calls C2 session endpoints and builds the session websocket URL', async () => {
     const shellSession = {
       actor_subject: 'operator-one',
       beacon_id: 'beacon-one',
@@ -384,7 +385,19 @@ describe('api client', () => {
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(shellSession), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...shellSession, status: 'open' }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ...shellSession, close_reason: 'operator', status: 'closed' }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...shellSession, close_reason: 'operator', status: 'closed' }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ...shellSession,
+            cols: undefined,
+            rows: undefined,
+            session_type: 'file_browser',
+            shell_type: undefined,
+          }),
+          { status: 200 },
+        ),
+      );
     vi.stubGlobal('fetch', fetchMock);
 
     await createShellSession('http://c2.local:8001/', 'c2-token', {
@@ -395,6 +408,10 @@ describe('api client', () => {
     });
     await getShellSession('http://c2.local:8001/', 'c2-token', 'session-one');
     await closeShellSession('http://c2.local:8001/', 'c2-token', 'session-one');
+    await createFileBrowserSession('http://c2.local:8001/', 'c2-token', {
+      beacon_id: 'beacon-one',
+      root_path: '/home',
+    });
 
     expect(fetchMock.mock.calls[0][0]).toBe('http://c2.local:8001/api/v1/sessions/shell');
     expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
@@ -407,6 +424,11 @@ describe('api client', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('http://c2.local:8001/api/v1/sessions/session-one');
     expect(fetchMock.mock.calls[2][0]).toBe('http://c2.local:8001/api/v1/sessions/session-one');
     expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe('DELETE');
+    expect(fetchMock.mock.calls[3][0]).toBe('http://c2.local:8001/api/v1/sessions/file-browser');
+    expect(JSON.parse((fetchMock.mock.calls[3][1] as RequestInit).body as string)).toEqual({
+      beacon_id: 'beacon-one',
+      root_path: '/home',
+    });
     expect(shellSessionWebSocketUrl('https://c2.local:8001/base', 'session one')).toBe('wss://c2.local:8001/ws/sessions/session%20one');
   });
 

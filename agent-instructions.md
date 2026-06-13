@@ -6,7 +6,11 @@
 
 2. Ensure you consider both functional and non-functional requirements. 
 
-3. Continually refactor code to be best understood by humans. This means small components, functions, objects where possible. This also means code is appropriately structured in the correct directories. If things get messy, please abstract functionality out and create new directories, objects, and helpers where necessary.
+3. Continually refactor code to be best understood by humans. This means small components, functions, objects where possible. This also means code is appropriately structured in the correct directories. If things get messy, please abstract functionality out and create new directories, objects, and helpers where necessary. This is a HARD requirement to ensure the code base is maintainable.
+
+4. Use Context7 MCP for understanding best practices for a given library/technology.
+
+5. Use all tools, plugins, and MCPs available as needed.
 
 
 # Features:
@@ -24,11 +28,14 @@
     - Assumptions being made
 
 3. Be sure when creating development plans, and features that you break each feature down into multiple stages/phases, where each stage is an increment of work. Each stage must be testable, and deliver some value.
+
 4. Ensure every feature, and stage has it's own set of acceptance criteria, dependency callouts, and effort/scope sizing. Stages and overall features CANNOT be considered complete until ALL acceptance criteria are complete.
 
-5. All feature documents should also include diagrams when necessary. While this may be further appropriate for architecture plans, be sure to use them when valuable in feature documents.
+5. When developing a feature, be sure to create a new branch (in git) for that feature. The branch name should include the feature number and a short title (ex: F0049-add-signal-page). On completion, create commit to the feature branch with a meaningful commit message.
 
-6. When completing a feature, be sure to callout any cornercases, misses, or areas that couldn't be complete (if at all).
+6. All feature documents should also include diagrams when necessary. While this may be further appropriate for architecture plans, be sure to use them when valuable in feature documents.
+
+7. When completing a feature, be sure to callout any corner-cases, misses, or areas that couldn't be complete (if at all).
 
 
 # UI:
@@ -52,3 +59,7 @@
 
 2. Use playwright and other UI testing frameworks.
 
+
+# On Completion:
+
+1. After completing development, testing, and running validations - be sure we rebuild the project. This may mean rebuilding the docker container and redeploying it on the stack.

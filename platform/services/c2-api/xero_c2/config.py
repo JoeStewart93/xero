@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     session_cleanup_interval_seconds: int = Field(default=5, gt=0, alias="C2_SESSION_CLEANUP_INTERVAL_SECONDS")
     session_ws_queue_size: int = Field(default=128, ge=1, alias="C2_SESSION_WS_QUEUE_SIZE")
     session_max_chunk_bytes: int = Field(default=65_536, ge=128, alias="C2_SESSION_MAX_CHUNK_BYTES")
+    registry_confirm_token_ttl_seconds: int = Field(default=120, gt=0, alias="C2_REGISTRY_CONFIRM_TOKEN_TTL_SECONDS")
     beacon_builds_enabled: bool = Field(default=False, alias="C2_BEACON_BUILDS_ENABLED")
     beacon_build_timeout_seconds: int = Field(default=180, gt=0, alias="C2_BEACON_BUILD_TIMEOUT_SECONDS")
     beacon_build_go_image: str = Field(default="golang:1.26", alias="C2_BEACON_BUILD_GO_IMAGE")

@@ -173,6 +173,64 @@ class InteractiveSession(BaseModel):
     cols: Mapped[int] = mapped_column(Integer, default=120, nullable=False)
 
 
+class RegistryConfirmation(BaseModel):
+    __tablename__ = "registry_confirmations"
+    __table_args__ = (UniqueConstraint("token_hash", name="uq_registry_confirmations_token_hash"),)
+
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    beacon_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("beacons.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    actor_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    operation: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    hive: Mapped[str] = mapped_column(String(8), nullable=False)
+    key_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    value_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    value_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    value_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    value_length: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+
+class RegistryAuditEvent(BaseModel):
+    __tablename__ = "registry_audit_events"
+
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    beacon_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("beacons.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    actor_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    operation: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    hive: Mapped[str] = mapped_column(String(8), nullable=False)
+    key_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    value_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    value_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    value_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    value_length: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    result: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+
+
 class Task(BaseModel):
     __tablename__ = "tasks"
 

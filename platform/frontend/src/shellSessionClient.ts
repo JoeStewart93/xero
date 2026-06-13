@@ -1,16 +1,20 @@
 import { shellSessionWebSocketUrl } from './api';
-import type { FileBrowserSession, ShellSession } from './api';
+import type { FileBrowserSession, RegistrySession, ShellSession } from './api';
 
 export type ShellSessionConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'reconnecting';
 
 export interface ShellSessionMessage {
   cached?: boolean;
+  confirm_token?: string;
   content?: string;
   data?: string;
   data_b64?: string;
   encoding?: string;
   entries?: FileBrowserEntry[];
   error_code?: string;
+  expires_at?: string;
+  hive?: string;
+  key_path?: string;
   message?: string;
   modified_at?: string;
   ok?: boolean;
@@ -18,12 +22,18 @@ export interface ShellSessionMessage {
   path?: string;
   permissions?: string;
   request_id?: string;
-  session?: FileBrowserSession | ShellSession;
+  session?: FileBrowserSession | RegistrySession | ShellSession;
   session_id?: string;
   size?: number;
   stream?: string;
+  subkeys?: string[];
   truncated?: boolean;
   type?: string;
+  value?: number | string | string[];
+  value_name?: string;
+  value_type?: string;
+  values?: RegistryValueEntry[];
+  writable?: boolean;
 }
 
 export interface FileBrowserEntry {
@@ -33,6 +43,13 @@ export interface FileBrowserEntry {
   permissions: string;
   size: number;
   type: 'directory' | 'file' | 'other' | 'symlink';
+}
+
+export interface RegistryValueEntry {
+  name: string;
+  type: string;
+  value?: number | string | string[];
+  writable: boolean;
 }
 
 interface ShellSessionClientOptions {

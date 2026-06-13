@@ -22,6 +22,24 @@ from xero_common.security import AuthTokenError, decode_c2_access_token
 
 from xero_c2.models import Beacon, InteractiveSession
 from xero_c2.protocol import SESSION_DATA, ProtocolError, encode_frame, load_private_key
+from xero_c2.registry_sessions import (
+    REGISTRY_BEACON_OPS,
+    REGISTRY_ERROR_CODES,
+    REGISTRY_SESSION_OPS,
+    REGISTRY_SESSION_TYPE,
+    SESSION_OP_REG_DELETE_VALUE,
+    SESSION_OP_REG_PREPARE_DELETE_VALUE,
+    SESSION_OP_REG_PREPARE_WRITE_VALUE,
+    SESSION_OP_REG_WRITE_VALUE,
+    consume_registry_confirmation,
+    create_registry_confirmation,
+    normalize_registry_hive,
+    normalize_registry_key_path,
+    parse_registry_request,
+    record_registry_audit_result,
+    registry_frame_fields,
+    registry_operator_message,
+)
 
 SESSION_WEBSOCKET_PROTOCOL = "xero.session.v1"
 TOKEN_PROTOCOL_PREFIX = "bearer."
@@ -68,12 +86,20 @@ SESSION_DATA_OPS = {
     SESSION_OP_LIST_DIR,
     SESSION_OP_STAT,
     SESSION_OP_READ_FILE,
+    *REGISTRY_BEACON_OPS,
 }
 
 FILE_BROWSER_SESSION_TYPE = "file_browser"
 SHELL_SESSION_TYPE = "shell"
 FILE_BROWSER_OPS = {SESSION_OP_LIST_DIR, SESSION_OP_STAT, SESSION_OP_READ_FILE}
-FILE_BROWSER_ERROR_CODES = {"access_denied", "binary_file", "not_found", "path_invalid", "unsupported_operation"}
+SESSION_ERROR_CODES = {
+    "access_denied",
+    "binary_file",
+    "not_found",
+    "path_invalid",
+    "unsupported_operation",
+    *REGISTRY_ERROR_CODES,
+}
 
 
 class DuplicateSessionAttachError(RuntimeError):
@@ -310,6 +336,29 @@ def create_file_browser_session(
     return file_session
 
 
+def create_registry_session(
+    session: Session,
+    *,
+    beacon: Beacon,
+    actor_subject: str,
+) -> InteractiveSession:
+    now = utc_now()
+    registry_session = InteractiveSession(
+        beacon_id=beacon.id,
+        session_type=REGISTRY_SESSION_TYPE,
+        shell_type="none",
+        status=SESSION_STATUS_OPENING,
+        actor_subject=actor_subject,
+        opened_at=now,
+        last_activity_at=now,
+        rows=32,
+        cols=120,
+    )
+    session.add(registry_session)
+    session.flush()
+    return registry_session
+
+
 def mark_shell_session_open(session: InteractiveSession) -> InteractiveSession:
     session.status = SESSION_STATUS_OPEN
     session.detached_at = None
@@ -414,7 +463,11 @@ def validate_session_data_payload(payload: dict[str, Any]) -> None:
     if not isinstance(op, str) or op not in SESSION_DATA_OPS:
         raise ProtocolError("INVALID_PAYLOAD", "SESSION_DATA op is invalid")
     session_type = payload.get("session_type")
-    if session_type is not None and session_type not in {FILE_BROWSER_SESSION_TYPE, SHELL_SESSION_TYPE}:
+    if session_type is not None and session_type not in {
+        FILE_BROWSER_SESSION_TYPE,
+        REGISTRY_SESSION_TYPE,
+        SHELL_SESSION_TYPE,
+    }:
         raise ProtocolError("INVALID_PAYLOAD", "SESSION_DATA session_type is invalid")
     request_id = payload.get("request_id")
     if request_id is not None and (not isinstance(request_id, str) or not request_id.strip()):
@@ -427,8 +480,16 @@ def validate_session_data_payload(payload: dict[str, Any]) -> None:
             normalize_file_browser_path(path)
         except ValueError as exc:
             raise ProtocolError("INVALID_PAYLOAD", str(exc)) from exc
+    if op in REGISTRY_BEACON_OPS:
+        if session_type != REGISTRY_SESSION_TYPE:
+            raise ProtocolError("INVALID_PAYLOAD", "Registry SESSION_DATA requires registry session_type")
+        try:
+            normalize_registry_hive(payload.get("hive"))
+            normalize_registry_key_path(payload.get("key_path"))
+        except ValueError as exc:
+            raise ProtocolError("INVALID_PAYLOAD", str(exc)) from exc
     error_code = payload.get("error_code")
-    if error_code is not None and error_code not in FILE_BROWSER_ERROR_CODES:
+    if error_code is not None and error_code not in SESSION_ERROR_CODES:
         raise ProtocolError("INVALID_PAYLOAD", "SESSION_DATA error_code is invalid")
     data_b64 = payload.get("data_b64")
     if data_b64 is not None:
@@ -562,6 +623,19 @@ def apply_beacon_session_data(
             "encoding": payload.get("encoding"),
         }
         event_type = "session.file.response.received" if operator_message["ok"] else "session.file.error"
+    elif op in REGISTRY_BEACON_OPS:
+        if shell_session.session_type != REGISTRY_SESSION_TYPE:
+            raise ProtocolError("INVALID_SESSION_OP", "Registry op is only valid for registry sessions")
+        if shell_session.status in {SESSION_STATUS_OPENING, SESSION_STATUS_DETACHED}:
+            shell_session.status = SESSION_STATUS_OPEN
+            shell_session.detached_at = None
+        operator_message = registry_operator_message(payload, shell_session.id)
+        record_registry_audit_result(session, shell_session, payload)
+        event_type = (
+            "session.registry.response.received"
+            if operator_message.get("ok") is not False
+            else "session.registry.error"
+        )
     elif op == SESSION_OP_EXIT:
         close_shell_session(shell_session, reason=str(payload.get("reason") or "process_exit"))
         operator_message = {"op": "closed", "session": public_session(shell_session)}
@@ -578,6 +652,19 @@ def apply_beacon_session_data(
                 "session_id": str(shell_session.id),
             }
             event_type = "session.file.error"
+        elif shell_session.session_type == REGISTRY_SESSION_TYPE and payload.get("request_id"):
+            operator_message = {
+                "error_code": payload.get("error_code") or "unsupported_operation",
+                "hive": payload.get("hive"),
+                "key_path": normalize_registry_key_path(payload.get("key_path")),
+                "message": str(payload.get("message") or payload.get("reason") or "Registry operation failed."),
+                "ok": False,
+                "op": "error",
+                "request_id": payload.get("request_id"),
+                "session_id": str(shell_session.id),
+                "value_name": payload.get("value_name"),
+            }
+            event_type = "session.registry.error"
         else:
             fail_shell_session(
                 shell_session,
@@ -766,6 +853,8 @@ async def run_shell_session_websocket(websocket: WebSocket, *, settings, session
             try:
                 if session_type == FILE_BROWSER_SESSION_TYPE:
                     message = parse_file_browser_request(raw_message)
+                elif session_type == REGISTRY_SESSION_TYPE:
+                    message = parse_registry_request(raw_message)
                 else:
                     message = parse_operator_terminal_message(raw_message, settings.session_max_chunk_bytes)
             except (ValueError, UnicodeEncodeError) as exc:
@@ -806,7 +895,53 @@ async def run_shell_session_websocket(websocket: WebSocket, *, settings, session
                     )
                     await enqueue_session_data_frame(websocket.app, settings, db, shell_session, frame_payload)
                     continue
-                if session_type == FILE_BROWSER_SESSION_TYPE and message["op"] in {
+                if session_type == REGISTRY_SESSION_TYPE and message["op"] != SESSION_OP_CLOSE:
+                    if message["op"] in {
+                        SESSION_OP_REG_PREPARE_WRITE_VALUE,
+                        SESSION_OP_REG_PREPARE_DELETE_VALUE,
+                    }:
+                        shell_session.last_activity_at = utc_now()
+                        db.add(shell_session)
+                        confirm_payload = create_registry_confirmation(
+                            db,
+                            actor_subject=actor_subject,
+                            registry_session=shell_session,
+                            request=message,
+                            ttl_seconds=settings.registry_confirm_token_ttl_seconds,
+                        )
+                        db.commit()
+                        await connection.enqueue(confirm_payload)
+                        continue
+                    if message["op"] in {SESSION_OP_REG_WRITE_VALUE, SESSION_OP_REG_DELETE_VALUE}:
+                        try:
+                            consume_registry_confirmation(
+                                db,
+                                actor_subject=actor_subject,
+                                registry_session=shell_session,
+                                request=message,
+                            )
+                        except ValueError as exc:
+                            await connection.enqueue(
+                                {
+                                    "error_code": "confirm_token_invalid",
+                                    "message": str(exc),
+                                    "ok": False,
+                                    "op": "error",
+                                    "request_id": message["request_id"],
+                                    "session_id": str(shell_session.id),
+                                }
+                            )
+                            continue
+                    if message["op"] in REGISTRY_SESSION_OPS:
+                        frame_payload = session_frame_payload(
+                            shell_session,
+                            message["op"],
+                            **registry_frame_fields(message),
+                        )
+                    else:
+                        await connection.enqueue({"op": "error", "message": "Registry message op is invalid"})
+                        continue
+                elif session_type == FILE_BROWSER_SESSION_TYPE and message["op"] in {
                     SESSION_OP_STAT,
                     SESSION_OP_READ_FILE,
                 }:

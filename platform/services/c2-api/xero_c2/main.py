@@ -142,6 +142,8 @@ from xero_c2.schemas import (
     ProtocolInfoResponse,
     ProtocolSecurityEventListResponse,
     ProtocolSecurityEventResponse,
+    RegistrySessionCreateRequest,
+    RegistrySessionResponse,
     SessionResponse,
     ShellSessionCreateRequest,
     ShellSessionResponse,
@@ -164,6 +166,7 @@ from xero_c2.schemas import (
 )
 from xero_c2.sessions import (
     FILE_BROWSER_SESSION_TYPE,
+    REGISTRY_SESSION_TYPE,
     SESSION_OP_CLOSE,
     SESSION_OP_OPEN,
     FileListingCache,
@@ -171,6 +174,7 @@ from xero_c2.sessions import (
     apply_beacon_session_data,
     close_shell_session,
     create_file_browser_session,
+    create_registry_session,
     create_shell_session,
     enqueue_session_data_frame,
     expire_idle_sessions,
@@ -1270,6 +1274,46 @@ def create_app() -> FastAPI:
         session.refresh(file_session)
         await publish_session_event(request.app, settings, "session.opening", file_session)
         return FileBrowserSessionResponse(**public_session(file_session))
+
+    @api_router.post("/sessions/registry", response_model=RegistrySessionResponse, tags=["sessions"])
+    async def open_registry_session(
+        payload: RegistrySessionCreateRequest,
+        request: Request,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> RegistrySessionResponse:
+        claims = authorize_c2_token(settings, authorization)
+        actor_subject = actor_subject_from_claims(claims)
+        try:
+            beacon_id = uuid.UUID(payload.beacon_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="beacon_id must be a UUID",
+            ) from exc
+        beacon = session.get(Beacon, beacon_id)
+        if beacon is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
+        if "windows" not in beacon.os.lower():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Registry sessions require a Windows beacon",
+            )
+        registry_session = create_registry_session(session, beacon=beacon, actor_subject=actor_subject)
+        open_payload = session_frame_payload(
+            registry_session,
+            SESSION_OP_OPEN,
+            session_type=REGISTRY_SESSION_TYPE,
+        )
+        try:
+            await enqueue_session_data_frame(request.app, settings, session, registry_session, open_payload)
+        except HTTPException:
+            session.rollback()
+            raise
+        session.commit()
+        session.refresh(registry_session)
+        await publish_session_event(request.app, settings, "session.opening", registry_session)
+        return RegistrySessionResponse(**public_session(registry_session))
 
     @api_router.get("/sessions/{session_id}", response_model=SessionResponse, tags=["sessions"])
     def get_session(

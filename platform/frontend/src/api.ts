@@ -214,6 +214,25 @@ export interface FileBrowserSessionCreateRequest {
   root_path?: string | null;
 }
 
+export interface RegistrySession {
+  actor_subject: string;
+  beacon_id: string;
+  close_reason: string | null;
+  closed_at: string | null;
+  created_at: string;
+  detached_at: string | null;
+  id: string;
+  last_activity_at: string;
+  opened_at: string;
+  session_type: 'registry';
+  status: SessionStatus;
+  updated_at: string;
+}
+
+export interface RegistrySessionCreateRequest {
+  beacon_id: string;
+}
+
 export interface Task {
   args: Record<string, unknown>;
   beacon_id: string;
@@ -644,6 +663,17 @@ export async function createFileBrowserSession(
   });
 }
 
+export async function createRegistrySession(
+  baseUrl: string,
+  accessToken: string,
+  payload: RegistrySessionCreateRequest,
+): Promise<RegistrySession> {
+  return c2Fetch<RegistrySession>(baseUrl, accessToken, '/api/v1/sessions/registry', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function getShellSession(baseUrl: string, accessToken: string, sessionId: string): Promise<ShellSession> {
   return c2Fetch<ShellSession>(baseUrl, accessToken, `/api/v1/sessions/${sessionId}`);
 }
@@ -660,6 +690,16 @@ export async function closeFileBrowserSession(
   sessionId: string,
 ): Promise<FileBrowserSession> {
   return c2Fetch<FileBrowserSession>(baseUrl, accessToken, `/api/v1/sessions/${sessionId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function closeRegistrySession(
+  baseUrl: string,
+  accessToken: string,
+  sessionId: string,
+): Promise<RegistrySession> {
+  return c2Fetch<RegistrySession>(baseUrl, accessToken, `/api/v1/sessions/${sessionId}`, {
     method: 'DELETE',
   });
 }

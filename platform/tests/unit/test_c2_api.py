@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import threading
 import time
 import uuid
@@ -27,6 +28,8 @@ from xero_c2.models import (
     InteractiveSession,
     ProtocolFrameReceipt,
     ProtocolSecurityEvent,
+    RegistryAuditEvent,
+    RegistryConfirmation,
     ResultChunk,
     Task,
     TaskAuditEvent,
@@ -35,6 +38,11 @@ from xero_c2.models import (
 )
 from xero_c2.protocol import HEARTBEAT, REGISTER, SESSION_DATA, TASK_POLL, TASK_RESULT
 from xero_c2.protocol.codec import public_key_bytes
+from xero_c2.registry_sessions import (
+    consume_registry_confirmation,
+    create_registry_confirmation,
+    parse_registry_request,
+)
 from xero_c2.sessions import (
     DuplicateSessionAttachError,
     FileListingCache,
@@ -1476,6 +1484,64 @@ def test_file_browser_session_open_sends_session_data_to_connected_beacon(protoc
     assert open_frame["root_path"] == "/home"
 
 
+def test_registry_session_open_sends_session_data_to_connected_windows_beacon(protocol_c2_client, monkeypatch):
+    token = connect_c2(protocol_c2_client)
+    registered = register_beacon(protocol_c2_client, os="Windows 11")
+    attach_protocol_metadata(registered["beacon_id"])
+    sent_frames: list[bytes] = []
+
+    async def capture_send(_, frame: bytes) -> bool:
+        sent_frames.append(frame)
+        return True
+
+    monkeypatch.setattr(protocol_c2_client.app.state.beacon_transport_manager, "send_to_beacon", capture_send)
+
+    created = protocol_c2_client.post(
+        "/api/v1/sessions/registry",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"beacon_id": registered["beacon_id"]},
+    )
+    session_payload = created.json()
+    open_frame = decode_protocol_response(sent_frames[0], expected_message_type=SESSION_DATA)
+
+    assert created.status_code == 200
+    assert session_payload["status"] == "opening"
+    assert session_payload["session_type"] == "registry"
+    assert open_frame["op"] == "open"
+    assert open_frame["beacon_id"] == registered["beacon_id"]
+    assert open_frame["session_id"] == session_payload["id"]
+    assert open_frame["session_type"] == "registry"
+
+
+def test_registry_session_rejects_non_windows_beacon(protocol_c2_client):
+    token = connect_c2(protocol_c2_client)
+    registered = register_beacon(protocol_c2_client, os="Ubuntu 24.04")
+    attach_protocol_metadata(registered["beacon_id"])
+
+    response = protocol_c2_client.post(
+        "/api/v1/sessions/registry",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"beacon_id": registered["beacon_id"]},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Registry sessions require a Windows beacon"
+
+
+def test_registry_request_rejects_key_delete_operations():
+    with pytest.raises(ValueError, match="Registry message op is invalid"):
+        parse_registry_request(
+            json.dumps(
+                {
+                    "hive": "HKCU",
+                    "key_path": "",
+                    "op": "reg_delete_key",
+                    "request_id": "delete-root",
+                }
+            )
+        )
+
+
 def test_file_browser_session_data_preserves_request_id_and_cache_payload(c2_client):
     registered = register_beacon(c2_client)
 
@@ -1591,6 +1657,147 @@ def test_file_browser_access_error_keeps_session_open(c2_client):
     assert outcome.operator_message["error_code"] == "access_denied"
     assert outcome.operator_message["request_id"] == "seq-denied"
     assert file_session.status == "open"
+
+
+def test_registry_confirmation_token_is_single_use_and_bound_to_value(c2_client):
+    registered = register_beacon(c2_client)
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        beacon = session.get(Beacon, uuid.UUID(registered["beacon_id"]))
+        assert beacon is not None
+        registry_session = InteractiveSession(
+            actor_subject="operator:test",
+            beacon_id=beacon.id,
+            session_type="registry",
+            shell_type="none",
+            status="open",
+        )
+        session.add(registry_session)
+        session.commit()
+
+        prepare = parse_registry_request(
+            json.dumps(
+                {
+                    "hive": "HKCU",
+                    "key_path": "Software\\XeroTest",
+                    "op": "reg_prepare_write_value",
+                    "request_id": "reg-prepare",
+                    "value": "enabled",
+                    "value_name": "Mode",
+                    "value_type": "REG_SZ",
+                }
+            )
+        )
+        confirm = create_registry_confirmation(
+            session,
+            actor_subject="operator:test",
+            registry_session=registry_session,
+            request=prepare,
+            ttl_seconds=120,
+        )
+        session.commit()
+
+        write = parse_registry_request(
+            json.dumps(
+                {
+                    "confirm_token": confirm["confirm_token"],
+                    "hive": "HKCU",
+                    "key_path": "Software\\XeroTest",
+                    "op": "reg_write_value",
+                    "request_id": "reg-write",
+                    "value": "enabled",
+                    "value_name": "Mode",
+                    "value_type": "REG_SZ",
+                }
+            )
+        )
+        consume_registry_confirmation(
+            session,
+            actor_subject="operator:test",
+            registry_session=registry_session,
+            request=write,
+        )
+        session.commit()
+
+        stored_confirmation = session.execute(select(RegistryConfirmation)).scalar_one()
+        reused = parse_registry_request(
+            json.dumps(
+                {
+                    "confirm_token": confirm["confirm_token"],
+                    "hive": "HKCU",
+                    "key_path": "Software\\XeroTest",
+                    "op": "reg_write_value",
+                    "request_id": "reg-write-again",
+                    "value": "changed",
+                    "value_name": "Mode",
+                    "value_type": "REG_SZ",
+                }
+            )
+        )
+        with pytest.raises(ValueError, match="invalid or expired"):
+            consume_registry_confirmation(
+                session,
+                actor_subject="operator:test",
+                registry_session=registry_session,
+                request=reused,
+            )
+        confirmation_used_at = stored_confirmation.used_at
+        confirmation_digest = stored_confirmation.value_digest
+        confirmation_length = stored_confirmation.value_length
+
+    assert confirm["op"] == "reg_confirm_token"
+    assert confirmation_used_at is not None
+    assert confirmation_digest
+    assert confirmation_length == len("enabled")
+
+
+def test_registry_session_data_records_redacted_modification_audit(c2_client):
+    registered = register_beacon(c2_client)
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        beacon = session.get(Beacon, uuid.UUID(registered["beacon_id"]))
+        assert beacon is not None
+        registry_session = InteractiveSession(
+            actor_subject="operator:test",
+            beacon_id=beacon.id,
+            session_type="registry",
+            shell_type="none",
+            status="open",
+        )
+        session.add(registry_session)
+        session.commit()
+        outcome = apply_beacon_session_data(
+            session,
+            beacon_id=beacon.id,
+            payload={
+                "beacon_id": registered["beacon_id"],
+                "hive": "HKCU",
+                "key_path": "Software\\XeroTest",
+                "ok": True,
+                "op": "reg_write_value",
+                "request_id": "reg-write",
+                "session_id": str(registry_session.id),
+                "session_type": "registry",
+                "value": "secret-value",
+                "value_name": "Mode",
+                "value_type": "REG_SZ",
+            },
+        )
+        session.commit()
+        event = session.execute(select(RegistryAuditEvent)).scalar_one()
+
+    assert outcome.event_type == "session.registry.response.received"
+    assert outcome.operator_message is not None
+    assert outcome.operator_message["op"] == "reg_write_value"
+    assert event.operation == "write_value"
+    assert event.result == "succeeded"
+    assert event.value_digest
+    assert event.value_length == len("secret-value")
+    assert "secret-value" not in repr(event.__dict__)
 
 
 def test_file_browser_request_rejects_traversal_above_root():

@@ -186,7 +186,7 @@ from xero_c2.schemas import (
     ScanResultChunkResponse,
 )
 from xero_c2.modules import list_modules
-from xero_c2.portscan import (
+from xero_c2.scan_jobs import (
     create_scan_job,
     mark_abandoned_scan_jobs,
     public_scan_chunk,
@@ -734,7 +734,7 @@ def create_app() -> FastAPI:
         return ModuleListResponse(items=[ModuleDefinitionResponse(**item) for item in list_modules()])
 
     @api_router.post("/scan-jobs", response_model=ScanJobResponse, tags=["scan-jobs"])
-    async def create_port_scan_job(
+    async def create_scan_job_route(
         payload: ScanJobCreateRequest,
         request: Request,
         session: DbSession,

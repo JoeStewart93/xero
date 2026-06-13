@@ -312,6 +312,7 @@ describe('api client', () => {
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ id: 'builtin.portscan', name: 'Port Scan' }] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(scanJobPayload), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...scanJobPayload, id: 'service-enum-one', module: 'builtin.serviceenum' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ items: [scanJobPayload] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...scanJobPayload, status: 'completed' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ items: [chunkPayload] }), { status: 200 }));
@@ -323,6 +324,12 @@ describe('api client', () => {
       port_range: '80,443',
       targets: ['127.0.0.1'],
       timeout_ms: 1000,
+    });
+    await createScanJob('http://c2.local:8001/', 'c2-token', 'builtin.serviceenum', {
+      host: '127.0.0.1',
+      ports: [80],
+      probe_timeout_ms: 1000,
+      source_scan_job_id: 'scan-one',
     });
     await getScanJobs('http://c2.local:8001/', 'c2-token', { limit: 5, status: 'completed' });
     await getScanJob('http://c2.local:8001/', 'c2-token', 'scan-one');
@@ -341,9 +348,20 @@ describe('api client', () => {
       },
       module: 'builtin.portscan',
     });
-    expect(fetchMock.mock.calls[2][0]).toBe('http://c2.local:8001/api/v1/scan-jobs?status=completed&limit=5');
-    expect(fetchMock.mock.calls[3][0]).toBe('http://c2.local:8001/api/v1/scan-jobs/scan-one');
-    expect(fetchMock.mock.calls[4][0]).toBe('http://c2.local:8001/api/v1/scan-jobs/scan-one/chunks');
+    expect(fetchMock.mock.calls[2][0]).toBe('http://c2.local:8001/api/v1/scan-jobs');
+    expect(JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string)).toEqual({
+      args: {
+        execution_target: 'auto',
+        host: '127.0.0.1',
+        ports: [80],
+        probe_timeout_ms: 1000,
+        source_scan_job_id: 'scan-one',
+      },
+      module: 'builtin.serviceenum',
+    });
+    expect(fetchMock.mock.calls[3][0]).toBe('http://c2.local:8001/api/v1/scan-jobs?status=completed&limit=5');
+    expect(fetchMock.mock.calls[4][0]).toBe('http://c2.local:8001/api/v1/scan-jobs/scan-one');
+    expect(fetchMock.mock.calls[5][0]).toBe('http://c2.local:8001/api/v1/scan-jobs/scan-one/chunks');
   });
 
   it('calls C2 traffic profile endpoints with bearer auth', async () => {

@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import socket
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 import time
 import uuid
@@ -12,6 +13,10 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 from sqlalchemy import select
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 from xero_c2.artifacts import ArtifactNotFound, artifact_store_for_settings
@@ -42,6 +47,7 @@ from xero_c2.models import (
 from xero_c2.protocol import HEARTBEAT, REGISTER, SESSION_DATA, TASK_POLL, TASK_RESULT
 from xero_c2.protocol.codec import public_key_bytes
 from xero_c2.portscan import run_scan_job
+from xero_c2.serviceenum import FINGERPRINT_RULES, enumerate_service, parse_tls_certificate
 from xero_c2.registry_sessions import (
     consume_registry_confirmation,
     create_registry_confirmation,
@@ -483,6 +489,244 @@ def test_portscan_respects_max_threads(c2_client, monkeypatch):
     asyncio.run(run_scan_job(c2_client.app, get_settings(), uuid.UUID(created.json()["id"])))
     assert max_active_probes <= 3
     assert max_active_probes > 1
+
+
+def test_serviceenum_module_registry_and_args_validation(c2_client):
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    modules_response = c2_client.get("/api/v1/modules", headers=headers)
+    assert modules_response.status_code == 200
+    modules = {item["id"]: item for item in modules_response.json()["items"]}
+    assert "builtin.serviceenum" in modules
+    assert modules["builtin.serviceenum"]["execution_kind"] == "scan-job"
+    assert modules["builtin.serviceenum"]["required_capabilities"] == ["service-enumeration"]
+    assert len(FINGERPRINT_RULES) >= 50
+
+    public_target = c2_client.post(
+        "/api/v1/scan-jobs",
+        headers=headers,
+        json={
+            "module": "builtin.serviceenum",
+            "args": {"execution_target": "auto", "host": "8.8.8.8", "ports": [443]},
+        },
+    )
+    external_target = c2_client.post(
+        "/api/v1/scan-jobs",
+        headers=headers,
+        json={
+            "module": "builtin.serviceenum",
+            "args": {"execution_target": "external", "host": "127.0.0.1", "ports": [443]},
+        },
+    )
+    invalid_port = c2_client.post(
+        "/api/v1/scan-jobs",
+        headers=headers,
+        json={
+            "module": "builtin.serviceenum",
+            "args": {"execution_target": "auto", "host": "127.0.0.1", "ports": [70000]},
+        },
+    )
+
+    assert public_target.status_code == 422
+    assert external_target.status_code == 422
+    assert invalid_port.status_code == 422
+
+
+def test_serviceenum_http_banner_and_ssh_fingerprint():
+    class FixtureHandler(BaseHTTPRequestHandler):
+        server_version = "XeroFixture/1.0"
+        sys_version = ""
+
+        def do_HEAD(self):
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *_args):
+            return
+
+    http_server = ThreadingHTTPServer(("127.0.0.1", 0), FixtureHandler)
+    http_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+    http_thread.start()
+
+    ssh_listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    ssh_listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    ssh_listener.bind(("127.0.0.1", 0))
+    ssh_listener.listen(4)
+    ssh_stop = threading.Event()
+
+    def serve_ssh_banner():
+        ssh_listener.settimeout(0.1)
+        while not ssh_stop.is_set():
+            try:
+                connection, _ = ssh_listener.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+            with connection:
+                connection.sendall(b"SSH-2.0-OpenSSH_9.9\r\n")
+
+    ssh_thread = threading.Thread(target=serve_ssh_banner, daemon=True)
+    ssh_thread.start()
+    try:
+        http_result = asyncio.run(enumerate_service("127.0.0.1", http_server.server_port, timeout_ms=500))
+        ssh_result = asyncio.run(enumerate_service("127.0.0.1", ssh_listener.getsockname()[1], timeout_ms=500))
+    finally:
+        http_server.shutdown()
+        http_server.server_close()
+        http_thread.join(timeout=1)
+        ssh_stop.set()
+        ssh_listener.close()
+        ssh_thread.join(timeout=1)
+
+    assert http_result["status"] == "identified"
+    assert http_result["service_guess"] == "http"
+    assert any(item["type"] == "http.server" and "XeroFixture" in item["value"] for item in http_result["evidence"])
+    assert ssh_result["status"] == "identified"
+    assert ssh_result["service_guess"] == "ssh"
+    assert "OpenSSH" in ssh_result["banner"]
+
+
+def test_serviceenum_tls_cert_parse():
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "lab.local")])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(utc_now() - timedelta(minutes=1))
+        .not_valid_after(utc_now() + timedelta(days=14))
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName("lab.local")]), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+
+    parsed = parse_tls_certificate(cert.public_bytes(serialization.Encoding.DER))
+
+    assert parsed["subject_cn"] == "lab.local"
+    assert parsed["issuer_cn"] == "lab.local"
+    assert parsed["sans"] == ["lab.local"]
+    assert parsed["not_after"]
+
+
+def test_serviceenum_closed_port_skipped_without_crash():
+    closed_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    closed_socket.bind(("127.0.0.1", 0))
+    closed_port = closed_socket.getsockname()[1]
+    closed_socket.close()
+
+    result = asyncio.run(enumerate_service("127.0.0.1", closed_port, timeout_ms=200))
+
+    assert result["status"] in {"skipped", "timeout"}
+    assert result["service_guess"] == "unknown"
+    assert result["error"] == "Port did not accept a TCP connection."
+
+
+def test_serviceenum_job_records_results_and_chunks(c2_client, monkeypatch):
+    monkeypatch.setattr("xero_c2.main.schedule_scan_execution", lambda *args, **kwargs: None)
+
+    async def fake_enum(host: str, port: int, *, timeout_ms: int) -> dict:
+        return {
+            "banner": "SSH-2.0-OpenSSH_9.9",
+            "confidence": 0.95,
+            "error": None,
+            "evidence": [{"type": "fingerprint", "value": "SSH protocol banner"}],
+            "host": host,
+            "latency_ms": 1.0,
+            "port": port,
+            "service_guess": "ssh",
+            "status": "identified",
+            "tls": None,
+            "transport": "tcp",
+        }
+
+    monkeypatch.setattr("xero_c2.serviceenum.enumerate_service", fake_enum)
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    source_scan_job_id = str(uuid.uuid4())
+    created = c2_client.post(
+        "/api/v1/scan-jobs",
+        headers=headers,
+        json={
+            "module": "builtin.serviceenum",
+            "args": {
+                "execution_target": "auto",
+                "host": "127.0.0.1",
+                "max_threads": 2,
+                "ports": [22, 2222],
+                "probe_timeout_ms": 500,
+                "source_scan_job_id": source_scan_job_id,
+            },
+        },
+    )
+    assert created.status_code == 200
+    job = created.json()
+    assert job["module"] == "builtin.serviceenum"
+    assert job["progress_total"] == 2
+    assert job["args"]["source_scan_job_id"] == source_scan_job_id
+
+    asyncio.run(run_scan_job(c2_client.app, get_settings(), uuid.UUID(job["id"])))
+    fetched = c2_client.get(f"/api/v1/scan-jobs/{job['id']}", headers=headers)
+    assert fetched.status_code == 200
+    job = fetched.json()
+    assert job["status"] == "completed"
+    assert job["summary"]["identified_count"] == 2
+    assert job["summary"]["source_scan_job_id"] == source_scan_job_id
+    assert {item["service_guess"] for item in job["results"]} == {"ssh"}
+
+    chunks = c2_client.get(f"/api/v1/scan-jobs/{job['id']}/chunks", headers=headers)
+    assert chunks.status_code == 200
+    assert [chunk["kind"] for chunk in chunks.json()["items"]] == ["progress", "summary"]
+
+
+def test_serviceenum_twenty_ports_complete_within_budget(c2_client, monkeypatch):
+    monkeypatch.setattr("xero_c2.main.schedule_scan_execution", lambda *args, **kwargs: None)
+
+    async def fake_enum(host: str, port: int, *, timeout_ms: int) -> dict:
+        return {
+            "banner": f"SSH-2.0-Fixture_{port}",
+            "confidence": 0.95,
+            "error": None,
+            "evidence": [{"type": "fingerprint", "value": "SSH protocol banner"}],
+            "host": host,
+            "latency_ms": 1.0,
+            "port": port,
+            "service_guess": "ssh",
+            "status": "identified",
+            "tls": None,
+            "transport": "tcp",
+        }
+
+    monkeypatch.setattr("xero_c2.serviceenum.enumerate_service", fake_enum)
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    created = c2_client.post(
+        "/api/v1/scan-jobs",
+        headers=headers,
+        json={
+            "module": "builtin.serviceenum",
+            "args": {
+                "execution_target": "auto",
+                "host": "127.0.0.1",
+                "max_threads": 4,
+                "ports": list(range(10_001, 10_021)),
+                "probe_timeout_ms": 500,
+            },
+        },
+    )
+    assert created.status_code == 200
+    started = time.perf_counter()
+    asyncio.run(run_scan_job(c2_client.app, get_settings(), uuid.UUID(created.json()["id"])))
+    elapsed = time.perf_counter() - started
+
+    fetched = c2_client.get(f"/api/v1/scan-jobs/{created.json()['id']}", headers=headers)
+    assert fetched.status_code == 200
+    job = fetched.json()
+    assert job["status"] == "completed"
+    assert job["summary"]["ports_enumerated"] == 20
+    assert job["summary"]["identified_count"] == 20
+    assert elapsed < 30
 
 
 def test_protocol_frame_harness_is_disabled_by_default(c2_client):

@@ -372,6 +372,7 @@ class ModuleDefinitionResponse(BaseModel):
     version: str
     execution_kind: str
     supported_execution_targets: list[str] = Field(default_factory=list)
+    required_capabilities: list[str] = Field(default_factory=list)
     args_schema: dict = Field(default_factory=dict)
     result_schema: dict = Field(default_factory=dict)
     example: dict = Field(default_factory=dict)
@@ -382,7 +383,7 @@ class ModuleListResponse(BaseModel):
 
 
 class ScanJobCreateRequest(BaseModel):
-    module: Literal["builtin.portscan"]
+    module: str = Field(min_length=1, max_length=64)
     args: dict = Field(default_factory=dict)
 
 

@@ -13,6 +13,7 @@ from xero_common.database import session_factory_for_settings
 from xero_common.models import utc_now
 from xero_common.redis_bus import publish_operator_event
 
+from xero_c2.asset_grouping import ACTOR_ASSET_INGESTION, sync_assets_group_memberships
 from xero_c2.assets import ingest_scan_assets
 from xero_c2.infrastructure_workers import WORKER_KIND_SCANNER, WORKER_ORIGIN_EMBEDDED
 from xero_c2.models import InfrastructureWorker, ScanJob, ScanResultChunk
@@ -206,7 +207,13 @@ async def run_scan_job(app: Any, settings, scan_job_id: uuid.UUID) -> None:
             )
             session.add(summary_chunk)
             session.flush()
-            ingest_scan_assets(session, job, summary_chunk)
+            touched_assets = ingest_scan_assets(session, job, summary_chunk)
+            sync_assets_group_memberships(
+                session,
+                touched_assets,
+                actor_subject=ACTOR_ASSET_INGESTION,
+                reason="scan.ingested",
+            )
             session.commit()
             session.refresh(job)
             session.refresh(summary_chunk)

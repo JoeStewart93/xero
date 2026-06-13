@@ -1,8 +1,8 @@
-import { Database, RefreshCw, Search, Server, Wifi } from 'lucide-react';
+import { Database, Layers3, RefreshCw, Search, Server, Wifi } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
-import type { Asset, AssetSource, AssetType } from '../api';
-import { getAsset, getAssets } from '../api';
+import type { Asset, AssetGroup, AssetSource, AssetType } from '../api';
+import { getAsset, getAssetGroups, getAssets } from '../api';
 import { AppShell } from '../components/AppShell';
 import { C2RequiredPanel } from '../components/C2RequiredPanel';
 import { useC2Connection } from '../useC2Connection';
@@ -62,6 +62,22 @@ function metadataValue(value: unknown): string {
   return String(value);
 }
 
+function groupCriterionLabel(group: AssetGroup): string {
+  if (group.criterion_type === 'subnet') {
+    return group.criterion_value ?? 'Subnet';
+  }
+  if (group.criterion_type === 'domain') {
+    return group.criterion_value ?? 'Domain';
+  }
+  if (group.criterion_type === 'workgroup') {
+    return group.criterion_value ? group.criterion_value.toUpperCase() : 'Workgroup';
+  }
+  if (group.criterion_type === 'os') {
+    return group.criterion_value ?? 'OS';
+  }
+  return group.criterion_value ?? group.group_key;
+}
+
 function AssetDetail({ asset, error, isLoading }: { asset: Asset | null; error: string; isLoading: boolean }) {
   if (isLoading) {
     return (
@@ -103,6 +119,7 @@ function AssetDetail({ asset, error, isLoading }: { asset: Asset | null; error: 
   const linkedBeacons = asset.linked_beacons ?? [];
   const relationships = asset.relationships ?? [];
   const observations = asset.observations ?? [];
+  const groups = asset.groups ?? [];
 
   return (
     <aside className="workspace-panel asset-detail-panel" aria-label="Asset detail">
@@ -143,6 +160,22 @@ function AssetDetail({ asset, error, isLoading }: { asset: Asset | null; error: 
           <dd>{asset.role ?? '-'}</dd>
         </div>
       </dl>
+
+      <section className="asset-detail-section" aria-label="Asset groups">
+        <h3>Auto Groups</h3>
+        {groups.length === 0 ? (
+          <p className="muted-text">No groups assigned.</p>
+        ) : (
+          <div className="asset-detail-list">
+            {groups.map((group) => (
+              <div className="asset-detail-row" key={group.id}>
+                <span>{group.criterion_type ?? group.source}</span>
+                <strong>{group.name}</strong>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       <section className="asset-detail-section" aria-label="Identifiers">
         <h3>Identifiers</h3>
@@ -228,9 +261,12 @@ function AssetDetail({ asset, error, isLoading }: { asset: Asset | null; error: 
 export function InventoryPage() {
   const { connection } = useC2Connection();
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [groups, setGroups] = useState<AssetGroup[]>([]);
   const [assetType, setAssetType] = useState<AssetType | 'all'>('all');
   const [detailAsset, setDetailAsset] = useState<Asset | null>(null);
   const [detailError, setDetailError] = useState('');
+  const [groupError, setGroupError] = useState('');
+  const [isGroupsLoading, setIsGroupsLoading] = useState(false);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [listError, setListError] = useState('');
@@ -238,16 +274,65 @@ export function InventoryPage() {
   const [query, setQuery] = useState('');
   const [refreshTick, setRefreshTick] = useState(0);
   const [selectedAssetId, setSelectedAssetId] = useState('');
+  const [selectedGroupId, setSelectedGroupId] = useState('');
   const [source, setSource] = useState<AssetSource | 'all'>('all');
   const [total, setTotal] = useState(0);
   const trimmedQuery = query.trim();
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const currentOffset = page * PAGE_SIZE;
+  const selectedGroup = useMemo(
+    () => groups.find((group) => group.id === selectedGroupId) ?? null,
+    [groups, selectedGroupId],
+  );
   const selectedAsset = useMemo(
     () => assets.find((asset) => asset.id === selectedAssetId) ?? assets[0] ?? null,
     [assets, selectedAssetId],
   );
+
+  useEffect(() => {
+    if (!connection) {
+      queueMicrotask(() => {
+        setGroups([]);
+        setSelectedGroupId('');
+      });
+      return;
+    }
+
+    let ignore = false;
+    queueMicrotask(() => {
+      if (!ignore) {
+        setIsGroupsLoading(true);
+        setGroupError('');
+      }
+    });
+    getAssetGroups(connection.baseUrl, connection.accessToken, { limit: 100, type: 'auto' })
+      .then((payload) => {
+        if (ignore) {
+          return;
+        }
+        setGroups(payload.items);
+        if (selectedGroupId && !payload.items.some((group) => group.id === selectedGroupId)) {
+          setSelectedGroupId('');
+        }
+      })
+      .catch((error: unknown) => {
+        if (!ignore) {
+          setGroups([]);
+          setSelectedGroupId('');
+          setGroupError(error instanceof Error ? error.message : 'Asset groups failed to load.');
+        }
+      })
+      .finally(() => {
+        if (!ignore) {
+          setIsGroupsLoading(false);
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [connection, refreshTick, selectedGroupId]);
 
   useEffect(() => {
     if (!connection) {
@@ -268,6 +353,7 @@ export function InventoryPage() {
       q: trimmedQuery || undefined,
       source,
       type: assetType,
+      groupId: selectedGroupId || undefined,
     })
       .then((payload) => {
         if (ignore) {
@@ -298,7 +384,7 @@ export function InventoryPage() {
     return () => {
       ignore = true;
     };
-  }, [assetType, connection, currentOffset, refreshTick, selectedAssetId, source, trimmedQuery]);
+  }, [assetType, connection, currentOffset, refreshTick, selectedAssetId, selectedGroupId, source, trimmedQuery]);
 
   useEffect(() => {
     if (!connection || !selectedAssetId) {
@@ -351,17 +437,64 @@ export function InventoryPage() {
     setQuery(nextQuery);
   }
 
+  function selectGroup(groupId: string): void {
+    setPage(0);
+    setSelectedAssetId('');
+    setSelectedGroupId(groupId);
+  }
+
   return (
     <AppShell description="Discovered hosts, services, and C2-linked systems" section="assets" title="Assets" wide>
       {!connection ? (
         <C2RequiredPanel />
       ) : (
         <div className="asset-inventory-workspace">
+          <aside className="workspace-panel asset-groups-panel" aria-label="Automatic asset groups">
+            <div className="panel-header">
+              <div>
+                <h2>Auto Groups</h2>
+                <p className="muted-text">{groups.length} active groups</p>
+              </div>
+              <Layers3 aria-hidden="true" size={18} strokeWidth={2.1} />
+            </div>
+            {groupError ? <p className="task-queue-error" role="alert">{groupError}</p> : null}
+            <div className="asset-group-list">
+              <button
+                className={!selectedGroupId ? 'asset-group-button is-selected' : 'asset-group-button'}
+                onClick={() => selectGroup('')}
+                type="button"
+              >
+                <span>
+                  <strong>All assets</strong>
+                  <em>No group filter</em>
+                </span>
+                <b>{total}</b>
+              </button>
+              {isGroupsLoading && groups.length === 0 ? <p className="muted-text">Loading groups.</p> : null}
+              {!isGroupsLoading && groups.length === 0 ? <p className="muted-text">No auto groups yet.</p> : null}
+              {groups.map((group) => (
+                <button
+                  className={group.id === selectedGroupId ? 'asset-group-button is-selected' : 'asset-group-button'}
+                  key={group.id}
+                  onClick={() => selectGroup(group.id)}
+                  type="button"
+                >
+                  <span>
+                    <strong>{group.name}</strong>
+                    <em>{groupCriterionLabel(group)}</em>
+                  </span>
+                  <b>{group.member_count}</b>
+                </button>
+              ))}
+            </div>
+          </aside>
           <section className="workspace-panel asset-list-panel" aria-label="Asset inventory">
             <div className="panel-header">
               <div>
                 <h2>Inventory</h2>
-                <p className="muted-text">{total} assets tracked</p>
+                <p className="muted-text">
+                  {total} assets tracked{selectedGroup ? ` in ${selectedGroup.name}` : ''}
+                </p>
               </div>
               <button className="secondary-button" disabled={isLoading} onClick={() => setRefreshTick((value) => value + 1)} type="button">
                 <RefreshCw aria-hidden="true" size={15} strokeWidth={2.1} />

@@ -12,12 +12,14 @@ const mocks = vi.hoisted(() => ({
 
 const apiMocks = vi.hoisted(() => ({
   getAsset: vi.fn(),
+  getAssetGroups: vi.fn(),
   getAssets: vi.fn(),
 }));
 
 vi.mock('../api', async (importOriginal) => ({
   ...((await importOriginal()) as object),
   getAsset: apiMocks.getAsset,
+  getAssetGroups: apiMocks.getAssetGroups,
   getAssets: apiMocks.getAssets,
 }));
 
@@ -35,6 +37,17 @@ const beaconAsset: Asset = {
   display_name: 'alpha.corp.local',
   domain: 'corp.local',
   first_seen: '2026-06-13T05:00:00Z',
+  groups: [
+    {
+      criterion_type: 'subnet',
+      criterion_value: '10.20.0.0/24',
+      group_key: 'subnet:10.20.0.0/24',
+      id: 'group-subnet',
+      name: 'Subnet 10.20.0.0/24',
+      source: 'auto',
+      type: 'auto',
+    },
+  ],
   hostname: 'alpha.corp.local',
   id: 'asset-alpha',
   identifiers: [
@@ -129,6 +142,28 @@ function renderInventory() {
 describe('InventoryPage', () => {
   beforeEach(() => {
     apiMocks.getAsset.mockResolvedValue(beaconAsset);
+    apiMocks.getAssetGroups.mockResolvedValue({
+      items: [
+        {
+          created_at: '2026-06-13T05:00:00Z',
+          criterion_type: 'subnet',
+          criterion_value: '10.20.0.0/24',
+          description: 'Assets observed inside 10.20.0.0/24',
+          group_key: 'subnet:10.20.0.0/24',
+          id: 'group-subnet',
+          member_count: 2,
+          metadata: { prefix_length: 24 },
+          name: 'Subnet 10.20.0.0/24',
+          parent_id: null,
+          rule_id: 'rule-subnet',
+          type: 'auto',
+          updated_at: '2026-06-13T05:00:00Z',
+        },
+      ],
+      limit: 100,
+      offset: 0,
+      total: 1,
+    });
     apiMocks.getAssets.mockResolvedValue({ items: [beaconAsset, serviceAsset], limit: 25, offset: 0, total: 2 });
     mocks.useAuth.mockReturnValue({
       logout: vi.fn(),
@@ -178,7 +213,9 @@ describe('InventoryPage', () => {
     expect((await screen.findAllByText('alpha.corp.local')).length).toBeGreaterThan(0);
     expect(screen.getByText('ssh on 10.20.0.5:22')).toBeTruthy();
     expect(screen.getByText('2 assets tracked')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Subnet 10.20.0.0\/24/ })).toBeTruthy();
     expect(apiMocks.getAssets).toHaveBeenCalledWith('http://localhost:18001', 'c2-token', {
+      groupId: undefined,
       limit: 25,
       offset: 0,
       q: undefined,
@@ -191,6 +228,7 @@ describe('InventoryPage', () => {
     expect(within(detail).getByText('Windows 11')).toBeTruthy();
     expect(within(detail).getByText('beacon-one')).toBeTruthy();
     expect(within(detail).getByText('beacon.registered')).toBeTruthy();
+    expect(within(detail).getByText('Subnet 10.20.0.0/24')).toBeTruthy();
   });
 
   it('filters by search, type, and source', async () => {
@@ -203,11 +241,29 @@ describe('InventoryPage', () => {
 
     await waitFor(() => {
       expect(apiMocks.getAssets).toHaveBeenLastCalledWith('http://localhost:18001', 'c2-token', {
+        groupId: undefined,
         limit: 25,
         offset: 0,
         q: 'ssh',
         source: 'scan',
         type: 'service',
+      });
+    });
+  });
+
+  it('filters assets by selected automatic group', async () => {
+    renderInventory();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Subnet 10.20.0.0\/24/ }));
+
+    await waitFor(() => {
+      expect(apiMocks.getAssets).toHaveBeenLastCalledWith('http://localhost:18001', 'c2-token', {
+        groupId: 'group-subnet',
+        limit: 25,
+        offset: 0,
+        q: undefined,
+        source: 'all',
+        type: 'all',
       });
     });
   });

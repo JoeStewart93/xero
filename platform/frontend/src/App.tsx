@@ -5,6 +5,7 @@ import { HealthPage } from './pages/HealthPage';
 import { BeaconsDeployPage } from './pages/BeaconsDeployPage';
 import { BeaconsPage } from './pages/BeaconsPage';
 import { C2SettingsPage } from './pages/C2SettingsPage';
+import { GroupingRulesPage } from './pages/GroupingRulesPage';
 import { HomePage } from './pages/HomePage';
 import { InventoryPage } from './pages/InventoryPage';
 import { LoginPage } from './pages/LoginPage';
@@ -408,6 +409,14 @@ export function App() {
         element={
           <ProtectedRoute>
             <TrafficProfilesPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/grouping"
+        element={
+          <ProtectedRoute>
+            <GroupingRulesPage />
           </ProtectedRoute>
         }
       />

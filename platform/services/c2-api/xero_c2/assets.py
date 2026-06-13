@@ -8,9 +8,11 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from xero_common.models import utc_now
 
+from xero_c2.asset_grouping import asset_group_summaries
 from xero_c2.models import (
     Asset,
     AssetBeaconLink,
+    AssetGroupMembership,
     AssetIdentifier,
     AssetObservation,
     AssetRelationship,
@@ -549,6 +551,7 @@ def public_asset(asset: Asset, session: Session, *, include_detail: bool = False
             "linked_beacons": [_public_beacon_link(session, link) for link in links],
             "relationships": [_public_relationship(session, relationship, asset.id) for relationship in relationships],
             "observations": [_public_observation(observation) for observation in observations],
+            "groups": asset_group_summaries(session, asset.id),
         }
     )
     return payload
@@ -559,6 +562,7 @@ def list_asset_payloads(
     *,
     asset_type: str | None = None,
     source: str | None = None,
+    group_id: uuid.UUID | None = None,
     q: str | None = None,
     limit: int = 50,
     offset: int = 0,
@@ -568,6 +572,9 @@ def list_asset_payloads(
         filters.append(Asset.asset_type == asset_type)
     if source:
         filters.append(Asset.source == source)
+    if group_id:
+        group_assets = select(AssetGroupMembership.asset_id).where(AssetGroupMembership.group_id == group_id)
+        filters.append(Asset.id.in_(group_assets))
     if q:
         normalized_query = q.strip()
         if normalized_query:

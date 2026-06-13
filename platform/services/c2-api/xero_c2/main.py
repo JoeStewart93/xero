@@ -28,6 +28,14 @@ from xero_common.security import (
 )
 
 from xero_c2.artifacts import ArtifactNotFound, ArtifactStorageError, artifact_store_for_settings, read_artifact
+from xero_c2.asset_grouping import (
+    ACTOR_ASSET_INGESTION,
+    list_group_payloads,
+    list_grouping_rule_payloads,
+    rerun_grouping,
+    sync_asset_group_memberships,
+    update_grouping_rules,
+)
 from xero_c2.assets import get_asset_payload, list_asset_payloads, upsert_beacon_asset
 from xero_c2.beacon_auth import beacon_auth_exception, bearer_token
 from xero_c2.beacon_builds import (
@@ -145,6 +153,8 @@ from xero_c2.scan_jobs import (
     run_scan_job,
 )
 from xero_c2.schemas import (
+    AssetGroupListResponse,
+    AssetGroupResponse,
     AssetListResponse,
     AssetResponse,
     AssetSource,
@@ -172,6 +182,11 @@ from xero_c2.schemas import (
     FileTransferChunkUploadRequest,
     FileTransferCreateRequest,
     FileTransferResponse,
+    GroupingRerunRequest,
+    GroupingRerunResponse,
+    GroupingRuleListResponse,
+    GroupingRuleResponse,
+    GroupingRulesUpdateRequest,
     InfrastructureWorkerListResponse,
     InfrastructureWorkerResponse,
     ModuleDefinitionResponse,
@@ -941,12 +956,78 @@ def create_app() -> FastAPI:
         authorize_c2_token(settings, authorization)
         return ModuleListResponse(items=[ModuleDefinitionResponse(**item) for item in list_modules()])
 
+    @api_router.get("/grouping/rules", response_model=GroupingRuleListResponse, tags=["asset-grouping"])
+    def list_grouping_rules(
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> GroupingRuleListResponse:
+        authorize_c2_token(settings, authorization)
+        rules = list_grouping_rule_payloads(session)
+        session.commit()
+        return GroupingRuleListResponse(items=[GroupingRuleResponse(**rule) for rule in rules])
+
+    @api_router.put("/grouping/rules", response_model=GroupingRuleListResponse, tags=["asset-grouping"])
+    def update_grouping_rules_route(
+        payload: GroupingRulesUpdateRequest,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> GroupingRuleListResponse:
+        claims = authorize_c2_token(settings, authorization)
+        actor_subject = actor_subject_from_claims(claims)
+        try:
+            update_grouping_rules(
+                session,
+                [rule.model_dump(exclude_none=True) for rule in payload.rules],
+                actor_subject=actor_subject,
+                purge_disabled=payload.purge_disabled,
+                rerun=payload.rerun,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        rules = list_grouping_rule_payloads(session)
+        session.commit()
+        return GroupingRuleListResponse(items=[GroupingRuleResponse(**rule) for rule in rules])
+
+    @api_router.post("/grouping/rerun", response_model=GroupingRerunResponse, tags=["asset-grouping"])
+    def rerun_grouping_route(
+        payload: GroupingRerunRequest,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> GroupingRerunResponse:
+        claims = authorize_c2_token(settings, authorization)
+        summary = rerun_grouping(
+            session,
+            actor_subject=actor_subject_from_claims(claims),
+            purge_disabled=payload.purge_disabled,
+        )
+        session.commit()
+        return GroupingRerunResponse(**summary, purge_disabled=payload.purge_disabled)
+
+    @api_router.get("/groups", response_model=AssetGroupListResponse, tags=["asset-grouping"])
+    def list_asset_groups(
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+        group_type: Annotated[str | None, Query(alias="type", max_length=32)] = "auto",
+        q: Annotated[str | None, Query(max_length=255)] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ) -> AssetGroupListResponse:
+        authorize_c2_token(settings, authorization)
+        items, total = list_group_payloads(session, group_type=group_type, q=q, limit=limit, offset=offset)
+        return AssetGroupListResponse(
+            items=[AssetGroupResponse(**item) for item in items],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
     @api_router.get("/assets", response_model=AssetListResponse, tags=["assets"])
     def list_assets(
         session: DbSession,
         authorization: Annotated[str | None, Header()] = None,
         asset_type: Annotated[AssetType | None, Query(alias="type")] = None,
         source: AssetSource | None = None,
+        group_id: uuid.UUID | None = None,
         q: Annotated[str | None, Query(max_length=255)] = None,
         limit: Annotated[int, Query(ge=1, le=100)] = 50,
         offset: Annotated[int, Query(ge=0)] = 0,
@@ -956,6 +1037,7 @@ def create_app() -> FastAPI:
             session,
             asset_type=asset_type,
             source=source,
+            group_id=group_id,
             q=q,
             limit=limit,
             offset=offset,
@@ -2446,7 +2528,8 @@ def create_app() -> FastAPI:
 
         session.add(beacon)
         session.flush()
-        upsert_beacon_asset(session, beacon)
+        asset = upsert_beacon_asset(session, beacon)
+        sync_asset_group_memberships(session, asset, actor_subject=ACTOR_ASSET_INGESTION, reason="beacon.registered")
         profile_fields = profile_ack_fields(session, settings, beacon)
         session.commit()
         session.refresh(beacon)
@@ -2521,7 +2604,8 @@ def create_app() -> FastAPI:
         )
         session.add(beacon)
         session.flush()
-        upsert_beacon_asset(session, beacon)
+        asset = upsert_beacon_asset(session, beacon)
+        sync_asset_group_memberships(session, asset, actor_subject=ACTOR_ASSET_INGESTION, reason="beacon.heartbeat")
         profile_fields = profile_ack_fields(session, settings, beacon)
         session.commit()
         session.refresh(beacon)

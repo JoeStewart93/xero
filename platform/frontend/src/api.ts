@@ -573,12 +573,78 @@ export interface AssetObservation {
   source: AssetSource | string;
 }
 
+export type AssetGroupType = 'auto' | 'manual';
+export type GroupingRuleKey = 'domain' | 'os' | 'subnet';
+
+export interface AssetGroupSummary {
+  criterion_type: string | null;
+  criterion_value: string | null;
+  group_key: string;
+  id: string;
+  name: string;
+  source: AssetGroupType | string;
+  type: AssetGroupType | string;
+}
+
+export interface AssetGroup {
+  created_at: string;
+  criterion_type: string | null;
+  criterion_value: string | null;
+  description: string | null;
+  group_key: string;
+  id: string;
+  member_count: number;
+  metadata: Record<string, unknown>;
+  name: string;
+  parent_id: string | null;
+  rule_id: string | null;
+  type: AssetGroupType | string;
+  updated_at: string;
+}
+
+export interface AssetGroupListResponse {
+  items: AssetGroup[];
+  limit: number;
+  offset: number;
+  total: number;
+}
+
+export interface GroupingRule {
+  config: Record<string, unknown>;
+  created_at: string;
+  enabled: boolean;
+  id: string;
+  rule_key: GroupingRuleKey;
+  updated_at: string;
+  updated_by: string | null;
+  version: number;
+}
+
+export interface GroupingRuleListResponse {
+  items: GroupingRule[];
+}
+
+export interface GroupingRuleUpdate {
+  config?: Record<string, unknown>;
+  enabled?: boolean;
+  rule_key: GroupingRuleKey;
+}
+
+export interface GroupingRerunResponse {
+  added: number;
+  assets_processed: number;
+  purge_disabled: boolean;
+  removed: number;
+  touched: number;
+}
+
 export interface Asset {
   asset_type: AssetType;
   created_at: string;
   display_name: string;
   domain: string | null;
   first_seen: string;
+  groups?: AssetGroupSummary[];
   hostname: string | null;
   id: string;
   identifiers?: AssetIdentifier[];
@@ -602,6 +668,7 @@ export interface AssetListResponse {
 }
 
 export interface AssetListOptions {
+  groupId?: string;
   limit?: number;
   offset?: number;
   q?: string;
@@ -1180,6 +1247,9 @@ export async function getAssets(
   if (options.source && options.source !== 'all') {
     params.set('source', options.source);
   }
+  if (options.groupId) {
+    params.set('group_id', options.groupId);
+  }
   if (options.q) {
     params.set('q', options.q);
   }
@@ -1195,6 +1265,59 @@ export async function getAssets(
 
 export async function getAsset(baseUrl: string, accessToken: string, assetId: string): Promise<Asset> {
   return c2Fetch<Asset>(baseUrl, accessToken, `/api/v1/assets/${assetId}`);
+}
+
+export async function getAssetGroups(
+  baseUrl: string,
+  accessToken: string,
+  options: { limit?: number; offset?: number; q?: string; type?: AssetGroupType | 'all' } = {},
+): Promise<AssetGroupListResponse> {
+  const params = new URLSearchParams();
+  if (options.type && options.type !== 'all') {
+    params.set('type', options.type);
+  }
+  if (options.q) {
+    params.set('q', options.q);
+  }
+  if (typeof options.limit === 'number') {
+    params.set('limit', String(options.limit));
+  }
+  if (typeof options.offset === 'number') {
+    params.set('offset', String(options.offset));
+  }
+  const query = params.toString();
+  return c2Fetch<AssetGroupListResponse>(baseUrl, accessToken, `/api/v1/groups${query ? `?${query}` : ''}`);
+}
+
+export async function getGroupingRules(baseUrl: string, accessToken: string): Promise<GroupingRuleListResponse> {
+  return c2Fetch<GroupingRuleListResponse>(baseUrl, accessToken, '/api/v1/grouping/rules');
+}
+
+export async function updateGroupingRules(
+  baseUrl: string,
+  accessToken: string,
+  rules: GroupingRuleUpdate[],
+  options: { purgeDisabled?: boolean; rerun?: boolean } = {},
+): Promise<GroupingRuleListResponse> {
+  return c2Fetch<GroupingRuleListResponse>(baseUrl, accessToken, '/api/v1/grouping/rules', {
+    method: 'PUT',
+    body: JSON.stringify({
+      purge_disabled: options.purgeDisabled ?? false,
+      rerun: options.rerun ?? true,
+      rules,
+    }),
+  });
+}
+
+export async function rerunGrouping(
+  baseUrl: string,
+  accessToken: string,
+  options: { purgeDisabled?: boolean } = {},
+): Promise<GroupingRerunResponse> {
+  return c2Fetch<GroupingRerunResponse>(baseUrl, accessToken, '/api/v1/grouping/rerun', {
+    method: 'POST',
+    body: JSON.stringify({ purge_disabled: options.purgeDisabled ?? false }),
+  });
 }
 
 export async function createScanJob(baseUrl: string, accessToken: string, args: PortScanArgs): Promise<ScanJob>;

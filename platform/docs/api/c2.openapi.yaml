@@ -196,6 +196,165 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/grouping/rules:
+    get:
+      tags:
+      - asset-grouping
+      summary: List Grouping Rules
+      operationId: list_grouping_rules_api_v1_grouping_rules_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupingRuleListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - asset-grouping
+      summary: Update Grouping Rules Route
+      operationId: update_grouping_rules_route_api_v1_grouping_rules_put
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupingRulesUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupingRuleListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/grouping/rerun:
+    post:
+      tags:
+      - asset-grouping
+      summary: Rerun Grouping Route
+      operationId: rerun_grouping_route_api_v1_grouping_rerun_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupingRerunRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupingRerunResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/groups:
+    get:
+      tags:
+      - asset-grouping
+      summary: List Asset Groups
+      operationId: list_asset_groups_api_v1_groups_get
+      parameters:
+      - name: type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 32
+          - type: 'null'
+          default: auto
+          title: Type
+      - name: q
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 255
+          - type: 'null'
+          title: Q
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetGroupListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/assets:
     get:
       tags:
@@ -226,6 +385,15 @@ paths:
             type: string
           - type: 'null'
           title: Source
+      - name: group_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Group Id
       - name: q
         in: query
         required: false
@@ -2396,6 +2564,142 @@ components:
       - first_seen
       - last_seen
       title: AssetBeaconLinkResponse
+    AssetGroupListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/AssetGroupResponse'
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        limit:
+          type: integer
+          title: Limit
+        offset:
+          type: integer
+          title: Offset
+      type: object
+      required:
+      - total
+      - limit
+      - offset
+      title: AssetGroupListResponse
+    AssetGroupResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        group_key:
+          type: string
+          title: Group Key
+        name:
+          type: string
+          title: Name
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        type:
+          anyOf:
+          - type: string
+            enum:
+            - auto
+            - manual
+          - type: string
+          title: Type
+        rule_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rule Id
+        criterion_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Criterion Type
+        criterion_value:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Criterion Value
+        parent_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parent Id
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+        member_count:
+          type: integer
+          title: Member Count
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - group_key
+      - name
+      - type
+      - member_count
+      - created_at
+      - updated_at
+      title: AssetGroupResponse
+    AssetGroupSummaryResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        group_key:
+          type: string
+          title: Group Key
+        name:
+          type: string
+          title: Name
+        type:
+          anyOf:
+          - type: string
+            enum:
+            - auto
+            - manual
+          - type: string
+          title: Type
+        criterion_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Criterion Type
+        criterion_value:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Criterion Value
+        source:
+          anyOf:
+          - type: string
+            enum:
+            - auto
+            - manual
+          - type: string
+          title: Source
+      type: object
+      required:
+      - id
+      - group_key
+      - name
+      - type
+      - source
+      title: AssetGroupSummaryResponse
     AssetIdentifierResponse:
       properties:
         id:
@@ -2653,6 +2957,11 @@ components:
             $ref: '#/components/schemas/AssetObservationResponse'
           type: array
           title: Observations
+        groups:
+          items:
+            $ref: '#/components/schemas/AssetGroupSummaryResponse'
+          type: array
+          title: Groups
       type: object
       required:
       - id
@@ -3656,6 +3965,136 @@ components:
       - created_at
       - updated_at
       title: FileTransferResponse
+    GroupingRerunRequest:
+      properties:
+        purge_disabled:
+          type: boolean
+          title: Purge Disabled
+          default: false
+      type: object
+      title: GroupingRerunRequest
+    GroupingRerunResponse:
+      properties:
+        added:
+          type: integer
+          title: Added
+        assets_processed:
+          type: integer
+          title: Assets Processed
+        purge_disabled:
+          type: boolean
+          title: Purge Disabled
+          default: false
+        removed:
+          type: integer
+          title: Removed
+        touched:
+          type: integer
+          title: Touched
+      type: object
+      required:
+      - added
+      - assets_processed
+      - removed
+      - touched
+      title: GroupingRerunResponse
+    GroupingRuleListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/GroupingRuleResponse'
+          type: array
+          title: Items
+      type: object
+      title: GroupingRuleListResponse
+    GroupingRuleResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        rule_key:
+          type: string
+          enum:
+          - domain
+          - os
+          - subnet
+          title: Rule Key
+        enabled:
+          type: boolean
+          title: Enabled
+        config:
+          additionalProperties: true
+          type: object
+          title: Config
+        version:
+          type: integer
+          title: Version
+        updated_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Updated By
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - rule_key
+      - enabled
+      - version
+      - created_at
+      - updated_at
+      title: GroupingRuleResponse
+    GroupingRuleUpdate:
+      properties:
+        rule_key:
+          type: string
+          enum:
+          - domain
+          - os
+          - subnet
+          title: Rule Key
+        enabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Enabled
+        config:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Config
+      type: object
+      required:
+      - rule_key
+      title: GroupingRuleUpdate
+    GroupingRulesUpdateRequest:
+      properties:
+        rules:
+          items:
+            $ref: '#/components/schemas/GroupingRuleUpdate'
+          type: array
+          minItems: 1
+          title: Rules
+        purge_disabled:
+          type: boolean
+          title: Purge Disabled
+          default: false
+        rerun:
+          type: boolean
+          title: Rerun
+          default: true
+      type: object
+      required:
+      - rules
+      title: GroupingRulesUpdateRequest
     HTTPValidationError:
       properties:
         detail:

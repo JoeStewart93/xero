@@ -25,6 +25,7 @@ import {
   downloadTaskResultArtifact,
   downloadTaskResultText,
   getAsset,
+  getAssetGroups,
   getAssets,
   getBeaconBuilds,
   getBeaconBuildTargets,
@@ -33,6 +34,7 @@ import {
   getC2Beacon,
   getCurrentOperator,
   getDashboardSummary,
+  getGroupingRules,
   getModules,
   getProtocolInfo,
   getProtocolSecurityEvents,
@@ -52,7 +54,9 @@ import {
   launchInfrastructureWorker,
   loginOperator,
   rollbackTrafficProfile,
+  rerunGrouping,
   shellSessionWebSocketUrl,
+  updateGroupingRules,
   updateTrafficProfile,
 } from './api';
 import type {
@@ -343,6 +347,7 @@ describe('api client', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await getAssets('http://c2.local:8001/', 'c2-token', {
+      groupId: 'group-one',
       limit: 25,
       offset: 0,
       q: 'alpha',
@@ -352,10 +357,50 @@ describe('api client', () => {
     await getAsset('http://c2.local:8001/', 'c2-token', 'asset-one');
 
     expect(fetchMock.mock.calls[0][0]).toBe(
-      'http://c2.local:8001/api/v1/assets?type=beacon_host&source=beacon&q=alpha&limit=25&offset=0',
+      'http://c2.local:8001/api/v1/assets?type=beacon_host&source=beacon&group_id=group-one&q=alpha&limit=25&offset=0',
     );
     expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
     expect(fetchMock.mock.calls[1][0]).toBe('http://c2.local:8001/api/v1/assets/asset-one');
+  });
+
+  it('calls C2 asset grouping endpoints with bearer auth', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], limit: 100, offset: 0, total: 0 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [] }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ added: 1, assets_processed: 2, purge_disabled: false, removed: 0, touched: 1 }), {
+          status: 200,
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getAssetGroups('http://c2.local:8001/', 'c2-token', { limit: 100, q: 'corp', type: 'auto' });
+    await getGroupingRules('http://c2.local:8001/', 'c2-token');
+    await updateGroupingRules(
+      'http://c2.local:8001/',
+      'c2-token',
+      [{ config: { prefix_length: 16 }, rule_key: 'subnet' }],
+      { rerun: true },
+    );
+    await rerunGrouping('http://c2.local:8001/', 'c2-token');
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://c2.local:8001/api/v1/groups?type=auto&q=corp&limit=100');
+    expect(fetchMock.mock.calls[1][0]).toBe('http://c2.local:8001/api/v1/grouping/rules');
+    expect(fetchMock.mock.calls[2][0]).toBe('http://c2.local:8001/api/v1/grouping/rules');
+    expect(fetchMock.mock.calls[2][1]).toMatchObject({
+      method: 'PUT',
+    });
+    expect(fetchMock.mock.calls[2][1]?.body).toBe(
+      JSON.stringify({
+        purge_disabled: false,
+        rerun: true,
+        rules: [{ config: { prefix_length: 16 }, rule_key: 'subnet' }],
+      }),
+    );
+    expect(fetchMock.mock.calls[3][0]).toBe('http://c2.local:8001/api/v1/grouping/rerun');
+    expect(fetchMock.mock.calls[3][1]?.body).toBe(JSON.stringify({ purge_disabled: false }));
   });
 
   it('calls C2 module and scan job endpoints with bearer auth', async () => {

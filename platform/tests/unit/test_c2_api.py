@@ -29,6 +29,8 @@ from xero_c2.models import (
     Artifact,
     Asset,
     AssetBeaconLink,
+    AssetGroupingEvent,
+    AssetGroupMembership,
     AssetIdentifier,
     AssetObservation,
     AssetRelationship,
@@ -551,6 +553,143 @@ def test_asset_search_handles_1000_assets_under_budget(c2_client):
     assert response.json()["total"] == 1
     assert response.json()["items"][0]["display_name"] == "seed-host-0999"
     assert elapsed < 0.2
+
+
+def test_subnet_grouping_rule(c2_client):
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    register_beacon(c2_client, hostname="subnet-one.corp.local", internal_ip="10.31.7.10")
+    register_beacon(c2_client, hostname="subnet-two.corp.local", internal_ip="10.31.7.22")
+
+    groups = c2_client.get("/api/v1/groups?type=auto&q=10.31.7.0/24", headers=headers)
+    assert groups.status_code == 200
+    payload = groups.json()
+    assert payload["total"] == 1
+    subnet_group = payload["items"][0]
+    assert subnet_group["group_key"] == "subnet:10.31.7.0/24"
+    assert subnet_group["member_count"] == 2
+
+    filtered_assets = c2_client.get(f"/api/v1/assets?group_id={subnet_group['id']}", headers=headers)
+    assert filtered_assets.status_code == 200
+    assert filtered_assets.json()["total"] == 2
+
+
+def test_domain_grouping_rule(c2_client):
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    register_beacon(c2_client, hostname="domain-one.corp.local", internal_ip="10.32.0.10")
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    now = utc_now()
+    with SessionFactory() as session:
+        session.add(
+            Asset(
+                asset_type="discovered_host",
+                source="scan",
+                dedup_key="host:ip:10.32.0.20",
+                display_name="workgroup-one",
+                primary_ip="10.32.0.20",
+                first_seen=now,
+                last_seen=now,
+                asset_metadata={"workgroup": "LAB"},
+            )
+        )
+        session.commit()
+
+    rerun = c2_client.post("/api/v1/grouping/rerun", headers=headers, json={})
+    domain_groups = c2_client.get("/api/v1/groups?type=auto&q=corp.local", headers=headers)
+    workgroup_groups = c2_client.get("/api/v1/groups?type=auto&q=LAB", headers=headers)
+
+    assert rerun.status_code == 200
+    assert domain_groups.json()["items"][0]["group_key"] == "domain:corp.local"
+    assert domain_groups.json()["items"][0]["member_count"] == 1
+    assert workgroup_groups.json()["items"][0]["group_key"] == "workgroup:lab"
+    assert workgroup_groups.json()["items"][0]["member_count"] == 1
+
+
+def test_os_version_grouping_rule(c2_client):
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    register_beacon(c2_client, hostname="win.corp.local", internal_ip="10.33.0.10", os="Windows 11")
+    register_beacon(c2_client, hostname="ubuntu.corp.local", internal_ip="10.33.0.11", os="Ubuntu 24.04")
+
+    windows_group = c2_client.get("/api/v1/groups?type=auto&q=Windows 11", headers=headers)
+    ubuntu_group = c2_client.get("/api/v1/groups?type=auto&q=Ubuntu 24", headers=headers)
+
+    assert windows_group.status_code == 200
+    assert windows_group.json()["items"][0]["group_key"] == "os:windows:11"
+    assert windows_group.json()["items"][0]["member_count"] == 1
+    assert ubuntu_group.json()["items"][0]["group_key"] == "os:ubuntu:24"
+    assert ubuntu_group.json()["items"][0]["member_count"] == 1
+
+
+def test_multi_group_membership(c2_client):
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    register_beacon(
+        c2_client,
+        hostname="multi.corp.local",
+        internal_ip="10.34.0.10",
+        machine_fingerprint_hash="multi-group-fingerprint",
+        os="Windows Server 2019",
+    )
+    listed = c2_client.get("/api/v1/assets?q=multi.corp.local", headers=headers).json()
+    asset_id = listed["items"][0]["id"]
+    detail = c2_client.get(f"/api/v1/assets/{asset_id}", headers=headers)
+
+    assert detail.status_code == 200
+    group_keys = {group["group_key"] for group in detail.json()["groups"]}
+    assert {"subnet:10.34.0.0/24", "domain:corp.local", "os:windows:2019"}.issubset(group_keys)
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        memberships = session.execute(select(AssetGroupMembership)).scalars().all()
+        assert len(memberships) == len({(membership.asset_id, membership.group_id) for membership in memberships})
+        assert session.execute(select(AssetGroupingEvent)).scalars().all()
+
+
+def test_rule_disable_stops_new_assignments(c2_client):
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    register_beacon(c2_client, hostname="first.corp.local", internal_ip="10.35.0.10", os="Windows 11")
+
+    disabled = c2_client.put(
+        "/api/v1/grouping/rules",
+        headers=headers,
+        json={"rerun": False, "rules": [{"rule_key": "os", "enabled": False}]},
+    )
+    register_beacon(c2_client, hostname="second.corp.local", internal_ip="10.35.0.11", os="Windows 11")
+    retained = c2_client.get("/api/v1/groups?type=auto&q=Windows 11", headers=headers).json()["items"][0]
+    purged = c2_client.post("/api/v1/grouping/rerun", headers=headers, json={"purge_disabled": True})
+
+    assert disabled.status_code == 200
+    rule_states = {rule["rule_key"]: rule for rule in disabled.json()["items"]}
+    assert rule_states["os"]["enabled"] is False
+    assert retained["member_count"] == 1
+    assert purged.status_code == 200
+    assert purged.json()["removed"] == 1
+
+
+def test_subnet_rule_prefix_change_reruns_memberships(c2_client):
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    register_beacon(c2_client, hostname="prefix-one.corp.local", internal_ip="10.36.1.10")
+    register_beacon(c2_client, hostname="prefix-two.corp.local", internal_ip="10.36.2.10")
+
+    updated = c2_client.put(
+        "/api/v1/grouping/rules",
+        headers=headers,
+        json={"rules": [{"rule_key": "subnet", "config": {"prefix_length": 16}}]},
+    )
+    merged_group = c2_client.get("/api/v1/groups?type=auto&q=10.36.0.0/16", headers=headers)
+
+    assert updated.status_code == 200
+    subnet_rule = {rule["rule_key"]: rule for rule in updated.json()["items"]}["subnet"]
+    assert subnet_rule["config"]["prefix_length"] == 16
+    assert subnet_rule["version"] == 2
+    assert merged_group.status_code == 200
+    assert merged_group.json()["items"][0]["member_count"] == 2
 
 
 def test_portscan_args_validation_rejects_public_and_non_auto_targets(c2_client):

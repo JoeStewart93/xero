@@ -5080,14 +5080,80 @@ h2 {
 
 .asset-inventory-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) minmax(340px, 420px);
   align-items: start;
   gap: 14px;
 }
 
+.asset-groups-panel,
 .asset-list-panel,
 .asset-detail-panel {
   min-width: 0;
+}
+
+.asset-group-list {
+  display: grid;
+  gap: 7px;
+}
+
+.asset-group-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-height: 54px;
+  border: 1px solid rgba(0, 231, 255, 0.1);
+  border-radius: 6px;
+  padding: 8px 9px;
+  background: rgba(1, 5, 9, 0.36);
+  color: var(--xero-text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease;
+}
+
+.asset-group-button:hover,
+.asset-group-button.is-selected {
+  border-color: rgba(0, 231, 255, 0.28);
+  background: rgba(0, 231, 255, 0.08);
+}
+
+.asset-group-button span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.asset-group-button strong {
+  overflow-wrap: anywhere;
+  color: var(--xero-text);
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 16px;
+}
+
+.asset-group-button em {
+  overflow-wrap: anywhere;
+  color: var(--xero-muted);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 15px;
+}
+
+.asset-group-button b {
+  min-width: 28px;
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: rgba(0, 231, 255, 0.1);
+  color: var(--xero-text);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  font-weight: 760;
+  line-height: 14px;
+  text-align: center;
 }
 
 .asset-filter-bar {
@@ -5331,6 +5397,100 @@ h2 {
   font-size: 12px;
   font-weight: 620;
   line-height: 16px;
+}
+
+.grouping-rules-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.72fr);
+  align-items: start;
+  gap: 14px;
+}
+
+.grouping-rules-overview {
+  grid-column: 1 / -1;
+}
+
+.grouping-rules-panel {
+  min-width: 0;
+}
+
+.grouping-rule-list {
+  display: grid;
+  gap: 8px;
+}
+
+.grouping-rule-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid rgba(0, 231, 255, 0.1);
+  border-radius: 6px;
+  padding: 9px;
+  background: rgba(1, 5, 9, 0.34);
+}
+
+.grouping-rule-main {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.grouping-rule-main svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--xero-primary);
+}
+
+.grouping-rule-main span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.grouping-rule-main strong {
+  color: var(--xero-text);
+  font-size: 13px;
+  font-weight: 760;
+  line-height: 18px;
+}
+
+.grouping-rule-main em {
+  overflow-wrap: anywhere;
+  color: var(--xero-muted);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 16px;
+}
+
+.grouping-prefix-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.grouping-prefix-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--xero-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
+}
+
+.grouping-prefix-form input {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  border: 1px solid rgba(0, 231, 255, 0.14);
+  border-radius: 5px;
+  outline: 0;
+  padding: 0 10px;
+  background: rgba(1, 5, 9, 0.62);
+  color: var(--xero-text);
 }
 
 .module-card-grid {
@@ -5990,6 +6150,7 @@ h2 {
   .settings-grid,
   .infrastructure-grid,
   .asset-inventory-workspace,
+  .grouping-rules-layout,
   .traffic-profile-layout,
   .protocol-observability-grid,
   .stub-workspace-grid {
@@ -6113,6 +6274,7 @@ h2 {
   }
 
   .asset-inventory-workspace,
+  .grouping-rules-layout,
   .module-inventory-workspace {
     grid-template-columns: 1fr;
   }
@@ -6212,6 +6374,8 @@ h2 {
   .asset-inventory-workspace,
   .asset-filter-bar,
   .asset-detail-grid,
+  .grouping-prefix-form,
+  .grouping-rule-row,
   .module-inventory-workspace,
   .module-catalog-toolbar {
     grid-template-columns: 1fr;

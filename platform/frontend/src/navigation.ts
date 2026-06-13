@@ -222,6 +222,7 @@ export const sectionDefinitions: Record<ShellSection, SectionDefinition> = {
       tab('connection', 'Connection', '/settings', Settings),
       tab('infrastructure', 'Infrastructure', '/settings/infrastructure', RadioTower, true),
       tab('profiles', 'Profiles', '/settings/profiles', Cable),
+      tab('grouping', 'Grouping', '/settings/grouping', Layers3, true),
       tab('api-keys', 'API Keys', '/settings/api-keys', KeyRound),
       tab('access', 'Access', '/settings/access', ShieldCheck),
       tab('bff', 'BFF', '/settings/bff', Layers3),

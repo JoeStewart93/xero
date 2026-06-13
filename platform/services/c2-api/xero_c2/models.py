@@ -199,6 +199,106 @@ class AssetObservation(BaseModel):
     asset: Mapped[Asset] = relationship(foreign_keys=[asset_id])
 
 
+class AssetGroupingRule(BaseModel):
+    __tablename__ = "asset_grouping_rules"
+    __table_args__ = (UniqueConstraint("rule_key", name="uq_asset_grouping_rules_rule_key"),)
+
+    rule_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    updated_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class AssetGroup(BaseModel):
+    __tablename__ = "asset_groups"
+    __table_args__ = (UniqueConstraint("group_key", name="uq_asset_groups_group_key"),)
+
+    group_key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    group_type: Mapped[str] = mapped_column("type", String(32), default="auto", nullable=False, index=True)
+    rule_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("asset_grouping_rules.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    criterion_type: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    criterion_value: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("asset_groups.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    group_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
+    rule: Mapped[AssetGroupingRule | None] = relationship(foreign_keys=[rule_id])
+    parent: Mapped[AssetGroup | None] = relationship(remote_side="AssetGroup.id", foreign_keys=[parent_id])
+
+
+class AssetGroupMembership(BaseModel):
+    __tablename__ = "asset_group_memberships"
+    __table_args__ = (UniqueConstraint("asset_id", "group_id", name="uq_asset_group_memberships_asset_group"),)
+
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("asset_groups.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source: Mapped[str] = mapped_column(String(32), default="auto", nullable=False, index=True)
+    rule_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("asset_grouping_rules.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    membership_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
+    asset: Mapped[Asset] = relationship(foreign_keys=[asset_id])
+    group: Mapped[AssetGroup] = relationship(foreign_keys=[group_id])
+    rule: Mapped[AssetGroupingRule | None] = relationship(foreign_keys=[rule_id])
+
+
+class AssetGroupingEvent(BaseModel):
+    __tablename__ = "asset_grouping_events"
+
+    asset_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assets.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("asset_groups.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    rule_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("asset_grouping_rules.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    actor_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    event_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    asset: Mapped[Asset | None] = relationship(foreign_keys=[asset_id])
+    group: Mapped[AssetGroup | None] = relationship(foreign_keys=[group_id])
+    rule: Mapped[AssetGroupingRule | None] = relationship(foreign_keys=[rule_id])
+
+
 class TrafficProfile(BaseModel):
     __tablename__ = "traffic_profiles"
     __table_args__ = (UniqueConstraint("name", name="uq_traffic_profiles_name"),)

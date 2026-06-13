@@ -93,19 +93,29 @@ export async function postProtocolFrameBody(accessToken: string, frame: Buffer) 
   }
 }
 
-export async function registerBeacon(hostname: string) {
+export async function registerBeacon(
+  hostname: string,
+  overrides: Partial<{
+    architecture: string;
+    external_ip: string | null;
+    internal_ip: string;
+    machine_fingerprint_hash: string;
+    os: string;
+    pid: number;
+  }> = {},
+) {
   const api = await request.newContext();
   try {
     const eventId = Date.now();
     const response = await api.post(`${c2BaseURL}/api/v1/beacons/register`, {
       data: {
-        architecture: 'x64',
-        external_ip: '198.51.100.113',
+        architecture: overrides.architecture ?? 'x64',
+        external_ip: overrides.external_ip ?? '198.51.100.113',
         hostname,
-        internal_ip: '10.113.0.10',
-        machine_fingerprint_hash: `playwright-${hostname}-${eventId}`,
-        os: 'Windows 11',
-        pid: 1313,
+        internal_ip: overrides.internal_ip ?? '10.113.0.10',
+        machine_fingerprint_hash: overrides.machine_fingerprint_hash ?? `playwright-${hostname}-${eventId}`,
+        os: overrides.os ?? 'Windows 11',
+        pid: overrides.pid ?? 1313,
       },
       timeout: 10_000,
     });

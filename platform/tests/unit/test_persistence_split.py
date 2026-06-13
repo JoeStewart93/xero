@@ -11,7 +11,7 @@ from xero_bff.models import User
 from xero_c2.config import Settings as C2Settings
 from xero_c2.config import get_settings as get_c2_settings
 from xero_c2.manage import alembic_config as c2_alembic_config
-from xero_c2.models import Artifact, Beacon, BeaconBuild, ScanJob
+from xero_c2.models import Artifact, AssetGroup, AssetGroupingRule, Beacon, BeaconBuild, ScanJob
 from xero_c2.models import Base as C2Base
 from xero_common import crud
 from xero_common.database import (
@@ -323,6 +323,34 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
         "beacon_id",
         "observed_at",
     }.issubset(asset_observation_columns)
+    grouping_rule_columns = {column["name"] for column in inspector.get_columns("asset_grouping_rules")}
+    assert {"rule_key", "enabled", "config", "version", "updated_by"}.issubset(grouping_rule_columns)
+    asset_group_columns = {column["name"] for column in inspector.get_columns("asset_groups")}
+    assert {
+        "group_key",
+        "name",
+        "type",
+        "rule_id",
+        "criterion_type",
+        "criterion_value",
+        "parent_id",
+        "metadata",
+    }.issubset(asset_group_columns)
+    membership_columns = {column["name"] for column in inspector.get_columns("asset_group_memberships")}
+    assert {"asset_id", "group_id", "source", "rule_id", "first_seen", "last_seen", "metadata"}.issubset(
+        membership_columns
+    )
+    grouping_event_columns = {column["name"] for column in inspector.get_columns("asset_grouping_events")}
+    assert {
+        "asset_id",
+        "group_id",
+        "rule_id",
+        "actor_subject",
+        "event_type",
+        "message",
+        "metadata",
+        "occurred_at",
+    }.issubset(grouping_event_columns)
     beacon_columns = {column["name"] for column in inspector.get_columns("beacons")}
     assert {
         "profile_id",
@@ -334,7 +362,7 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     }.issubset(beacon_columns)
     with engine.connect() as connection:
         context = MigrationContext.configure(connection, opts={"version_table": "c2_alembic_version"})
-        assert context.get_current_heads() == ("c2_0018_asset_inventory",)
+        assert context.get_current_heads() == ("c2_0019_asset_grouping",)
 
 
 def test_generic_crud_helpers_work_with_service_models(tmp_path):
@@ -396,13 +424,39 @@ def test_generic_crud_helpers_work_with_service_models(tmp_path):
                 status="queued",
             ),
         )
+        grouping_rule = crud.create(
+            session,
+            AssetGroupingRule(
+                config={"prefix_length": 24},
+                enabled=True,
+                rule_key="subnet",
+                updated_by="pytest",
+                version=1,
+            ),
+        )
+        asset_group = crud.create(
+            session,
+            AssetGroup(
+                criterion_type="subnet",
+                criterion_value="10.0.0.0/24",
+                group_key="subnet:10.0.0.0/24",
+                group_metadata={},
+                group_type="auto",
+                name="Subnet 10.0.0.0/24",
+                rule_id=grouping_rule.id,
+            ),
+        )
         beacon_id = beacon.id
         build_id = build.id
         scan_job_id = scan_job.id
+        grouping_rule_id = grouping_rule.id
+        asset_group_id = asset_group.id
         assert crud.read(session, Beacon, beacon_id) is not None
         assert crud.read(session, BeaconBuild, build_id) is not None
         assert crud.read(session, Artifact, artifact.id) is not None
         assert crud.read(session, ScanJob, scan_job_id) is not None
+        assert crud.read(session, AssetGroupingRule, grouping_rule_id) is not None
+        assert crud.read(session, AssetGroup, asset_group_id) is not None
         assert crud.update(session, beacon, hostname="crud-renamed").hostname == "crud-renamed"
         crud.delete(session, beacon)
 

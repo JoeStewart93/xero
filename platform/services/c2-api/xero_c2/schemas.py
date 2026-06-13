@@ -342,6 +342,91 @@ class AssetObservationResponse(BaseModel):
     observed_at: datetime
 
 
+GroupingRuleKey = Literal["domain", "os", "subnet"]
+
+
+class AssetGroupSummaryResponse(BaseModel):
+    id: str
+    group_key: str
+    name: str
+    type: Literal["auto", "manual"] | str
+    criterion_type: str | None = None
+    criterion_value: str | None = None
+    source: Literal["auto", "manual"] | str
+
+
+class AssetGroupResponse(BaseModel):
+    id: str
+    group_key: str
+    name: str
+    description: str | None = None
+    type: Literal["auto", "manual"] | str
+    rule_id: str | None = None
+    criterion_type: str | None = None
+    criterion_value: str | None = None
+    parent_id: str | None = None
+    metadata: dict = Field(default_factory=dict)
+    member_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class AssetGroupListResponse(BaseModel):
+    items: list[AssetGroupResponse] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+
+
+class GroupingRuleResponse(BaseModel):
+    id: str
+    rule_key: GroupingRuleKey
+    enabled: bool
+    config: dict = Field(default_factory=dict)
+    version: int
+    updated_by: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GroupingRuleListResponse(BaseModel):
+    items: list[GroupingRuleResponse] = Field(default_factory=list)
+
+
+class GroupingRuleUpdate(BaseModel):
+    rule_key: GroupingRuleKey
+    enabled: bool | None = None
+    config: dict | None = None
+
+    @model_validator(mode="after")
+    def validate_config(self) -> GroupingRuleUpdate:
+        if self.config is None:
+            return self
+        if self.rule_key == "subnet" and "prefix_length" in self.config:
+            prefix_length = self.config["prefix_length"]
+            if not isinstance(prefix_length, int) or prefix_length < 0 or prefix_length > 32:
+                raise ValueError("subnet prefix_length must be an integer from 0 to 32")
+        return self
+
+
+class GroupingRulesUpdateRequest(BaseModel):
+    rules: list[GroupingRuleUpdate] = Field(min_length=1)
+    purge_disabled: bool = False
+    rerun: bool = True
+
+
+class GroupingRerunRequest(BaseModel):
+    purge_disabled: bool = False
+
+
+class GroupingRerunResponse(BaseModel):
+    added: int
+    assets_processed: int
+    purge_disabled: bool = False
+    removed: int
+    touched: int
+
+
 class AssetResponse(BaseModel):
     id: str
     asset_type: AssetType
@@ -361,6 +446,7 @@ class AssetResponse(BaseModel):
     linked_beacons: list[AssetBeaconLinkResponse] = Field(default_factory=list)
     relationships: list[AssetRelationshipResponse] = Field(default_factory=list)
     observations: list[AssetObservationResponse] = Field(default_factory=list)
+    groups: list[AssetGroupSummaryResponse] = Field(default_factory=list)
 
 
 class AssetListResponse(BaseModel):

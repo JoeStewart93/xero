@@ -85,17 +85,16 @@ test('F0017 task result panel renders output and downloads combined text', async
   await page.goto(`${baseURL}/beacons`);
   await page.getByLabel('Search beacons').fill(hostname);
   await expect(page.getByTestId('beacon-roster')).toContainText(hostname, { timeout: 10_000 });
-  await page.getByTestId(`beacon-row-${registered.beacon_id}`).dblclick();
+  const taskPanel = page.getByTestId('task-execution-panel');
 
-  await expect(page.getByRole('dialog', { name: `Host operations for ${hostname}` })).toBeVisible();
-  await expect(page.getByTestId('beacon-task-list')).toContainText(command);
-  await page.getByRole('button', { name: `View result for ${command}` }).click();
+  await expect(taskPanel.getByTestId('beacon-task-list')).toContainText(command);
+  await taskPanel.getByLabel(`View result for ${command}`).click();
 
-  await expect(page.getByTestId('task-result-panel')).toContainText(stdout);
-  await expect(page.getByTestId('task-result-panel')).toContainText('Exit 0');
+  await expect(taskPanel.getByTestId('task-result-panel')).toContainText(stdout);
+  await expect(taskPanel.getByTestId('task-result-panel')).toContainText('Exit 0');
 
   const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Download combined result' }).click();
+  await taskPanel.getByRole('button', { name: 'Download combined result' }).click();
   const download = await downloadPromise;
 
   expect(download.suggestedFilename()).toBe(`${task.id}-combined.txt`);

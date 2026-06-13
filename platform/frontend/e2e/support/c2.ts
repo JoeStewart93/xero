@@ -145,6 +145,23 @@ export async function startLongPoll(beaconId: string, beaconToken: string, timeo
   };
 }
 
+export async function pollLongPollFrameBody(beaconId: string, beaconToken: string, timeoutSeconds = 3) {
+  const api = await request.newContext();
+  try {
+    const response = await api.get(`${c2BaseURL}/api/v1/beacons/${beaconId}/poll?timeout_seconds=${timeoutSeconds}`, {
+      headers: { Authorization: `Bearer ${beaconToken}` },
+      timeout: (timeoutSeconds + 5) * 1000,
+    });
+    return {
+      body: await response.body(),
+      ok: response.ok(),
+      status: response.status(),
+    };
+  } finally {
+    await api.dispose();
+  }
+}
+
 export async function loginAndConnectC2(page: Page) {
   await page.goto(`${baseURL}/login`);
   await page.getByLabel('Username').fill('admin');

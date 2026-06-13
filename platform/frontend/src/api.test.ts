@@ -18,7 +18,7 @@ import {
   createFileBrowserSession,
   createRegistrySession,
   createShellSession,
-  createShellTask,
+  createTask,
   createTrafficProfile,
   createWorkerPairingToken,
   downloadBeaconBuildArtifact,
@@ -633,10 +633,11 @@ describe('api client', () => {
       limit: 10,
       status: 'queued',
     });
-    await createShellTask(
+    await createTask(
       'http://c2.local:8001/',
       'c2-token',
       'beacon-one',
+      'shell',
       { command: 'whoami', shell_type: 'auto', timeout_seconds: 60 },
       'urgent',
     );

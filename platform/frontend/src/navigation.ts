@@ -163,7 +163,7 @@ export const sectionDefinitions: Record<ShellSection, SectionDefinition> = {
       tab('generator', 'Generator', '/payloads', Boxes, true),
       tab('encrypter', 'Encrypter', '/payloads/encrypter', ShieldCheck, true),
       tab('obfuscator', 'Obfuscator', '/payloads/obfuscator', TerminalSquare, true),
-      tab('traffic-shaping', 'Traffic Shaping', '/payloads/traffic-shaping', Cable, true),
+      tab('traffic-patterns', 'Traffic Patterns', '/payloads/traffic-patterns', Cable, true),
       tab('output', 'Output', '/payloads/output', FileArchive, true),
     ],
     to: '/payloads',
@@ -221,7 +221,6 @@ export const sectionDefinitions: Record<ShellSection, SectionDefinition> = {
     tabs: [
       tab('connection', 'Connection', '/settings', Settings),
       tab('infrastructure', 'Infrastructure', '/settings/infrastructure', RadioTower, true),
-      tab('profiles', 'Profiles', '/settings/profiles', Cable),
       tab('grouping', 'Grouping', '/settings/grouping', Layers3, true),
       tab('api-keys', 'API Keys', '/settings/api-keys', KeyRound),
       tab('access', 'Access', '/settings/access', ShieldCheck),

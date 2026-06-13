@@ -145,7 +145,7 @@ function profileSummary(profile: TrafficProfile): string {
   return `${profile.config.sleep_seconds}s / ${Math.round(profile.config.jitter * 100)}% jitter / v${profile.current_version}`;
 }
 
-export function TrafficProfilesPage() {
+export function TrafficProfilesManager() {
   const { connection } = useC2Connection();
   const [profiles, setProfiles] = useState<TrafficProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState('new');
@@ -314,7 +314,7 @@ export function TrafficProfilesPage() {
   }
 
   return (
-    <AppShell description="C2 traffic shape templates and beacon runtime profiles" section="settings" title="Settings" wide>
+    <>
       {!connection ? (
         <C2RequiredPanel />
       ) : (
@@ -581,6 +581,30 @@ export function TrafficProfilesPage() {
           </div>
         </ModalShell>
       ) : null}
+    </>
+  );
+}
+
+export function TrafficProfilesModal({ onClose }: { onClose: () => void }) {
+  return (
+    <ModalShell
+      ariaLabel="Traffic profiles"
+      onClose={onClose}
+      subtitle="Traffic Patterns / Profile library"
+      title="Traffic profiles"
+      variant="wide"
+    >
+      <div className="traffic-profile-modal-body">
+        <TrafficProfilesManager />
+      </div>
+    </ModalShell>
+  );
+}
+
+export function TrafficProfilesPage() {
+  return (
+    <AppShell description="C2 traffic pattern templates and beacon runtime profiles" section="payloads" title="Payloads" wide>
+      <TrafficProfilesManager />
     </AppShell>
   );
 }

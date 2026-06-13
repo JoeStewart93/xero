@@ -15,7 +15,7 @@ import { ProjectsPage } from './pages/ProjectsPage';
 import { ReconPage } from './pages/ReconPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { StubSectionPage } from './pages/StubSectionPage';
-import { TrafficProfilesPage } from './pages/TrafficProfilesPage';
+import { TrafficPatternsPage } from './pages/TrafficPatternsPage';
 import { useAuth } from './useAuth';
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -220,13 +220,14 @@ export function App() {
         }
       />
       <Route
-        path="/payloads/traffic-shaping"
+        path="/payloads/traffic-patterns"
         element={
           <ProtectedRoute>
-            <StubSectionPage section="payloads" tabId="traffic-shaping" />
+            <TrafficPatternsPage />
           </ProtectedRoute>
         }
       />
+      <Route path="/payloads/traffic-shaping" element={<Navigate to="/payloads/traffic-patterns" replace />} />
       <Route
         path="/payloads/output"
         element={
@@ -404,14 +405,7 @@ export function App() {
           </ProtectedRoute>
         }
       />
-      <Route
-        path="/settings/profiles"
-        element={
-          <ProtectedRoute>
-            <TrafficProfilesPage />
-          </ProtectedRoute>
-        }
-      />
+      <Route path="/settings/profiles" element={<Navigate to="/payloads/traffic-patterns?profiles=1" replace />} />
       <Route
         path="/settings/grouping"
         element={

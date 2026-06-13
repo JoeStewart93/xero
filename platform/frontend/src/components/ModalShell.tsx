@@ -8,7 +8,7 @@ interface ModalShellProps {
   onClose: () => void;
   subtitle?: string;
   title: string;
-  variant?: 'center' | 'side';
+  variant?: 'center' | 'side' | 'wide';
 }
 
 export function ModalShell({ ariaLabel, children, onClose, subtitle, title, variant = 'center' }: ModalShellProps) {

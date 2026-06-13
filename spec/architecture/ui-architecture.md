@@ -119,11 +119,11 @@ Each primary section owns top-bar tabs. Root paths should render the first tab i
 | Recon | Tools, Runs, Results, Activity |
 | Beacons | Overview, Sessions, Groups, Profiles, Deploy |
 | Exploits | Browser, Suggestions, Execution, Results |
-| Payloads | Generator, Encrypter, Obfuscator, Traffic Shaping, Output |
+| Payloads | Generator, Encrypter, Obfuscator, Traffic Patterns, Output |
 | Assets | Inventory, Hosts, Services, Vulnerabilities, Domains, Cloud Resources, Relationships |
 | Reports | Notes, Campaign Reports, Host Reports, Vulnerability Reports, Exports |
 | Loot | Credentials, Files, Secrets, Quick Save, Search |
-| Settings | Connection, Infrastructure, Profiles, API Keys, Access, BFF, Plugins, Notifications |
+| Settings | Connection, Infrastructure, Grouping, API Keys, Access, BFF, Plugins, Notifications |
 | Health | Readiness, Liveness |
 
 ### 4.1 Route Map
@@ -134,15 +134,15 @@ Projects   /projects, /projects/scope, /projects/timeline, /projects/team
 Recon      /recon, /recon/runs, /recon/results, /recon/activity
 Beacons    /beacons, /beacons/sessions, /beacons/groups, /beacons/profiles, /beacons/deploy
 Exploits   /exploits, /exploits/suggestions, /exploits/execution, /exploits/results
-Payloads   /payloads, /payloads/encrypter, /payloads/obfuscator, /payloads/traffic-shaping, /payloads/output
+Payloads   /payloads, /payloads/encrypter, /payloads/obfuscator, /payloads/traffic-patterns, /payloads/output
 Assets     /assets, /assets/hosts, /assets/services, /assets/vulnerabilities, /assets/domains, /assets/cloud-resources, /assets/relationships
 Reports    /reports, /reports/campaign, /reports/hosts, /reports/vulnerabilities, /reports/exports
 Loot       /loot, /loot/files, /loot/secrets, /loot/quick-save, /loot/search
-Settings   /settings, /settings/infrastructure, /settings/profiles, /settings/api-keys, /settings/access, /settings/bff, /settings/plugins, /settings/notifications
+Settings   /settings, /settings/infrastructure, /settings/grouping, /settings/api-keys, /settings/access, /settings/bff, /settings/plugins, /settings/notifications
 Health     /health, /health/live
 ```
 
-Legacy route: `/settings/c2` redirects to `/settings/infrastructure`.
+Legacy routes: `/settings/c2` redirects to `/settings/infrastructure`, `/payloads/traffic-shaping` redirects to `/payloads/traffic-patterns`, and `/settings/profiles` redirects into the Traffic Patterns profile modal.
 
 ---
 
@@ -238,7 +238,7 @@ Primary surfaces:
 - Template browser (stager, reverse shell, bind shell, custom).
 - Encrypter with algorithm selection.
 - Obfuscator with encoder/transformer pipeline configuration.
-- Traffic Shaping profile integration.
+- Traffic Patterns profile modal.
 - Output with direct beacon deployment integration.
 
 Stub modal:

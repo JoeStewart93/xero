@@ -15,18 +15,20 @@ test('operator creates and assigns a traffic profile against live C2', async ({ 
 
   try {
     await loginAndConnectC2(page);
-    await page.goto(`${baseURL}/settings/profiles`);
-    await expect(page.getByRole('heading', { name: 'Traffic profiles' })).toBeVisible();
+    await page.goto(`${baseURL}/payloads/traffic-patterns?profiles=1`);
+    await expect(page.getByRole('heading', { name: 'Traffic Patterns' })).toBeVisible();
+    const profileDialog = page.getByRole('dialog', { name: 'Traffic profiles' });
+    await expect(profileDialog).toBeVisible();
 
-    await page.getByRole('button', { name: /New profile/ }).click();
-    await page.getByLabel('Name').fill(profileName);
-    await page.getByLabel('Template key').fill('e2e');
-    await page.getByLabel('Sleep seconds').fill('9');
-    await page.getByLabel('Jitter').fill('0.15');
-    await page.getByLabel('User-Agent').fill(`F0021-E2E/${unique}`);
-    await page.getByLabel('Traffic profile headers').fill(`X-Profile: f0021-${unique}`);
-    await page.getByRole('button', { name: /Create profile/ }).click();
-    await expect(page.getByText(`${profileName} saved as version 1.`)).toBeVisible();
+    await profileDialog.getByRole('button', { name: /New profile/ }).click();
+    await profileDialog.getByLabel('Name').fill(profileName);
+    await profileDialog.getByLabel('Template key').fill('e2e');
+    await profileDialog.getByLabel('Sleep seconds').fill('9');
+    await profileDialog.getByLabel('Jitter').fill('0.15');
+    await profileDialog.getByLabel('User-Agent').fill(`F0021-E2E/${unique}`);
+    await profileDialog.getByLabel('Traffic profile headers').fill(`X-Profile: f0021-${unique}`);
+    await profileDialog.getByRole('button', { name: /Create profile/ }).click();
+    await expect(profileDialog.getByText(`${profileName} saved as version 1.`)).toBeVisible();
 
     const profilesResponse = await api.get(`${c2BaseURL}/api/v1/traffic-profiles`, {
       headers: { Authorization: `Bearer ${accessToken}` },

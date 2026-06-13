@@ -122,7 +122,7 @@ describe('StubSectionPage', () => {
     renderRoute('/payloads');
 
     expect(screen.getByRole('heading', { name: 'Payloads' })).toBeTruthy();
-    expect(screen.getByRole('navigation', { name: 'Payloads sections' }).textContent).toContain('Traffic Shaping');
+    expect(screen.getByRole('navigation', { name: 'Payloads sections' }).textContent).toContain('Traffic Patterns');
     expect(screen.getByText('Generator workspace')).toBeTruthy();
     expect(within(screen.getByRole('complementary', { name: 'Payloads context' })).getByText('project a')).toBeTruthy();
 
@@ -134,6 +134,19 @@ describe('StubSectionPage', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
 
     expect(screen.queryByRole('dialog', { name: 'Payload builder stub' })).toBeNull();
+  });
+
+  it('keeps traffic profiles out of Settings and redirects legacy profile URLs into Traffic Patterns', async () => {
+    seedC2Connection();
+    seedActiveProject();
+
+    const settings = renderRoute('/settings');
+    expect(screen.getByRole('navigation', { name: 'Settings sections' }).textContent).not.toContain('Profiles');
+    settings.unmount();
+
+    renderRoute('/settings/profiles');
+    expect(await screen.findByRole('heading', { name: 'Traffic Patterns' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Traffic profiles' })).toBeTruthy();
   });
 
   it('uses the side-panel modal variant for asset detail stubs', () => {

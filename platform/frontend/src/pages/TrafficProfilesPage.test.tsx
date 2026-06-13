@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { TrafficProfilesPage } from './TrafficProfilesPage';
+import { TrafficPatternsPage } from './TrafficPatternsPage';
 
 const mocks = vi.hoisted(() => ({
   useAuth: vi.fn(),
@@ -65,13 +65,13 @@ const profile = {
 
 function renderPage() {
   return render(
-    <MemoryRouter>
-      <TrafficProfilesPage />
+    <MemoryRouter initialEntries={['/payloads/traffic-patterns']}>
+      <TrafficPatternsPage />
     </MemoryRouter>,
   );
 }
 
-describe('TrafficProfilesPage', () => {
+describe('TrafficPatternsPage traffic profiles modal', () => {
   beforeEach(() => {
     apiMocks.getTrafficProfiles.mockResolvedValue({ items: [profile] });
     apiMocks.getTrafficProfileVersions.mockResolvedValue({
@@ -108,14 +108,18 @@ describe('TrafficProfilesPage', () => {
   it('loads profiles and saves a new custom profile', async () => {
     renderPage();
 
+    expect(screen.getByRole('heading', { name: 'Traffic Patterns' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Manage profiles' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Traffic profiles' });
+
     await waitFor(() => {
       expect(screen.getByText('Profile one')).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /New profile/ }));
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Created profile' } });
-    fireEvent.change(screen.getByLabelText('User-Agent'), { target: { value: 'Created UA' } });
-    fireEvent.click(screen.getByRole('button', { name: /Create profile/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /New profile/ }));
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Created profile' } });
+    fireEvent.change(within(dialog).getByLabelText('User-Agent'), { target: { value: 'Created UA' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /Create profile/ }));
 
     await waitFor(() => {
       expect(apiMocks.createTrafficProfile).toHaveBeenCalledWith(

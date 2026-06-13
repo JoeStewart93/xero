@@ -78,7 +78,7 @@ const createResourceActions = [
     description: 'Define an engagement container.',
     icon: FolderPlus,
     label: 'Project',
-    to: '/projects',
+    to: '/projects?create=1',
   },
   {
     description: 'Open beacon tasking.',

@@ -364,7 +364,7 @@ function renderBeaconsPage(initialEntries = ['/beacons']) {
 }
 
 async function openTaskingPanel() {
-  fireEvent.click(screen.getByRole('button', { name: 'Tasking' }));
+  fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
   return screen.findByTestId('task-execution-panel');
 }
 
@@ -644,7 +644,7 @@ describe('BeaconsPage', () => {
     expect(screen.getByTestId('beacon-detail-transport-state').textContent).toBe('Disconnected');
   });
 
-  it('assigns a traffic profile from the beacon detail panel', async () => {
+  it('assigns a traffic profile from the beacon operations modal', async () => {
     mocks.useRealtime.mockReturnValue({
       activeBeaconCount: 1,
       beaconCount: 1,
@@ -656,6 +656,9 @@ describe('BeaconsPage', () => {
     });
 
     renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    fireEvent.click(screen.getByRole('button', { name: /Host controls/ }));
 
     await waitFor(() => {
       expect(apiMocks.getTrafficProfiles).toHaveBeenCalledWith('http://localhost:18001', 'c2-token');
@@ -769,7 +772,7 @@ describe('BeaconsPage', () => {
     expect(csv).not.toContain('beacon-alpha');
   });
 
-  it('renders recent activity for the selected beacon', async () => {
+  it('keeps the beacon detail sidebar metadata-only', async () => {
     mocks.useRealtime.mockReturnValue({
       activeBeaconCount: 1,
       beaconCount: 1,
@@ -782,9 +785,10 @@ describe('BeaconsPage', () => {
 
     renderBeaconsPage();
 
-    expect(await screen.findByTestId('beacon-activity-list')).toBeTruthy();
-    expect(screen.getByText('Task whoami queued')).toBeTruthy();
-    expect(apiMocks.getBeaconActivity).toHaveBeenCalledWith('http://localhost:18001', 'c2-token', beaconOne.id, 20);
+    expect((await screen.findByTestId('beacon-detail-hostname')).textContent).toBe('beacon-alpha');
+    expect(screen.queryByLabelText('Beacon traffic profile')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Tasking' })).toBeNull();
+    expect(screen.queryByText('Activity timeline')).toBeNull();
   });
 
   it('kills a beacon after confirmation and removes it from the active list', async () => {
@@ -800,15 +804,16 @@ describe('BeaconsPage', () => {
 
     renderBeaconsPage();
 
-    fireEvent.click(screen.getByTestId(`beacon-row-${beaconOne.id}`));
-    fireEvent.click(screen.getAllByRole('button', { name: 'Kill beacon' })[0]);
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    fireEvent.click(screen.getByRole('button', { name: /Host controls/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Kill beacon' }));
 
     let dialog = screen.getByRole('dialog', { name: 'Kill beacon confirmation' });
     expect(dialog.textContent).toContain('Remove beacon-alpha from active inventory');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(screen.getByTestId(`beacon-row-${beaconOne.id}`)).toBeTruthy();
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Kill beacon' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Kill beacon' }));
     dialog = screen.getByRole('dialog', { name: 'Kill beacon confirmation' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Kill beacon' }));
 
@@ -1407,7 +1412,7 @@ describe('BeaconsPage', () => {
     expect(screen.getByTestId('beacon-task-target-chip').textContent).toContain('beacon-alpha');
   });
 
-  it('sets the task target by dragging a beacon row onto the form', async () => {
+  it('keeps modal tasking locked to the opened beacon', async () => {
     apiMocks.getTasks.mockResolvedValueOnce({ items: [] }).mockResolvedValueOnce({ items: [queuedTask] });
     mocks.useRealtime.mockReturnValue({
       activeBeaconCount: 1,
@@ -1427,7 +1432,8 @@ describe('BeaconsPage', () => {
     fireEvent.dragStart(screen.getByTestId(`beacon-row-${beaconTwo.id}`), { dataTransfer });
     fireEvent.drop(screen.getByTestId('beacon-task-drop-target'), { dataTransfer });
 
-    expect(screen.getByTestId('beacon-task-target-chip').textContent).toContain('beacon-bravo');
+    expect(screen.getByTestId('beacon-task-target-chip').textContent).toContain('beacon-alpha');
+    expect(await screen.findByText('This command queue is locked to the open beacon.')).toBeTruthy();
     fireEvent.change(await screen.findByLabelText('Shell command'), { target: { value: 'hostname' } });
     fireEvent.click(screen.getByRole('button', { name: /^Queue$/ }));
 
@@ -1435,7 +1441,7 @@ describe('BeaconsPage', () => {
       expect(apiMocks.createTask).toHaveBeenCalledWith(
         'http://localhost:18001',
         'c2-token',
-        beaconTwo.id,
+        beaconOne.id,
         'shell',
         { command: 'hostname', shell_type: 'auto', timeout_seconds: 60 },
         'normal',
@@ -1444,7 +1450,7 @@ describe('BeaconsPage', () => {
 
     const invalidTransfer = makeDataTransfer();
     fireEvent.drop(screen.getByTestId('beacon-task-drop-target'), { dataTransfer: invalidTransfer });
-    expect(await screen.findByText('Drop a known beacon row onto the target field.')).toBeTruthy();
+    expect(await screen.findByText('This command queue is locked to the open beacon.')).toBeTruthy();
   });
 
   it('filters command history from the task execution panel', async () => {

@@ -39,14 +39,12 @@ import {
   createShellSession,
   downloadFileTransferArtifact,
   getFileTransfer,
-  getBeaconActivity,
   getTrafficProfiles,
   killBeacon,
   uploadFileTransferChunk,
 } from '../api';
 import type {
   Beacon,
-  BeaconActivityItem,
   FileBrowserSession,
   FileTransfer,
   ShellSession,
@@ -87,39 +85,6 @@ function DetailRow({ label, testId, value }: { label: string; testId?: string; v
     <div className="beacon-detail-row">
       <span>{label}</span>
       <strong data-testid={testId}>{value ?? '-'}</strong>
-    </div>
-  );
-}
-
-function BeaconActivityTimeline({
-  error,
-  isLoading,
-  items,
-}: {
-  error: string;
-  isLoading: boolean;
-  items: BeaconActivityItem[];
-}) {
-  if (isLoading) {
-    return <div className="beacon-activity-empty">Loading activity.</div>;
-  }
-  if (error) {
-    return <p className="task-queue-error" role="alert">{error}</p>;
-  }
-  if (items.length === 0) {
-    return <div className="beacon-activity-empty">No recent activity for this beacon.</div>;
-  }
-  return (
-    <div className="beacon-activity-list" data-testid="beacon-activity-list">
-      {items.map((item) => (
-        <div className="beacon-activity-item" key={item.id}>
-          <div>
-            <strong>{item.label}</strong>
-            <span>{item.detail ?? item.type}</span>
-          </div>
-          <time dateTime={item.occurred_at}>{formatRelativeTime(item.occurred_at)}</time>
-        </div>
-      ))}
     </div>
   );
 }
@@ -170,6 +135,13 @@ const hostOperations = [
     icon: TerminalSquare,
     key: 'commands',
     label: 'Command queue',
+    status: 'Ready',
+  },
+  {
+    description: 'Manage this beacon profile assignment and lifecycle controls.',
+    icon: ShieldCheck,
+    key: 'controls',
+    label: 'Host controls',
     status: 'Ready',
   },
   {
@@ -1269,26 +1241,121 @@ function FileBrowserPanel({
   );
 }
 
+function BeaconControlsPanel({
+  assigningProfile,
+  beacon,
+  isLoadingProfiles,
+  onAssignProfile,
+  onLoadProfiles,
+  onRequestKill,
+  profileError,
+  profileMessage,
+  trafficProfiles,
+}: {
+  assigningProfile: boolean;
+  beacon: Beacon;
+  isLoadingProfiles: boolean;
+  onAssignProfile: (beaconId: string, profileId: string) => void;
+  onLoadProfiles: () => void;
+  onRequestKill: (beacon: Beacon) => void;
+  profileError: string;
+  profileMessage: string;
+  trafficProfiles: TrafficProfile[];
+}) {
+  const hasRequestedProfilesRef = useRef(false);
+
+  useEffect(() => {
+    if (!hasRequestedProfilesRef.current && trafficProfiles.length === 0 && !isLoadingProfiles && !profileError) {
+      hasRequestedProfilesRef.current = true;
+      onLoadProfiles();
+    }
+  }, [isLoadingProfiles, onLoadProfiles, profileError, trafficProfiles.length]);
+
+  return (
+    <div className="beacon-control-panel">
+      <div className="beacon-profile-panel">
+        <div>
+          <strong>Traffic profile</strong>
+          <span>
+            {beacon.profile_name
+              ? `${beacon.profile_name} / v${beacon.profile_version ?? '-'}`
+              : 'Default bootstrap'}
+          </span>
+        </div>
+        <label>
+          <span>Assignment</span>
+          <select
+            aria-label="Beacon traffic profile"
+            disabled={assigningProfile || isLoadingProfiles}
+            onChange={(event) => onAssignProfile(beacon.id, event.target.value)}
+            value={beacon.profile_id ?? ''}
+          >
+            <option value="">Default bootstrap</option>
+            {trafficProfiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.name} / v{profile.current_version}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="secondary-button" disabled={isLoadingProfiles} onClick={onLoadProfiles} type="button">
+          <RefreshCw aria-hidden="true" size={15} strokeWidth={2.1} />
+          <span>{isLoadingProfiles ? 'Loading' : 'Profiles'}</span>
+        </button>
+      </div>
+      {profileError ? <p className="task-queue-error" role="alert">{profileError}</p> : null}
+      {profileMessage ? <p className="profile-status-message">{profileMessage}</p> : null}
+
+      <div className="beacon-control-danger">
+        <div>
+          <strong>Beacon lifecycle</strong>
+          <span>Remove this beacon from active inventory and close active sessions.</span>
+        </div>
+        <button className="danger-button" onClick={() => onRequestKill(beacon)} type="button">
+          <Trash2 aria-hidden="true" size={15} strokeWidth={2.1} />
+          <span>Kill beacon</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function BeaconOperationsModal({
   beacon,
   beacons,
+  assigningProfile,
   connection,
   initialArgs,
   initialModuleId,
   initialTaskId,
+  isLoadingProfiles,
   latestEvent,
+  onAssignProfile,
   onClose,
+  onLoadProfiles,
+  onRequestKill,
+  profileError,
+  profileMessage,
   realtimeStatus,
+  trafficProfiles,
 }: {
   beacon: Beacon;
   beacons: Beacon[];
+  assigningProfile: boolean;
   connection: C2Connection;
   initialArgs?: Record<string, unknown>;
   initialModuleId?: string;
   initialTaskId?: string;
+  isLoadingProfiles: boolean;
   latestEvent: OperatorRealtimeEvent | null;
+  onAssignProfile: (beaconId: string, profileId: string) => void;
   onClose: () => void;
+  onLoadProfiles: () => void;
+  onRequestKill: (beacon: Beacon) => void;
+  profileError: string;
+  profileMessage: string;
   realtimeStatus: ReturnType<typeof useRealtime>['status'];
+  trafficProfiles: TrafficProfile[];
 }) {
   const [selectedOperation, setSelectedOperation] = useState<HostOperationKey>('commands');
   const activeOperation = hostOperations.find((operation) => operation.key === selectedOperation) ?? hostOperations[0];
@@ -1363,15 +1430,28 @@ function BeaconOperationsModal({
 
             {activeOperation.key === 'commands' ? (
               <TaskExecutionPanel
-                beacons={beacons}
+                beacons={[beacon]}
                 connection={connection}
                 initialArgs={initialArgs}
                 initialBeaconId={beacon.id}
                 initialModuleId={initialModuleId}
                 initialTaskId={initialTaskId}
                 latestEvent={latestEvent}
+                lockTargetBeacon
                 realtimeStatus={realtimeStatus}
                 title="Command queue"
+              />
+            ) : activeOperation.key === 'controls' ? (
+              <BeaconControlsPanel
+                assigningProfile={assigningProfile}
+                beacon={beacon}
+                isLoadingProfiles={isLoadingProfiles}
+                onAssignProfile={onAssignProfile}
+                onLoadProfiles={onLoadProfiles}
+                onRequestKill={onRequestKill}
+                profileError={profileError}
+                profileMessage={profileMessage}
+                trafficProfiles={trafficProfiles}
               />
             ) : activeOperation.key === 'session' ? (
               <ShellSessionPanel beacon={beacon} connection={connection} />
@@ -1427,9 +1507,6 @@ export function BeaconsPage() {
   const [profileMessage, setProfileMessage] = useState('');
   const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
   const [assigningProfile, setAssigningProfile] = useState(false);
-  const [activityItems, setActivityItems] = useState<BeaconActivityItem[]>([]);
-  const [activityError, setActivityError] = useState('');
-  const [isLoadingActivity, setIsLoadingActivity] = useState(false);
   const [killTarget, setKillTarget] = useState<Beacon | null>(null);
   const [killError, setKillError] = useState('');
   const [isKillingBeacon, setIsKillingBeacon] = useState(false);
@@ -1459,24 +1536,6 @@ export function BeaconsPage() {
   const activeBeaconCount = visibleBeacons.filter((beacon) => beacon.status.toLowerCase() === 'online').length;
   const offlineBeaconCount = visibleBeacons.filter((beacon) => beacon.status.toLowerCase() === 'offline').length;
 
-  const loadBeaconActivity = useCallback(async () => {
-    if (!connection || !selectedBeacon) {
-      setActivityItems([]);
-      setActivityError('');
-      return;
-    }
-    setIsLoadingActivity(true);
-    try {
-      const response = await getBeaconActivity(connection.baseUrl, connection.accessToken, selectedBeacon.id, 20);
-      setActivityItems(response.items);
-      setActivityError('');
-    } catch (caught) {
-      setActivityError(caught instanceof Error ? caught.message : 'Unable to load beacon activity.');
-    } finally {
-      setIsLoadingActivity(false);
-    }
-  }, [connection, selectedBeacon]);
-
   const loadTrafficProfiles = useCallback(async () => {
     if (!connection) {
       setTrafficProfiles([]);
@@ -1493,16 +1552,6 @@ export function BeaconsPage() {
       setIsLoadingProfiles(false);
     }
   }, [connection]);
-
-  useEffect(() => {
-    const handle = window.setTimeout(() => void loadTrafficProfiles(), 0);
-    return () => window.clearTimeout(handle);
-  }, [loadTrafficProfiles]);
-
-  useEffect(() => {
-    const handle = window.setTimeout(() => void loadBeaconActivity(), 0);
-    return () => window.clearTimeout(handle);
-  }, [loadBeaconActivity]);
 
   useEffect(() => {
     if (routeBeaconId && visibleBeacons.some((beacon) => beacon.id === routeBeaconId)) {
@@ -1526,15 +1575,6 @@ export function BeaconsPage() {
     const handle = window.setTimeout(() => setOperationBeaconId(targetBeaconId), 0);
     return () => window.clearTimeout(handle);
   }, [location.search, routeBeaconId, routeTaskingRequested, selectedBeacon, visibleBeacons]);
-
-  useEffect(() => {
-    const eventBeaconId = realtime.latestEvent?.scope?.beacon_id ?? (realtime.latestEvent?.data.beacon as Beacon | undefined)?.id;
-    if (eventBeaconId && selectedBeacon && eventBeaconId === selectedBeacon.id) {
-      const handle = window.setTimeout(() => void loadBeaconActivity(), 0);
-      return () => window.clearTimeout(handle);
-    }
-    return undefined;
-  }, [loadBeaconActivity, realtime.latestEvent, selectedBeacon]);
 
   function handleSort(nextSortKey: BeaconSortKey): void {
     if (nextSortKey === sortKey) {
@@ -1611,8 +1651,8 @@ export function BeaconsPage() {
     }
   }
 
-  async function handleAssignProfile(profileId: string): Promise<void> {
-    if (!connection || !selectedBeacon) {
+  async function handleAssignProfile(beaconId: string, profileId: string): Promise<void> {
+    if (!connection) {
       return;
     }
     setAssigningProfile(true);
@@ -1620,8 +1660,8 @@ export function BeaconsPage() {
     setProfileMessage('');
     try {
       const updated = profileId
-        ? await assignBeaconTrafficProfile(connection.baseUrl, connection.accessToken, selectedBeacon.id, profileId)
-        : await clearBeaconTrafficProfile(connection.baseUrl, connection.accessToken, selectedBeacon.id);
+        ? await assignBeaconTrafficProfile(connection.baseUrl, connection.accessToken, beaconId, profileId)
+        : await clearBeaconTrafficProfile(connection.baseUrl, connection.accessToken, beaconId);
       setProfileOverrides((current) => ({ ...current, [updated.id]: updated }));
       setProfileMessage(profileId ? `Assigned ${updated.profile_name ?? 'traffic profile'}.` : 'Cleared traffic profile assignment.');
     } catch (caught) {
@@ -1668,6 +1708,8 @@ export function BeaconsPage() {
                 <strong data-testid="beacons-offline-count">{offlineBeaconCount}</strong>
               </div>
             </div>
+            {profileError && !operationBeacon ? <p className="task-queue-error" role="alert">{profileError}</p> : null}
+            {profileMessage && !operationBeacon ? <p className="profile-status-message">{profileMessage}</p> : null}
 
             {visibleBeacons.length === 0 ? (
               <div className="beacon-empty-state" data-testid="beacons-empty-state">
@@ -1845,9 +1887,6 @@ export function BeaconsPage() {
                 <Server size={18} strokeWidth={2} />
               </div>
             </div>
-            {profileError ? <p className="task-queue-error" role="alert">{profileError}</p> : null}
-            {profileMessage ? <p className="profile-status-message">{profileMessage}</p> : null}
-
             {selectedBeacon ? (
               <>
                 <div className="beacon-identity-strip">
@@ -1856,55 +1895,6 @@ export function BeaconsPage() {
                     <span className={statusClass(selectedBeacon.status)}>{selectedBeacon.status}</span>
                   </div>
                   <strong>{selectedBeacon.id}</strong>
-                </div>
-
-                <div className="beacon-profile-panel">
-                  <div>
-                    <strong>Traffic profile</strong>
-                    <span>
-                      {selectedBeacon.profile_name
-                        ? `${selectedBeacon.profile_name} / v${selectedBeacon.profile_version ?? '-'}`
-                        : 'Default bootstrap'}
-                    </span>
-                  </div>
-                  <label>
-                    <span>Assignment</span>
-                    <select
-                      aria-label="Beacon traffic profile"
-                      disabled={assigningProfile || isLoadingProfiles}
-                      onChange={(event) => void handleAssignProfile(event.target.value)}
-                      value={selectedBeacon.profile_id ?? ''}
-                    >
-                      <option value="">Default bootstrap</option>
-                      {trafficProfiles.map((profile) => (
-                        <option key={profile.id} value={profile.id}>
-                          {profile.name} / v{profile.current_version}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button className="secondary-button" disabled={isLoadingProfiles} onClick={() => void loadTrafficProfiles()} type="button">
-                    <RefreshCw aria-hidden="true" size={15} strokeWidth={2.1} />
-                    <span>{isLoadingProfiles ? 'Loading' : 'Profiles'}</span>
-                  </button>
-                </div>
-
-                <div className="beacon-detail-actions">
-                  <button className="primary-button" onClick={() => openBeaconOperations(selectedBeacon)} type="button">
-                    <TerminalSquare aria-hidden="true" size={15} strokeWidth={2.1} />
-                    <span>Tasking</span>
-                  </button>
-                  <button
-                    className="danger-button"
-                    onClick={() => {
-                      setKillError('');
-                      setKillTarget(selectedBeacon);
-                    }}
-                    type="button"
-                  >
-                    <Trash2 aria-hidden="true" size={15} strokeWidth={2.1} />
-                    <span>Kill beacon</span>
-                  </button>
                 </div>
 
                 <div className="beacon-detail-grid">
@@ -1965,20 +1955,6 @@ export function BeaconsPage() {
                     <span data-testid="beacon-detail-os">{selectedBeacon.os}</span>
                   </div>
                 </div>
-
-                <div className="beacon-activity-panel">
-                  <div className="beacon-section-head">
-                    <div>
-                      <strong>Activity timeline</strong>
-                      <span>Recent task, session, and lifecycle events.</span>
-                    </div>
-                    <button className="secondary-button" disabled={isLoadingActivity} onClick={() => void loadBeaconActivity()} type="button">
-                      <RefreshCw aria-hidden="true" size={15} strokeWidth={2.1} />
-                      <span>{isLoadingActivity ? 'Loading' : 'Refresh'}</span>
-                    </button>
-                  </div>
-                  <BeaconActivityTimeline error={activityError} isLoading={isLoadingActivity} items={activityItems} />
-                </div>
               </>
             ) : (
               <div className="beacon-empty-state beacon-empty-state--detail">
@@ -1993,15 +1969,26 @@ export function BeaconsPage() {
 
           {operationBeacon ? (
             <BeaconOperationsModal
+              assigningProfile={assigningProfile}
               beacon={operationBeacon}
               beacons={visibleBeacons}
               connection={connection}
               initialArgs={routeModuleArgs}
               initialModuleId={routeModuleId || undefined}
               initialTaskId={operationBeacon.id === routeBeaconId ? routeTaskId : undefined}
+              isLoadingProfiles={isLoadingProfiles}
               latestEvent={realtime.latestEvent}
+              onAssignProfile={(beaconId, profileId) => void handleAssignProfile(beaconId, profileId)}
               onClose={() => setOperationBeaconId('')}
+              onLoadProfiles={() => void loadTrafficProfiles()}
+              onRequestKill={(beacon) => {
+                setKillError('');
+                setKillTarget(beacon);
+              }}
+              profileError={profileError}
+              profileMessage={profileMessage}
               realtimeStatus={realtime.status}
+              trafficProfiles={trafficProfiles}
             />
           ) : null}
           {killTarget ? (

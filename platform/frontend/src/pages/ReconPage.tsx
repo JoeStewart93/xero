@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { Crosshair, Play, RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import { Compass, Crosshair, Database, Globe2, Play, Radar, RefreshCw, Route, Search, ShieldCheck, Zap } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 
 import {
@@ -18,25 +18,91 @@ import {
 } from '../api';
 import { AppShell } from '../components/AppShell';
 import { C2RequiredPanel } from '../components/C2RequiredPanel';
+import { ModalShell } from '../components/ModalShell';
 import { StreamOutput } from '../components/StreamOutput';
 import type { StreamOutputChunk } from '../components/StreamOutput';
 import { decodeLaunchArgs, stringValue } from '../modules/moduleCatalog';
+import { SHODAN_API_KEY_STORAGE_KEY } from '../settingsStorage';
 import { useC2Connection } from '../useC2Connection';
 import { useRealtime } from '../useRealtime';
 
 interface ScanFormState {
+  dnsResolution: string;
   maxThreads: string;
+  osDetection: string;
   portRange: string;
+  scanTechnique: string;
+  serviceDetection: string;
   targets: string;
+  timingTemplate: string;
   timeoutMs: string;
 }
 
 const initialForm: ScanFormState = {
+  dnsResolution: 'disabled',
   maxThreads: '32',
+  osDetection: 'disabled',
   portRange: '80,443',
+  scanTechnique: 'tcp-connect',
+  serviceDetection: 'disabled',
   targets: '127.0.0.1',
+  timingTemplate: '3',
   timeoutMs: '1000',
 };
+
+type ReconScanTypeId = 'nmap' | 'masscan' | 'dns' | 'path' | 'shodan';
+
+const reconScanTypes: Array<{
+  capability: string;
+  description: string;
+  id: ReconScanTypeId;
+  label: string;
+  moduleId?: string;
+  status: 'Ready' | 'Configured' | 'Needs key' | 'Planned';
+  icon: typeof Crosshair;
+}> = [
+  {
+    capability: 'NMAP service and port fingerprinting',
+    description: 'Queue the built-in NMAP-backed TCP port scan with explicit timing and detection options.',
+    icon: Crosshair,
+    id: 'nmap',
+    label: 'NMAP port scan',
+    moduleId: 'builtin.portscan',
+    status: 'Ready',
+  },
+  {
+    capability: 'High-speed TCP discovery',
+    description: 'Prepare fast breadth scans for authorized ranges before deeper NMAP follow-up.',
+    icon: Zap,
+    id: 'masscan',
+    label: 'MASSCAN port scan',
+    status: 'Planned',
+  },
+  {
+    capability: 'Records, zones, and resolvers',
+    description: 'Stage DNS enumeration for nameservers, TXT/MX/NS records, and zone-transfer checks.',
+    icon: Globe2,
+    id: 'dns',
+    label: 'DNS enumeration',
+    status: 'Planned',
+  },
+  {
+    capability: 'HTTP paths and content probes',
+    description: 'Stage path enumeration with wordlists, status filters, and concurrency controls.',
+    icon: Route,
+    id: 'path',
+    label: 'Path enumeration',
+    status: 'Planned',
+  },
+  {
+    capability: 'External intelligence enrichment',
+    description: 'Use Shodan search once an API key is stored in Settings.',
+    icon: Database,
+    id: 'shodan',
+    label: 'Shodan lookup',
+    status: 'Needs key',
+  },
+];
 
 function formatDate(value: string | null): string {
   if (!value) {
@@ -75,10 +141,16 @@ function argsFromForm(form: ScanFormState): PortScanArgs {
     throw new Error('At least one target is required.');
   }
   return {
+    dns_resolution: form.dnsResolution === 'enabled',
     execution_target: 'auto',
     max_threads: parseInteger(form.maxThreads, 'Max threads', 1, 256),
+    os_detection: form.osDetection === 'enabled',
     port_range: form.portRange.trim(),
+    scan_engine: 'nmap',
+    scan_technique: form.scanTechnique,
+    service_detection: form.serviceDetection === 'enabled',
     targets,
+    timing_template: parseInteger(form.timingTemplate, 'Timing template', 0, 5),
     timeout_ms: parseInteger(form.timeoutMs, 'Timeout', 50, 60000),
   };
 }
@@ -202,6 +274,7 @@ export function ReconPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [serviceEnumPending, setServiceEnumPending] = useState('');
+  const [activeScanTypeId, setActiveScanTypeId] = useState<ReconScanTypeId | ''>('');
   const [scanChunksByJob, setScanChunksByJob] = useState<Record<string, ScanResultChunk[]>>({});
   const routeModuleId = useMemo(() => new URLSearchParams(location.search).get('module') ?? '', [location.search]);
   const routeModuleArgs = useMemo(() => decodeLaunchArgs(new URLSearchParams(location.search).get('args')), [location.search]);
@@ -211,6 +284,8 @@ export function ReconPage() {
   );
   const portscanModule = modules.find((module) => module.id === 'builtin.portscan');
   const serviceenumModule = modules.find((module) => module.id === 'builtin.serviceenum');
+  const activeScanType = reconScanTypes.find((scanType) => scanType.id === activeScanTypeId) ?? null;
+  const hasShodanApiKey = useMemo(() => Boolean(window.localStorage.getItem(SHODAN_API_KEY_STORAGE_KEY)?.trim()), []);
   const selectedPortScanResults = portScanResults(selectedJob);
   const selectedServiceEnumResults = serviceEnumResults(selectedJob);
   const openResults = selectedPortScanResults.filter((result) => result.state === 'open');
@@ -283,10 +358,16 @@ export function ReconPage() {
       return;
     }
     const handle = window.setTimeout(() => {
+      setActiveScanTypeId('nmap');
       setForm((current) => ({
+        dnsResolution: stringValue(routeModuleArgs.dns_resolution) || current.dnsResolution,
         maxThreads: stringValue(routeModuleArgs.max_threads) || current.maxThreads,
+        osDetection: stringValue(routeModuleArgs.os_detection) || current.osDetection,
         portRange: stringValue(routeModuleArgs.port_range) || current.portRange,
+        scanTechnique: stringValue(routeModuleArgs.scan_technique) || current.scanTechnique,
+        serviceDetection: stringValue(routeModuleArgs.service_detection) || current.serviceDetection,
         targets: stringValue(routeModuleArgs.targets) || current.targets,
+        timingTemplate: stringValue(routeModuleArgs.timing_template) || current.timingTemplate,
         timeoutMs: stringValue(routeModuleArgs.timeout_ms) || current.timeoutMs,
       }));
       setMessage('Port scan loaded from Inventory.');
@@ -398,24 +479,106 @@ export function ReconPage() {
     }
   }
 
-  return (
-    <AppShell description="Discovery tool orchestration" section="recon" title="Recon" wide>
-      {!connection ? (
-        <C2RequiredPanel />
-      ) : (
-        <div className="recon-workspace">
-          <section className="workspace-panel recon-run-panel" aria-label="Port scan runner">
-            <div className="panel-header">
-              <div>
-                <h2>Port scan</h2>
-                <p className="muted-text">Embedded scanner / {portscanModule?.version ?? '0.1.0'}</p>
-              </div>
-              <div className="panel-icon" aria-hidden="true">
-                <Crosshair size={18} strokeWidth={2} />
-              </div>
+  function renderPlannedScannerModal(scanType: NonNullable<typeof activeScanType>) {
+    const isShodan = scanType.id === 'shodan';
+    const canQueue = isShodan && hasShodanApiKey;
+    return (
+      <div className="recon-scanner-modal">
+        <div className="recon-planned-form">
+          <label>
+            {isShodan ? 'Search query' : 'Targets'}
+            <textarea
+              aria-label={`${scanType.label} targets`}
+              placeholder={isShodan ? 'ssl.cert.subject.cn:example.com' : 'example.com, 10.0.0.0/24'}
+              rows={3}
+            />
+          </label>
+          {scanType.id === 'masscan' ? (
+            <>
+              <label>
+                Ports
+                <input aria-label="MASSCAN ports" defaultValue="80,443,8080" />
+              </label>
+              <label>
+                Rate
+                <input aria-label="MASSCAN rate" defaultValue="1000" type="number" />
+              </label>
+            </>
+          ) : null}
+          {scanType.id === 'dns' ? (
+            <>
+              <label>
+                Record types
+                <input aria-label="DNS record types" defaultValue="A,AAAA,MX,NS,TXT" />
+              </label>
+              <label>
+                Resolver
+                <input aria-label="DNS resolver" defaultValue="system" />
+              </label>
+            </>
+          ) : null}
+          {scanType.id === 'path' ? (
+            <>
+              <label>
+                Wordlist
+                <input aria-label="Path wordlist" defaultValue="common.txt" />
+              </label>
+              <label>
+                Status filter
+                <input aria-label="Path status filter" defaultValue="200,204,301,302,403" />
+              </label>
+            </>
+          ) : null}
+          {isShodan ? (
+            <div className={`recon-integration-state ${hasShodanApiKey ? 'is-ready' : ''}`}>
+              <ShieldCheck aria-hidden="true" size={16} strokeWidth={2.1} />
+              <span>{hasShodanApiKey ? 'Shodan API key is stored in Settings.' : 'Add a Shodan API key in Settings before queueing lookups.'}</span>
             </div>
+          ) : (
+            <div className="recon-integration-state">
+              <Radar aria-hidden="true" size={16} strokeWidth={2.1} />
+              <span>Scanner tooling is installed; backend queue support for this scan type is staged for the next feature slice.</span>
+            </div>
+          )}
+        </div>
+        <div className="recon-form-actions">
+          <button className="primary-button" disabled={!canQueue} type="button">
+            <Play aria-hidden="true" size={15} strokeWidth={2.1} />
+            <span>{canQueue ? 'Queue lookup' : 'Queue unavailable'}</span>
+          </button>
+          <button className="secondary-button" onClick={() => setActiveScanTypeId('')} type="button">
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
 
-            <form className="recon-scan-form" onSubmit={handleSubmit}>
+  function renderScanTypeModal() {
+    if (!activeScanType) {
+      return null;
+    }
+
+    const ActiveIcon = activeScanType.icon;
+    const isNmap = activeScanType.id === 'nmap';
+    return (
+      <ModalShell
+        ariaLabel={`${activeScanType.label} launcher`}
+        onClose={() => setActiveScanTypeId('')}
+        subtitle={activeScanType.capability}
+        title={activeScanType.label}
+        variant="wide"
+      >
+        <div className="recon-scanner-modal">
+          <div className="recon-scanner-modal-head">
+            <div className="panel-icon" aria-hidden="true">
+              <ActiveIcon size={18} strokeWidth={2} />
+            </div>
+            <p>{activeScanType.description}</p>
+          </div>
+
+          {isNmap ? (
+            <form className="recon-scan-form recon-scan-form--modal" onSubmit={handleSubmit}>
               <label className="recon-wide-field">
                 Targets
                 <textarea
@@ -432,6 +595,30 @@ export function ReconPage() {
                   onChange={(event) => setForm((current) => ({ ...current, portRange: event.target.value }))}
                   value={form.portRange}
                 />
+              </label>
+              <label>
+                Technique
+                <select
+                  aria-label="NMAP scan technique"
+                  onChange={(event) => setForm((current) => ({ ...current, scanTechnique: event.target.value }))}
+                  value={form.scanTechnique}
+                >
+                  <option value="tcp-connect">TCP connect</option>
+                  <option value="syn">SYN</option>
+                  <option value="udp">UDP</option>
+                </select>
+              </label>
+              <label>
+                Timing
+                <select
+                  aria-label="NMAP timing template"
+                  onChange={(event) => setForm((current) => ({ ...current, timingTemplate: event.target.value }))}
+                  value={form.timingTemplate}
+                >
+                  {[0, 1, 2, 3, 4, 5].map((template) => (
+                    <option key={template} value={template}>T{template}</option>
+                  ))}
+                </select>
               </label>
               <label>
                 Timeout ms
@@ -453,6 +640,39 @@ export function ReconPage() {
                 />
               </label>
               <label>
+                Service detection
+                <select
+                  aria-label="NMAP service detection"
+                  onChange={(event) => setForm((current) => ({ ...current, serviceDetection: event.target.value }))}
+                  value={form.serviceDetection}
+                >
+                  <option value="disabled">Off</option>
+                  <option value="enabled">On</option>
+                </select>
+              </label>
+              <label>
+                OS detection
+                <select
+                  aria-label="NMAP OS detection"
+                  onChange={(event) => setForm((current) => ({ ...current, osDetection: event.target.value }))}
+                  value={form.osDetection}
+                >
+                  <option value="disabled">Off</option>
+                  <option value="enabled">On</option>
+                </select>
+              </label>
+              <label>
+                DNS resolution
+                <select
+                  aria-label="NMAP DNS resolution"
+                  onChange={(event) => setForm((current) => ({ ...current, dnsResolution: event.target.value }))}
+                  value={form.dnsResolution}
+                >
+                  <option value="disabled">Off</option>
+                  <option value="enabled">On</option>
+                </select>
+              </label>
+              <label>
                 Execution
                 <select aria-label="Execution target" value="auto" disabled>
                   <option value="auto">Auto / embedded C2</option>
@@ -468,9 +688,61 @@ export function ReconPage() {
                   <span>{isLoading ? 'Refreshing' : 'Refresh'}</span>
                 </button>
               </div>
+              {error ? <p className="task-queue-error recon-wide-field" role="alert">{error}</p> : null}
+              {message ? <p className="profile-status-message recon-wide-field">{message}</p> : null}
             </form>
-            {error ? <p className="task-queue-error" role="alert">{error}</p> : null}
-            {message ? <p className="profile-status-message">{message}</p> : null}
+          ) : (
+            renderPlannedScannerModal(activeScanType)
+          )}
+        </div>
+      </ModalShell>
+    );
+  }
+
+  return (
+    <AppShell description="Discovery tool orchestration" section="recon" title="Recon" wide>
+      {!connection ? (
+        <C2RequiredPanel />
+      ) : (
+        <div className="recon-workspace">
+          <section className="workspace-panel recon-scan-types-panel" aria-label="Recon scan types">
+            <div className="panel-header">
+              <div>
+                <h2>Scanners</h2>
+                <p className="muted-text">Embedded scanner / {portscanModule?.version ?? '0.1.0'}</p>
+              </div>
+              <div className="panel-icon" aria-hidden="true">
+                <Compass size={18} strokeWidth={2} />
+              </div>
+            </div>
+
+            <div className="recon-scan-type-list">
+              {reconScanTypes.map((scanType) => {
+                const Icon = scanType.icon;
+                const status = scanType.id === 'shodan' && hasShodanApiKey ? 'Configured' : scanType.status;
+                return (
+                  <button
+                    className="recon-scan-type-card"
+                    key={scanType.id}
+                    onClick={() => {
+                      setActiveScanTypeId(scanType.id);
+                      setError('');
+                      setMessage('');
+                    }}
+                    type="button"
+                  >
+                    <Icon aria-hidden="true" size={16} strokeWidth={2.1} />
+                    <span>
+                      <strong>{scanType.label}</strong>
+                      <small>{scanType.capability}</small>
+                    </span>
+                    <em className={status === 'Ready' || status === 'Configured' ? 'is-ready' : ''}>{status}</em>
+                  </button>
+                );
+              })}
+            </div>
+            {error && !activeScanType ? <p className="task-queue-error" role="alert">{error}</p> : null}
+            {message && !activeScanType ? <p className="profile-status-message">{message}</p> : null}
           </section>
 
           <section className="workspace-panel recon-runs-panel" aria-label="Scan jobs">
@@ -660,6 +932,7 @@ export function ReconPage() {
           </section>
         </div>
       )}
+      {renderScanTypeModal()}
     </AppShell>
   );
 }

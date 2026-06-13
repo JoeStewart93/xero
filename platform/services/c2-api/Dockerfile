@@ -9,7 +9,7 @@ WORKDIR /app
 COPY common/python ./common/python
 COPY services/c2-api/requirements.txt ./requirements.txt
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends docker.io docker-compose \
+    && apt-get install -y --no-install-recommends ca-certificates curl dnsutils docker.io docker-compose masscan nmap \
     && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir -r requirements.txt
 

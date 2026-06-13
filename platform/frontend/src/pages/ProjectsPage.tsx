@@ -1,17 +1,16 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
-  Boxes,
   CheckCircle2,
   FolderKanban,
   Globe2,
   Network,
   Plus,
   Power,
-  RadioTower,
   ShieldCheck,
   Trash2,
 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 
 import { AppShell } from '../components/AppShell';
 import { C2RequiredPanel } from '../components/C2RequiredPanel';
@@ -29,10 +28,9 @@ import {
 import type { DiscoveryProject, ProjectTarget, TargetType } from '../projectScopeStorage';
 import { useC2Connection } from '../useC2Connection';
 
-interface TargetDetectionResult {
-  error?: string;
-  target?: Omit<ProjectTarget, 'id'>;
-}
+type TargetDetectionResult =
+  | { error: string; target?: never }
+  | { error?: never; target: Omit<ProjectTarget, 'id'> };
 
 const IPV4_CANDIDATE_PATTERN = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 
@@ -111,57 +109,103 @@ function countTargets(project?: DiscoveryProject, type?: TargetType): number {
   return type ? project.targets.filter((target) => target.type === type).length : project.targets.length;
 }
 
+function hasDuplicateTarget(targets: ProjectTarget[], detectedTarget: Omit<ProjectTarget, 'id'>): boolean {
+  return targets.some((target) => (
+    target.type === detectedTarget.type && target.value.toLowerCase() === detectedTarget.value.toLowerCase()
+  ));
+}
+
+function targetIcon(type: TargetType) {
+  return type === 'domain' ? Globe2 : Network;
+}
+
+function TargetList({
+  emptyLabel,
+  onRemove,
+  targets,
+}: {
+  emptyLabel: string;
+  onRemove?: (targetId: string) => void;
+  targets: ProjectTarget[];
+}) {
+  if (targets.length === 0) {
+    return <div className="project-target-empty">{emptyLabel}</div>;
+  }
+
+  return (
+    <div className="project-target-list">
+      {targets.map((target) => {
+        const Icon = targetIcon(target.type);
+        return (
+          <div className="project-target-row" key={target.id}>
+            <Icon aria-hidden="true" size={14} strokeWidth={2} />
+            <span>{target.value}</span>
+            {onRemove ? (
+              <button aria-label={`Remove ${target.value}`} onClick={() => onRemove(target.id)} type="button">
+                <Trash2 aria-hidden="true" size={14} strokeWidth={2} />
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ProjectsPage() {
   const { connection } = useC2Connection();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [projects, setProjects] = useState<DiscoveryProject[]>(() => readProjects());
   const [activeProjectId, setActiveProjectId] = useState(() => readActiveProjectId(readProjects()));
-  const [selectedProjectId, setSelectedProjectId] = useState(() => activeProjectId || projects[0]?.id || '');
+  const [managingProjectId, setManagingProjectId] = useState('');
+  const [isCreateWizardOpen, setCreateWizardOpen] = useState(false);
+  const [createStep, setCreateStep] = useState(0);
+  const [draftName, setDraftName] = useState('');
+  const [draftTargets, setDraftTargets] = useState<ProjectTarget[]>([]);
+  const [draftTargetValue, setDraftTargetValue] = useState('');
   const [projectError, setProjectError] = useState('');
   const [targetError, setTargetError] = useState('');
+  const [manageTargetValue, setManageTargetValue] = useState('');
   const [pendingDeleteProject, setPendingDeleteProject] = useState<DiscoveryProject | null>(null);
   const activeProjectIdRef = useRef(activeProjectId);
-  const selectedProjectIdRef = useRef(selectedProjectId);
+  const managingProjectIdRef = useRef(managingProjectId);
 
-  const selectedProject = useMemo(
-    () => projects.find((project) => project.id === selectedProjectId) ?? projects[0],
-    [projects, selectedProjectId],
-  );
   const activeProject = useMemo(() => projects.find((project) => project.id === activeProjectId), [activeProjectId, projects]);
-  const domains = selectedProject?.targets.filter((target) => target.type === 'domain') ?? [];
-  const ips = selectedProject?.targets.filter((target) => target.type === 'ip') ?? [];
-  const selectedProjectIsActive = Boolean(selectedProject && selectedProject.id === activeProjectId);
+  const managingProject = useMemo(
+    () => projects.find((project) => project.id === managingProjectId) ?? null,
+    [managingProjectId, projects],
+  );
   const activeScopeName = activeProject?.name ?? GLOBAL_SCOPE_LABEL;
   const activeScopeTargets = activeProject ? String(countTargets(activeProject)) : 'Unscoped';
+  const createRequested = searchParams.get('create') === '1';
 
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
   }, [activeProjectId]);
 
   useEffect(() => {
-    selectedProjectIdRef.current = selectedProjectId;
-  }, [selectedProjectId]);
+    managingProjectIdRef.current = managingProjectId;
+  }, [managingProjectId]);
+
+  useEffect(() => {
+    if (createRequested) {
+      setCreateWizardOpen(true);
+    }
+  }, [createRequested]);
 
   useEffect(
     () =>
       subscribeProjectScopeChanged(() => {
         const snapshot = readProjectScopeSnapshot();
-        const previousActiveProjectId = activeProjectIdRef.current;
-        const selectedProjectStillExists = snapshot.projects.some((project) => project.id === selectedProjectIdRef.current);
+        const managedProjectStillExists = snapshot.projects.some((project) => project.id === managingProjectIdRef.current);
 
         setProjects(snapshot.projects);
         setActiveProjectId(snapshot.activeProjectId);
         activeProjectIdRef.current = snapshot.activeProjectId;
 
-        if (snapshot.activeProjectId && snapshot.activeProjectId !== previousActiveProjectId) {
-          selectedProjectIdRef.current = snapshot.activeProjectId;
-          setSelectedProjectId(snapshot.activeProjectId);
-          return;
-        }
-
-        if (!selectedProjectStillExists) {
-          const fallbackProjectId = snapshot.activeProjectId || snapshot.projects[0]?.id || '';
-          selectedProjectIdRef.current = fallbackProjectId;
-          setSelectedProjectId(fallbackProjectId);
+        if (!managedProjectStillExists) {
+          managingProjectIdRef.current = '';
+          setManagingProjectId('');
         }
       }),
     [],
@@ -172,29 +216,24 @@ export function ProjectsPage() {
     writeProjects(nextProjects);
   }
 
-  function handleCreateProject(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const name = String(form.get('projectName') ?? '').trim();
-    if (!name) {
-      setProjectError('Project name is required.');
-      return;
-    }
-
-    if (projects.some((project) => project.name.toLowerCase() === name.toLowerCase())) {
-      setProjectError('A project with this name already exists.');
-      return;
-    }
-
-    const project: DiscoveryProject = {
-      id: createLocalId('project'),
-      name,
-      targets: [],
-    };
-    persistProjects([...projects, project]);
-    setSelectedProjectId(project.id);
+  function closeCreateWizard(): void {
+    setCreateWizardOpen(false);
+    setCreateStep(0);
+    setDraftName('');
+    setDraftTargets([]);
+    setDraftTargetValue('');
     setProjectError('');
-    event.currentTarget.reset();
+    setTargetError('');
+    const next = new URLSearchParams(searchParams);
+    next.delete('create');
+    setSearchParams(next, { replace: true });
+  }
+
+  function openManageProject(projectId: string): void {
+    setManagingProjectId(projectId);
+    setTargetError('');
+    setProjectError('');
+    setManageTargetValue('');
   }
 
   function handleToggleProjectScope(projectId: string) {
@@ -206,7 +245,98 @@ export function ProjectsPage() {
 
     setActiveProjectId(projectId);
     writeActiveProjectId(projectId);
-    setSelectedProjectId(projectId);
+  }
+
+  function handleAddDraftTarget(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const detection = detectTarget(draftTargetValue);
+    if (detection.error || !detection.target) {
+      setTargetError(detection.error ?? 'Enter a valid target.');
+      return;
+    }
+    if (hasDuplicateTarget(draftTargets, detection.target)) {
+      setTargetError(`${detection.target.value} is already in this project.`);
+      return;
+    }
+    setDraftTargets((current) => [...current, { id: createLocalId('target'), ...detection.target }]);
+    setDraftTargetValue('');
+    setTargetError('');
+  }
+
+  function handleAddManagedTarget(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!managingProject) {
+      return;
+    }
+    const detection = detectTarget(manageTargetValue);
+    if (detection.error || !detection.target) {
+      setTargetError(detection.error ?? 'Enter a valid target.');
+      return;
+    }
+    if (hasDuplicateTarget(managingProject.targets, detection.target)) {
+      setTargetError(`${detection.target.value} is already in this project.`);
+      return;
+    }
+    persistProjects(projects.map((project) => (
+      project.id === managingProject.id
+        ? { ...project, targets: [...project.targets, { id: createLocalId('target'), ...detection.target }] }
+        : project
+    )));
+    setManageTargetValue('');
+    setTargetError('');
+  }
+
+  function handleRemoveManagedTarget(targetId: string) {
+    if (!managingProject) {
+      return;
+    }
+    persistProjects(projects.map((project) => (
+      project.id === managingProject.id
+        ? { ...project, targets: project.targets.filter((target) => target.id !== targetId) }
+        : project
+    )));
+  }
+
+  function handleCreateProject() {
+    const name = draftName.trim();
+    if (!name) {
+      setProjectError('Project name is required.');
+      setCreateStep(0);
+      return;
+    }
+    if (projects.some((project) => project.name.toLowerCase() === name.toLowerCase())) {
+      setProjectError('A project with this name already exists.');
+      setCreateStep(0);
+      return;
+    }
+
+    const project: DiscoveryProject = {
+      id: createLocalId('project'),
+      name,
+      targets: draftTargets,
+    };
+    persistProjects([...projects, project]);
+    closeCreateWizard();
+    openManageProject(project.id);
+  }
+
+  function handleRenameProject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!managingProject) {
+      return;
+    }
+    const form = new FormData(event.currentTarget);
+    const name = String(form.get('projectName') ?? '').trim();
+    if (!name) {
+      setProjectError('Project name is required.');
+      return;
+    }
+    if (projects.some((project) => project.id !== managingProject.id && project.name.toLowerCase() === name.toLowerCase())) {
+      setProjectError('A project with this name already exists.');
+      return;
+    }
+    persistProjects(projects.map((project) => project.id === managingProject.id ? { ...project, name } : project));
+    setProjectError('');
   }
 
   function handleConfirmDeleteProject() {
@@ -217,16 +347,14 @@ export function ProjectsPage() {
     const deletedProjectId = pendingDeleteProject.id;
     const nextProjects = projects.filter((project) => project.id !== deletedProjectId);
     const nextActiveProjectId = activeProjectId === deletedProjectId ? '' : activeProjectId;
-    const nextSelectedProjectId =
-      selectedProjectId === deletedProjectId
-        ? nextProjects.find((project) => project.id === nextActiveProjectId)?.id ?? nextProjects[0]?.id ?? ''
-        : selectedProjectId;
 
     setProjects(nextProjects);
     setActiveProjectId(nextActiveProjectId);
-    setSelectedProjectId(nextSelectedProjectId);
+    if (managingProjectId === deletedProjectId) {
+      setManagingProjectId('');
+    }
     activeProjectIdRef.current = nextActiveProjectId;
-    selectedProjectIdRef.current = nextSelectedProjectId;
+    managingProjectIdRef.current = managingProjectId === deletedProjectId ? '' : managingProjectId;
     writeProjects(nextProjects);
     if (activeProjectId === deletedProjectId) {
       writeActiveProjectId('');
@@ -236,85 +364,69 @@ export function ProjectsPage() {
     setTargetError('');
   }
 
-  function handleAddTarget(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedProject) {
-      setTargetError('Create or select a project before adding targets.');
-      return;
-    }
-
-    const form = new FormData(event.currentTarget);
-    const detection = detectTarget(String(form.get('targetValue') ?? ''));
-    if (detection.error || !detection.target) {
-      setTargetError(detection.error ?? 'Enter a valid target.');
-      return;
-    }
-    const detectedTarget = detection.target;
-
-    const isDuplicate = selectedProject.targets.some(
-      (target) => target.type === detectedTarget.type && target.value.toLowerCase() === detectedTarget.value.toLowerCase(),
-    );
-    if (isDuplicate) {
-      setTargetError(`${detectedTarget.value} is already in this project.`);
-      return;
-    }
-
-    const nextProjects = projects.map((project) =>
-      project.id === selectedProject.id
-        ? {
-            ...project,
-            targets: [...project.targets, { id: createLocalId('target'), ...detectedTarget }],
-          }
-        : project,
-    );
-    persistProjects(nextProjects);
-    setTargetError('');
-    event.currentTarget.reset();
-  }
-
-  function handleRemoveTarget(targetId: string) {
-    if (!selectedProject) {
-      return;
-    }
-
-    persistProjects(
-      projects.map((project) =>
-        project.id === selectedProject.id
-          ? {
-              ...project,
-              targets: project.targets.filter((target) => target.id !== targetId),
-            }
-          : project,
-      ),
-    );
-  }
-
-  function renderTargetGroup(title: string, type: TargetType, targets: ProjectTarget[]) {
-    const Icon = type === 'domain' ? Globe2 : Network;
-    return (
-      <section className="project-target-group" aria-label={title}>
-        <div className="project-target-group-header">
-          <div>
-            <Icon aria-hidden="true" size={16} strokeWidth={2} />
-            <strong>{title}</strong>
-          </div>
-          <span>{targets.length}</span>
+  function renderCreateStep() {
+    if (createStep === 0) {
+      return (
+        <div className="project-wizard-step">
+          <label>
+            Project name
+            <input
+              autoFocus
+              onChange={(event) => setDraftName(event.target.value)}
+              placeholder="acme-external-scope"
+              value={draftName}
+            />
+          </label>
+          <p className="field-hint">Use the project name for the engagement or authorized test boundary.</p>
         </div>
-        {targets.length === 0 ? (
-          <div className="project-target-empty">No {title.toLowerCase()} in this project.</div>
-        ) : (
-          <div className="project-target-list">
-            {targets.map((target) => (
-              <div className="project-target-row" key={target.id}>
-                <span>{target.value}</span>
-                <button aria-label={`Remove ${target.value}`} onClick={() => handleRemoveTarget(target.id)} type="button">
-                  <Trash2 aria-hidden="true" size={14} strokeWidth={2} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+      );
+    }
+
+    if (createStep === 1) {
+      return (
+        <div className="project-wizard-step">
+          <form className="project-target-intake-row" onSubmit={handleAddDraftTarget}>
+            <label>
+              Target
+              <input
+                aria-describedby="project-wizard-target-help"
+                onChange={(event) => setDraftTargetValue(event.target.value)}
+                placeholder="example.com or 10.0.0.1"
+                value={draftTargetValue}
+              />
+            </label>
+            <button className="secondary-button" type="submit">
+              <Plus aria-hidden="true" size={15} strokeWidth={2} />
+              <span>Add</span>
+            </button>
+          </form>
+          <p className="field-hint" id="project-wizard-target-help">
+            Targets are classified as {targetTypeLabel('domain')} or {targetTypeLabel('ip')}. You can add more later.
+          </p>
+          <TargetList
+            emptyLabel="No targets added yet."
+            onRemove={(targetId) => setDraftTargets((current) => current.filter((target) => target.id !== targetId))}
+            targets={draftTargets}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div className="project-wizard-review">
+        <div>
+          <span>Name</span>
+          <strong>{draftName.trim() || 'Untitled project'}</strong>
+        </div>
+        <div>
+          <span>Domains</span>
+          <strong>{draftTargets.filter((target) => target.type === 'domain').length}</strong>
+        </div>
+        <div>
+          <span>IP addresses</span>
+          <strong>{draftTargets.filter((target) => target.type === 'ip').length}</strong>
+        </div>
+      </div>
     );
   }
 
@@ -323,12 +435,12 @@ export function ProjectsPage() {
       {!connection ? (
         <C2RequiredPanel />
       ) : (
-        <div className="projects-workspace-grid">
+        <div className="projects-workspace-grid projects-workspace-grid--modal-refactor">
           <section className="workspace-panel project-roster-panel" aria-label="Project roster">
             <div className="panel-header">
               <div>
                 <h2>Project roster</h2>
-                <p className="muted-text">Select a project, then activate it as platform scope.</p>
+                <p className="muted-text">Click a project to manage scope, targets, and activation.</p>
               </div>
               <div className="panel-icon" aria-hidden="true">
                 <FolderKanban size={18} strokeWidth={2} />
@@ -340,19 +452,18 @@ export function ProjectsPage() {
                 <FolderKanban aria-hidden="true" size={18} strokeWidth={2} />
                 <div>
                   <strong>No projects yet.</strong>
-                  <span>Create a project to define discovery scope.</span>
+                  <span>Use the top-bar New menu to start the project wizard.</span>
                 </div>
               </div>
             ) : (
               <div className="project-roster-list">
                 {projects.map((project) => {
-                  const isSelected = project.id === selectedProject?.id;
                   const isActive = project.id === activeProjectId;
                   return (
                     <button
-                      className={`project-roster-item ${isSelected ? 'is-selected' : ''} ${isActive ? 'is-active' : ''}`}
+                      className={`project-roster-item ${isActive ? 'is-active' : ''}`}
                       key={project.id}
-                      onClick={() => setSelectedProjectId(project.id)}
+                      onClick={() => openManageProject(project.id)}
                       type="button"
                     >
                       <span className="project-roster-name">
@@ -369,165 +480,190 @@ export function ProjectsPage() {
             )}
           </section>
 
-          <section className="workspace-panel project-detail-panel" aria-label="Selected project detail">
+          <section className="workspace-panel project-active-panel" aria-label="Active scope">
             <div className="panel-header">
               <div>
-                <h2>{selectedProject?.name ?? 'No project selected'}</h2>
-                <p className="muted-text">
-                  {selectedProjectIsActive ? 'This project is active platform scope.' : 'Activate this project before running scoped workflows.'}
-                </p>
+                <h2>Active scope</h2>
+                <p className="muted-text">Only one project operates across the platform.</p>
               </div>
-              <div className="project-detail-actions">
-                <div className={`project-scope-badge ${selectedProjectIsActive ? 'project-scope-badge--active' : ''}`}>
-                  {selectedProjectIsActive ? <CheckCircle2 aria-hidden="true" size={15} strokeWidth={2.2} /> : <ShieldCheck aria-hidden="true" size={15} strokeWidth={2.2} />}
-                  <span>{selectedProjectIsActive ? 'Active scope' : 'Inactive'}</span>
-                </div>
-                {selectedProject ? (
-                  <button
-                    aria-label={`Delete project ${selectedProject.name}`}
-                    className="project-delete-button"
-                    onClick={() => setPendingDeleteProject(selectedProject)}
-                    title={`Delete ${selectedProject.name}`}
-                    type="button"
-                  >
-                    <Trash2 aria-hidden="true" size={15} strokeWidth={2.2} />
-                  </button>
-                ) : null}
+              <div className="panel-icon" aria-hidden="true">
+                <ShieldCheck size={18} strokeWidth={2} />
               </div>
             </div>
-
-            {selectedProject ? (
-              <>
-                <div className="project-stat-grid">
-                  <div>
-                    <span>Domains</span>
-                    <strong>{countTargets(selectedProject, 'domain')}</strong>
-                  </div>
-                  <div>
-                    <span>IP addresses</span>
-                    <strong>{countTargets(selectedProject, 'ip')}</strong>
-                  </div>
-                  <div>
-                    <span>Total scope</span>
-                    <strong>{countTargets(selectedProject)}</strong>
-                  </div>
-                </div>
-
-                <div className="project-activation-strip">
-                  <div>
-                    <strong>{selectedProjectIsActive ? 'Current operating scope' : 'Not active across platform'}</strong>
-                    <span>
-                      {selectedProjectIsActive
-                        ? 'Recon and later workflows resolve against this project until deactivated.'
-                        : `${GLOBAL_SCOPE_LABEL} scope remains active until this project is activated.`}
-                    </span>
-                  </div>
-                  <button
-                    className={selectedProjectIsActive ? 'danger-button' : 'primary-button'}
-                    onClick={() => handleToggleProjectScope(selectedProject.id)}
-                    type="button"
-                  >
-                    <Power aria-hidden="true" size={15} strokeWidth={2} />
-                    <span>{selectedProjectIsActive ? 'Deactivate' : 'Activate'}</span>
-                  </button>
-                </div>
-
-                <div className="project-target-grid">
-                  {renderTargetGroup('Domains', 'domain', domains)}
-                  {renderTargetGroup('IP addresses', 'ip', ips)}
-                </div>
-              </>
-            ) : (
-              <div className="project-empty-state project-empty-state--large">
-                <Boxes aria-hidden="true" size={20} strokeWidth={2} />
-                <div>
-                  <strong>No project selected.</strong>
-                  <span>{GLOBAL_SCOPE_LABEL} scope is active by default. Create a project on the right to define scoped targets.</span>
-                </div>
+            <div className="project-stat-grid">
+              <div>
+                <span>Scope</span>
+                <strong>{activeScopeName}</strong>
               </div>
-            )}
+              <div>
+                <span>Targets</span>
+                <strong>{activeScopeTargets}</strong>
+              </div>
+              <div>
+                <span>Projects</span>
+                <strong>{projects.length}</strong>
+              </div>
+            </div>
+            <div className="project-activation-strip">
+              <div>
+                <strong>{activeProject ? 'Scoped workflows are active' : `${GLOBAL_SCOPE_LABEL} scope is active`}</strong>
+                <span>{activeProject ? 'Recon and later workflows resolve against the active project.' : 'Use the top-bar New menu to create a scoped project.'}</span>
+              </div>
+            </div>
           </section>
+        </div>
+      )}
 
-          <aside className="project-action-stack" aria-label="Project actions">
-            <section className="workspace-panel" aria-label="Project creation">
-              <div className="panel-header">
-                <div>
-                  <h2>New project</h2>
-                  <p className="muted-text">Create a scoped engagement container.</p>
-                </div>
-                <div className="panel-icon" aria-hidden="true">
-                  <Plus size={18} strokeWidth={2} />
-                </div>
-              </div>
-
-              <form className="workspace-form" onSubmit={handleCreateProject}>
-                <label>
-                  Project name
-                  <input name="projectName" placeholder="acme-external-scope" />
-                </label>
-                <button className="primary-button" type="submit">
+      {isCreateWizardOpen ? (
+        <ModalShell
+          ariaLabel="Create project wizard"
+          onClose={closeCreateWizard}
+          subtitle="Projects / scoped engagement setup"
+          title="Create project"
+          variant="wide"
+        >
+          <div className="project-wizard-modal">
+            <div className="project-wizard-steps" aria-label="Project creation steps">
+              {['Name', 'Targets', 'Review'].map((step, index) => (
+                <span className={index === createStep ? 'is-active' : ''} key={step}>{step}</span>
+              ))}
+            </div>
+            {renderCreateStep()}
+            {projectError ? <p className="error-text project-form-error" role="alert">{projectError}</p> : null}
+            {targetError ? <p className="error-text project-form-error" role="alert">{targetError}</p> : null}
+            <div className="button-row">
+              <button className="secondary-button" disabled={createStep === 0} onClick={() => setCreateStep((current) => Math.max(0, current - 1))} type="button">
+                Back
+              </button>
+              {createStep < 2 ? (
+                <button className="primary-button" onClick={() => setCreateStep((current) => Math.min(2, current + 1))} type="button">
+                  Next
+                </button>
+              ) : (
+                <button className="primary-button" onClick={handleCreateProject} type="button">
                   <Plus aria-hidden="true" size={15} strokeWidth={2} />
                   <span>Create project</span>
                 </button>
-              </form>
-              {projectError ? (
-                <p className="error-text project-form-error" role="alert">
-                  {projectError}
-                </p>
-              ) : null}
-            </section>
+              )}
+            </div>
+          </div>
+        </ModalShell>
+      ) : null}
 
-            <section className="workspace-panel" aria-label="Target intake">
-              <div className="panel-header">
+      {managingProject ? (
+        <ModalShell
+          ariaLabel={`Manage project ${managingProject.name}`}
+          onClose={() => setManagingProjectId('')}
+          subtitle="Projects / attributes and scope"
+          title={managingProject.name}
+          variant="wide"
+        >
+          <div className="project-manage-modal">
+            <section className="project-manage-summary" aria-label="Project summary">
+              <div className={`project-scope-badge ${managingProject.id === activeProjectId ? 'project-scope-badge--active' : ''}`}>
+                {managingProject.id === activeProjectId ? <CheckCircle2 aria-hidden="true" size={15} strokeWidth={2.2} /> : <ShieldCheck aria-hidden="true" size={15} strokeWidth={2.2} />}
+                <span>{managingProject.id === activeProjectId ? 'Active scope' : 'Inactive'}</span>
+              </div>
+              <div className="project-stat-grid">
                 <div>
-                  <h2>Add target</h2>
-                  <p className="muted-text">Domains and IPv4 addresses are detected automatically.</p>
+                  <span>Domains</span>
+                  <strong>{countTargets(managingProject, 'domain')}</strong>
                 </div>
-                <div className="panel-icon" aria-hidden="true">
-                  <RadioTower size={18} strokeWidth={2} />
-                </div>
-              </div>
-
-              <form className="workspace-form" onSubmit={handleAddTarget}>
-                <label>
-                  Target
-                  <input aria-describedby="target-help" name="targetValue" placeholder="example.com or 10.0.0.1" />
-                </label>
-                <p className="field-hint" id="target-help">
-                  The platform classifies valid entries as {targetTypeLabel('domain')} or {targetTypeLabel('ip')}.
-                </p>
-                <button className="secondary-button" disabled={!selectedProject} type="submit">
-                  Add to {selectedProject?.name ?? 'project'}
-                </button>
-              </form>
-              {targetError ? (
-                <p className="error-text project-form-error" role="alert">
-                  {targetError}
-                </p>
-              ) : null}
-            </section>
-
-            <section className="workspace-panel project-active-panel" aria-label="Active scope">
-              <div className="panel-header">
                 <div>
-                  <h2>Active scope</h2>
-                  <p className="muted-text">Only one project operates across the platform.</p>
+                  <span>IP addresses</span>
+                  <strong>{countTargets(managingProject, 'ip')}</strong>
                 </div>
-              </div>
-              <div className="dashboard-list">
-                <div className="dashboard-row">
-                  <span>Scope</span>
-                  <strong>{activeScopeName}</strong>
-                </div>
-                <div className="dashboard-row">
-                  <span>Targets</span>
-                  <strong>{activeScopeTargets}</strong>
+                <div>
+                  <span>Total scope</span>
+                  <strong>{countTargets(managingProject)}</strong>
                 </div>
               </div>
             </section>
-          </aside>
-        </div>
-      )}
+
+            <form className="workspace-form project-manage-name-form" onSubmit={handleRenameProject}>
+              <label>
+                Project name
+                <input defaultValue={managingProject.name} name="projectName" />
+              </label>
+              <button className="secondary-button" type="submit">Save name</button>
+            </form>
+
+            <div className="project-activation-strip">
+              <div>
+                <strong>{managingProject.id === activeProjectId ? 'Current operating scope' : 'Not active across platform'}</strong>
+                <span>{managingProject.id === activeProjectId ? 'Deactivate to return to Global scope.' : 'Activate this project before running scoped workflows.'}</span>
+              </div>
+              <button
+                className={managingProject.id === activeProjectId ? 'danger-button' : 'primary-button'}
+                onClick={() => handleToggleProjectScope(managingProject.id)}
+                type="button"
+              >
+                <Power aria-hidden="true" size={15} strokeWidth={2} />
+                <span>{managingProject.id === activeProjectId ? 'Deactivate' : 'Activate'}</span>
+              </button>
+            </div>
+
+            <form className="project-target-intake-row" onSubmit={handleAddManagedTarget}>
+              <label>
+                Add target
+                <input
+                  aria-describedby="manage-target-help"
+                  onChange={(event) => setManageTargetValue(event.target.value)}
+                  placeholder="example.com or 10.0.0.1"
+                  value={manageTargetValue}
+                />
+              </label>
+              <button className="secondary-button" type="submit">
+                <Plus aria-hidden="true" size={15} strokeWidth={2} />
+                <span>Add</span>
+              </button>
+            </form>
+            <p className="field-hint" id="manage-target-help">
+              Domains and IPv4 addresses are detected automatically.
+            </p>
+            {projectError ? <p className="error-text project-form-error" role="alert">{projectError}</p> : null}
+            {targetError ? <p className="error-text project-form-error" role="alert">{targetError}</p> : null}
+
+            <div className="project-target-grid">
+              <section className="project-target-group" aria-label="Domains">
+                <div className="project-target-group-header">
+                  <div>
+                    <Globe2 aria-hidden="true" size={16} strokeWidth={2} />
+                    <strong>Domains</strong>
+                  </div>
+                  <span>{countTargets(managingProject, 'domain')}</span>
+                </div>
+                <TargetList
+                  emptyLabel="No domains in this project."
+                  onRemove={handleRemoveManagedTarget}
+                  targets={managingProject.targets.filter((target) => target.type === 'domain')}
+                />
+              </section>
+              <section className="project-target-group" aria-label="IP addresses">
+                <div className="project-target-group-header">
+                  <div>
+                    <Network aria-hidden="true" size={16} strokeWidth={2} />
+                    <strong>IP addresses</strong>
+                  </div>
+                  <span>{countTargets(managingProject, 'ip')}</span>
+                </div>
+                <TargetList
+                  emptyLabel="No IP addresses in this project."
+                  onRemove={handleRemoveManagedTarget}
+                  targets={managingProject.targets.filter((target) => target.type === 'ip')}
+                />
+              </section>
+            </div>
+
+            <div className="project-manage-danger-row">
+              <button className="danger-button" onClick={() => setPendingDeleteProject(managingProject)} type="button">
+                <Trash2 aria-hidden="true" size={15} strokeWidth={2} />
+                <span>Delete project</span>
+              </button>
+            </div>
+          </div>
+        </ModalShell>
+      ) : null}
 
       {pendingDeleteProject ? (
         <ModalShell

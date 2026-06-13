@@ -35,7 +35,29 @@ class PortScanArgs(BaseModel):
     port_range: str = Field(min_length=1, max_length=512)
     timeout_ms: int = Field(default=1000, ge=50, le=60_000)
     max_threads: int = Field(default=64, ge=1, le=256)
+    scan_engine: str = "nmap"
+    scan_technique: str = "tcp-connect"
+    timing_template: int = Field(default=3, ge=0, le=5)
+    service_detection: bool = False
+    os_detection: bool = False
+    dns_resolution: bool = False
     execution_target: str = "auto"
+
+    @field_validator("scan_engine")
+    @classmethod
+    def validate_scan_engine(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized != "nmap":
+            raise ValueError("Port scans use scan_engine=nmap")
+        return normalized
+
+    @field_validator("scan_technique")
+    @classmethod
+    def validate_scan_technique(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"tcp-connect", "syn", "udp"}:
+            raise ValueError("scan_technique must be tcp-connect, syn, or udp")
+        return normalized
 
     @field_validator("execution_target")
     @classmethod

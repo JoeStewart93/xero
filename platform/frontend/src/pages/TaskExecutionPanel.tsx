@@ -52,6 +52,7 @@ interface TaskExecutionPanelProps {
   initialTaskId?: string;
   labelPrefix?: string;
   latestEvent: OperatorRealtimeEvent | null;
+  lockTargetBeacon?: boolean;
   realtimeStatus?: RealtimeStatus;
   testIdPrefix?: string;
   title?: string;
@@ -254,6 +255,7 @@ function BeaconTargetField({
   beacons,
   dragError,
   isDraggingOver,
+  isLocked,
   onDragLeave,
   onDragOver,
   onDrop,
@@ -264,6 +266,7 @@ function BeaconTargetField({
   beacons: Beacon[];
   dragError: string;
   isDraggingOver: boolean;
+  isLocked: boolean;
   onDragLeave: () => void;
   onDragOver: (event: DragEvent<HTMLDivElement>) => void;
   onDrop: (event: DragEvent<HTMLDivElement>) => void;
@@ -274,27 +277,34 @@ function BeaconTargetField({
   return (
     <div
       aria-label="Beacon task drop target"
-      className={`beacon-task-target ${isDraggingOver ? 'is-dragging' : ''} ${dragError ? 'is-invalid' : ''}`}
+      className={`beacon-task-target ${isDraggingOver ? 'is-dragging' : ''} ${dragError ? 'is-invalid' : ''} ${isLocked ? 'is-locked' : ''}`}
       data-testid="beacon-task-drop-target"
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
-      <label>
-        <span>Target beacon</span>
-        <select
-          aria-label="Target beacon"
-          onChange={(event) => onTargetChange(event.target.value)}
-          value={targetBeaconId}
-        >
-          <option value="">Select beacon</option>
-          {beacons.map((beacon) => (
-            <option key={beacon.id} value={beacon.id}>
-              {beacon.hostname} / {beacon.internal_ip}
-            </option>
-          ))}
-        </select>
-      </label>
+      {isLocked ? (
+        <div className="beacon-task-target-lock" aria-label="Target beacon">
+          <span>Target beacon</span>
+          <strong>{selectedBeacon ? `${selectedBeacon.hostname} / ${selectedBeacon.internal_ip}` : targetBeaconId || 'No beacon targeted'}</strong>
+        </div>
+      ) : (
+        <label>
+          <span>Target beacon</span>
+          <select
+            aria-label="Target beacon"
+            onChange={(event) => onTargetChange(event.target.value)}
+            value={targetBeaconId}
+          >
+            <option value="">Select beacon</option>
+            {beacons.map((beacon) => (
+              <option key={beacon.id} value={beacon.id}>
+                {beacon.hostname} / {beacon.internal_ip}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <div className="beacon-task-target-chip" data-testid="beacon-task-target-chip">
         <Target aria-hidden="true" size={15} strokeWidth={2.1} />
         <span>{selectedBeacon ? `${selectedBeacon.hostname} / ${selectedBeacon.status}` : 'No beacon targeted'}</span>
@@ -511,6 +521,7 @@ export function TaskExecutionPanel({
   initialTaskId,
   labelPrefix,
   latestEvent,
+  lockTargetBeacon = false,
   realtimeStatus,
   testIdPrefix = '',
   title = 'Task execution',
@@ -712,6 +723,9 @@ export function TaskExecutionPanel({
   }
 
   function handleTargetChange(nextBeaconId: string): void {
+    if (lockTargetBeacon) {
+      return;
+    }
     setTargetBeaconId(nextBeaconId);
     setSelectedTaskId('');
     setTaskResult(null);
@@ -794,6 +808,10 @@ export function TaskExecutionPanel({
   function handleDrop(event: DragEvent<HTMLDivElement>): void {
     event.preventDefault();
     setIsDraggingOver(false);
+    if (lockTargetBeacon) {
+      setDragError('This command queue is locked to the open beacon.');
+      return;
+    }
     const beaconId = readBeaconId(event);
     const beacon = beacons.find((item) => item.id === beaconId);
     if (!beacon) {
@@ -806,6 +824,10 @@ export function TaskExecutionPanel({
 
   function handleDragOver(event: DragEvent<HTMLDivElement>): void {
     event.preventDefault();
+    if (lockTargetBeacon) {
+      event.dataTransfer.dropEffect = 'none';
+      return;
+    }
     event.dataTransfer.dropEffect = 'copy';
     setIsDraggingOver(true);
   }
@@ -859,6 +881,7 @@ export function TaskExecutionPanel({
         <BeaconTargetField
           beacons={beacons}
           dragError={dragError}
+          isLocked={lockTargetBeacon}
           isDraggingOver={isDraggingOver}
           onDragLeave={() => setIsDraggingOver(false)}
           onDragOver={handleDragOver}

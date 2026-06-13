@@ -132,6 +132,7 @@ describe('ReconPage', () => {
     expect(screen.getByText('127.0.0.1:80')).toBeTruthy();
     expect(within(screen.getByRole('table')).getByText('open')).toBeTruthy();
 
+    fireEvent.click(screen.getByRole('button', { name: /NMAP port scan/ }));
     fireEvent.change(screen.getByLabelText('Scan targets'), { target: { value: '127.0.0.1' } });
     fireEvent.change(screen.getByLabelText('Port range'), { target: { value: '8000,9000' } });
     fireEvent.click(screen.getByRole('button', { name: /Run scan/ }));

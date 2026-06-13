@@ -14,7 +14,16 @@ from xero_common.worker_client import (
 
 from xero_scanner.config import Settings, get_settings
 
-CAPABILITIES = ["embedded-compatible", "tcp-connect", "service-enumeration"]
+CAPABILITIES = [
+    "embedded-compatible",
+    "tcp-connect",
+    "service-enumeration",
+    "nmap",
+    "masscan",
+    "dns-enumeration",
+    "path-enumeration",
+    "shodan",
+]
 WORKER_KIND = "scanner"
 
 

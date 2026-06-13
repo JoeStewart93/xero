@@ -2357,6 +2357,10 @@ h2 {
   gap: 12px;
 }
 
+.projects-workspace-grid--modal-refactor {
+  grid-template-columns: minmax(360px, 0.95fr) minmax(340px, 0.75fr);
+}
+
 .beacons-workspace-grid {
   display: grid;
   grid-template-columns: minmax(760px, 1.9fr) minmax(270px, 0.5fr);
@@ -2367,7 +2371,7 @@ h2 {
 .beacon-detail-panel {
   overflow-y: auto;
   max-height: calc(100vh - 94px);
-  padding: 10px;
+  padding: 9px;
   scrollbar-color: rgba(0, 231, 255, 0.38) rgba(1, 5, 9, 0.44);
   scrollbar-width: thin;
 }
@@ -2866,8 +2870,8 @@ h2 {
 .beacon-detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: 5px;
+  margin-bottom: 7px;
 }
 
 .beacon-profile-panel {
@@ -2942,27 +2946,27 @@ h2 {
 .beacon-detail-row {
   display: grid;
   gap: 2px;
-  min-height: 38px;
+  min-height: 34px;
   border: 1px solid rgba(0, 231, 255, 0.18);
   border-radius: 5px;
-  padding: 6px 7px;
+  padding: 5px 6px;
   background: rgba(1, 5, 9, 0.62);
 }
 
 .beacon-detail-row span {
   color: var(--xero-muted);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 720;
-  line-height: 16px;
+  line-height: 14px;
 }
 
 .beacon-detail-row strong {
   overflow: hidden;
   color: var(--xero-text);
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 760;
-  line-height: 17px;
+  line-height: 15px;
   overflow-wrap: anywhere;
   text-overflow: ellipsis;
 }
@@ -3156,10 +3160,7 @@ h2 {
   display: grid;
   place-items: center;
   padding: 24px;
-  background:
-    radial-gradient(circle at 24% 18%, rgba(0, 231, 255, 0.1), transparent 34%),
-    radial-gradient(circle at 78% 20%, rgba(255, 48, 69, 0.12), transparent 36%),
-    rgba(0, 2, 5, 0.78);
+  background: rgba(0, 2, 5, 0.78);
   backdrop-filter: blur(12px);
 }
 
@@ -3170,10 +3171,7 @@ h2 {
   max-height: min(760px, calc(100vh - 48px));
   border: 1px solid rgba(0, 231, 255, 0.28);
   border-radius: 6px;
-  background:
-    linear-gradient(140deg, rgba(0, 231, 255, 0.07), transparent 36%),
-    linear-gradient(320deg, rgba(255, 48, 69, 0.08), transparent 42%),
-    rgba(2, 7, 12, 0.98);
+  background: rgba(2, 7, 12, 0.98);
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.58), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
@@ -3360,6 +3358,44 @@ h2 {
   line-height: 18px;
 }
 
+.beacon-control-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.beacon-control-panel .beacon-profile-panel {
+  margin-bottom: 0;
+}
+
+.beacon-control-danger {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(255, 48, 69, 0.24);
+  border-radius: 5px;
+  padding: 10px;
+  background: rgba(255, 48, 69, 0.07);
+}
+
+.beacon-control-danger div {
+  display: grid;
+  gap: 3px;
+}
+
+.beacon-control-danger strong {
+  color: var(--xero-text);
+  font-size: 13px;
+  font-weight: 820;
+  line-height: 18px;
+}
+
+.beacon-control-danger span {
+  color: var(--xero-muted);
+  font-size: 12.5px;
+  line-height: 17px;
+}
+
 .task-queue-panel {
   display: grid;
   gap: 12px;
@@ -3465,8 +3501,40 @@ h2 {
   background: rgba(255, 48, 69, 0.07);
 }
 
+.beacon-task-target.is-locked {
+  border-style: solid;
+  background: rgba(0, 231, 255, 0.03);
+}
+
 .beacon-task-target .task-queue-error {
   grid-column: 1 / -1;
+}
+
+.beacon-task-target-lock {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.beacon-task-target-lock span {
+  color: var(--xero-muted);
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 15px;
+}
+
+.beacon-task-target-lock strong {
+  overflow: hidden;
+  min-height: 36px;
+  border: 1px solid rgba(0, 231, 255, 0.18);
+  border-radius: 5px;
+  padding: 9px 10px;
+  background: rgba(1, 5, 9, 0.62);
+  color: var(--xero-text);
+  font-size: 13px;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .beacon-task-target-chip {
@@ -4750,12 +4818,16 @@ h2 {
 
 .project-target-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
+  grid-template-columns: auto minmax(0, 1fr) 28px;
   align-items: center;
   gap: 10px;
   min-height: 30px;
   border-bottom: 1px solid rgba(0, 231, 255, 0.1);
   padding: 2px 6px 2px 9px;
+}
+
+.project-target-row svg {
+  color: var(--xero-primary);
 }
 
 .project-target-row:last-child {
@@ -4871,6 +4943,127 @@ h2 {
 
 .project-form-error {
   margin-top: 10px;
+}
+
+.project-wizard-modal,
+.project-manage-modal {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.project-wizard-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid rgba(0, 231, 255, 0.16);
+  border-radius: 5px;
+  background: rgba(1, 5, 9, 0.62);
+}
+
+.project-wizard-steps span {
+  min-height: 34px;
+  border-right: 1px solid rgba(0, 231, 255, 0.12);
+  padding: 9px 10px;
+  color: var(--xero-muted);
+  font-size: 12px;
+  font-weight: 820;
+  line-height: 16px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.project-wizard-steps span:last-child {
+  border-right: 0;
+}
+
+.project-wizard-steps span.is-active {
+  background: rgba(0, 231, 255, 0.1);
+  color: var(--xero-primary);
+}
+
+.project-wizard-step,
+.project-wizard-review,
+.project-manage-summary {
+  display: grid;
+  gap: 10px;
+}
+
+.project-wizard-step label,
+.project-target-intake-row label,
+.project-manage-name-form label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--xero-muted);
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 16px;
+}
+
+.project-wizard-step input,
+.project-target-intake-row input,
+.project-manage-name-form input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  border: 1px solid rgba(0, 231, 255, 0.2);
+  border-radius: 5px;
+  padding: 0 10px;
+  background: rgba(1, 5, 9, 0.72);
+  color: var(--xero-text);
+  font-size: 13px;
+  outline: none;
+}
+
+.project-wizard-step input:focus,
+.project-target-intake-row input:focus,
+.project-manage-name-form input:focus {
+  border-color: var(--xero-primary);
+  box-shadow: 0 0 0 3px var(--xero-primary-ring);
+}
+
+.project-target-intake-row,
+.project-manage-name-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.project-wizard-review {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.project-wizard-review div {
+  display: grid;
+  gap: 3px;
+  border: 1px solid rgba(0, 231, 255, 0.18);
+  border-radius: 5px;
+  padding: 9px 10px;
+  background: rgba(1, 5, 9, 0.62);
+}
+
+.project-wizard-review span {
+  color: var(--xero-muted);
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 16px;
+}
+
+.project-wizard-review strong {
+  overflow: hidden;
+  color: var(--xero-text);
+  font-size: 13px;
+  font-weight: 820;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-manage-danger-row {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .lifecycle-panel {
@@ -5945,6 +6138,10 @@ h2 {
   margin-top: 12px;
 }
 
+.settings-integration-form {
+  margin-top: 12px;
+}
+
 .recon-workspace {
   display: grid;
   grid-template-columns: minmax(300px, 0.85fr) minmax(280px, 0.7fr) minmax(420px, 1.25fr);
@@ -5958,8 +6155,83 @@ h2 {
   gap: 10px;
 }
 
+.recon-scan-type-list {
+  display: grid;
+  gap: 8px;
+}
+
+.recon-scan-type-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  border: 1px solid rgba(0, 231, 255, 0.16);
+  border-radius: 5px;
+  padding: 9px 10px;
+  background: rgba(1, 5, 9, 0.58);
+  color: var(--xero-muted);
+  cursor: pointer;
+  text-align: left;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.recon-scan-type-card:hover {
+  border-color: rgba(0, 231, 255, 0.36);
+  background: rgba(0, 231, 255, 0.08);
+  color: var(--xero-primary);
+}
+
+.recon-scan-type-card span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.recon-scan-type-card strong,
+.recon-scan-type-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recon-scan-type-card strong {
+  color: var(--xero-text);
+  font-size: 13px;
+  font-weight: 820;
+  line-height: 17px;
+}
+
+.recon-scan-type-card small {
+  color: var(--xero-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.recon-scan-type-card em {
+  border: 1px solid rgba(141, 164, 184, 0.24);
+  border-radius: 999px;
+  padding: 3px 7px;
+  color: var(--xero-muted);
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 820;
+  line-height: 13px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.recon-scan-type-card em.is-ready {
+  border-color: rgba(52, 232, 139, 0.36);
+  color: #34e88b;
+}
+
 .recon-scan-form {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.recon-scan-form--modal {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .recon-scan-form label {
@@ -6013,6 +6285,93 @@ h2 {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.recon-scanner-modal {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.recon-scanner-modal-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(0, 231, 255, 0.14);
+  border-radius: 5px;
+  padding: 9px 10px;
+  background: rgba(1, 5, 9, 0.58);
+}
+
+.recon-scanner-modal-head p {
+  margin: 0;
+  color: var(--xero-muted);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.recon-planned-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.recon-planned-form label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--xero-muted);
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 16px;
+}
+
+.recon-planned-form label:first-child,
+.recon-integration-state {
+  grid-column: 1 / -1;
+}
+
+.recon-planned-form input,
+.recon-planned-form textarea {
+  width: 100%;
+  border: 1px solid rgba(0, 231, 255, 0.2);
+  border-radius: 5px;
+  background: rgba(1, 5, 9, 0.72);
+  color: var(--xero-text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.recon-planned-form input {
+  min-height: 36px;
+  padding: 0 10px;
+}
+
+.recon-planned-form textarea {
+  min-height: 78px;
+  padding: 9px 10px;
+  resize: vertical;
+}
+
+.recon-integration-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px dashed rgba(255, 190, 94, 0.3);
+  border-radius: 5px;
+  padding: 9px 10px;
+  background: rgba(255, 190, 94, 0.08);
+  color: #ffcf86;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.recon-integration-state.is-ready {
+  border-color: rgba(52, 232, 139, 0.34);
+  background: rgba(52, 232, 139, 0.08);
+  color: #9bf6c1;
 }
 
 .recon-job-list {
@@ -6665,6 +7024,7 @@ h2 {
   .dashboard-overview-grid,
   .dashboard-summary-cards,
   .beacons-workspace-grid,
+  .beacon-control-danger,
   .infrastructure-grid,
   .protocol-observability-grid,
   .protocol-event-row,
@@ -7067,6 +7427,8 @@ h2 {
 
 @media (max-width: 900px) {
   .recon-workspace,
+  .recon-planned-form,
+  .recon-scan-form--modal,
   .deploy-builder-layout,
   .deploy-target-grid,
   .deploy-field-grid,

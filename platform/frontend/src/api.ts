@@ -682,10 +682,16 @@ export type ScanResultState = 'closed' | 'filtered' | 'open';
 export type ServiceEnumStatus = 'error' | 'identified' | 'skipped' | 'timeout' | 'unknown';
 
 export interface PortScanArgs {
+  dns_resolution?: boolean;
   execution_target?: 'auto';
   max_threads?: number;
+  os_detection?: boolean;
   port_range: string;
+  scan_engine?: 'nmap';
+  scan_technique?: string;
+  service_detection?: boolean;
   targets: string[];
+  timing_template?: number;
   timeout_ms?: number;
 }
 

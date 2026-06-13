@@ -3,12 +3,15 @@ import { Cable, Settings } from 'lucide-react';
 
 import { DEFAULT_C2_BASE_URL } from '../api';
 import { AppShell } from '../components/AppShell';
+import { SHODAN_API_KEY_STORAGE_KEY } from '../settingsStorage';
 import { useC2Connection } from '../useC2Connection';
 
 export function SettingsPage() {
   const { checkConnection, connection, disconnect, error, isChecking } = useC2Connection();
   const [baseUrl, setBaseUrl] = useState(connection?.baseUrl ?? DEFAULT_C2_BASE_URL);
   const [password, setPassword] = useState('');
+  const [shodanApiKey, setShodanApiKey] = useState(() => window.localStorage.getItem(SHODAN_API_KEY_STORAGE_KEY) ?? '');
+  const [integrationMessage, setIntegrationMessage] = useState('');
 
   async function handleConnect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -18,6 +21,18 @@ export function SettingsPage() {
     } catch {
       // The connection context surfaces the error for the form.
     }
+  }
+
+  function handleSaveIntegrations(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalizedKey = shodanApiKey.trim();
+    if (normalizedKey) {
+      window.localStorage.setItem(SHODAN_API_KEY_STORAGE_KEY, normalizedKey);
+      setIntegrationMessage('Shodan API key saved.');
+      return;
+    }
+    window.localStorage.removeItem(SHODAN_API_KEY_STORAGE_KEY);
+    setIntegrationMessage('Shodan API key cleared.');
   }
 
   return (
@@ -116,6 +131,24 @@ export function SettingsPage() {
               <strong>Local</strong>
             </div>
           </div>
+
+          <form className="workspace-form settings-integration-form" onSubmit={handleSaveIntegrations}>
+            <label>
+              Shodan API key
+              <input
+                autoComplete="off"
+                name="shodanApiKey"
+                onChange={(event) => setShodanApiKey(event.target.value)}
+                placeholder="Optional reconnaissance integration"
+                type="password"
+                value={shodanApiKey}
+              />
+            </label>
+            <div className="button-row">
+              <button className="secondary-button" type="submit">Save integrations</button>
+            </div>
+          </form>
+          {integrationMessage ? <p className="profile-status-message">{integrationMessage}</p> : null}
         </section>
       </div>
     </AppShell>

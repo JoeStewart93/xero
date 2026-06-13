@@ -8,6 +8,7 @@ import { AUTH_STORAGE_KEY } from '../authStorage';
 import { C2ConnectionProvider } from '../c2Connection';
 import { RealtimeProvider } from '../realtime';
 import { C2_CONNECTION_STORAGE_KEY } from '../c2ConnectionStorage';
+import { SHODAN_API_KEY_STORAGE_KEY } from '../settingsStorage';
 
 function renderSettingsPage() {
   return render(
@@ -97,5 +98,22 @@ describe('SettingsPage', () => {
     expect(nextDisconnect.disabled).toBe(true);
     expect(nextDisconnect.className).toContain('secondary-button');
     expect(screen.getByText('Disconnected')).toBeTruthy();
+  });
+
+  it('stores and clears the optional Shodan API key for recon lookups', () => {
+    renderSettingsPage();
+
+    const input = screen.getByLabelText('Shodan API key') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'shodan-secret' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save integrations' }));
+
+    expect(window.localStorage.getItem(SHODAN_API_KEY_STORAGE_KEY)).toBe('shodan-secret');
+    expect(screen.getByText('Shodan API key saved.')).toBeTruthy();
+
+    fireEvent.change(input, { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save integrations' }));
+
+    expect(window.localStorage.getItem(SHODAN_API_KEY_STORAGE_KEY)).toBeNull();
+    expect(screen.getByText('Shodan API key cleared.')).toBeTruthy();
   });
 });

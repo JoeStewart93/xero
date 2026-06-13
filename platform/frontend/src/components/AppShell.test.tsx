@@ -61,7 +61,7 @@ describe('AppShell', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create resource' }));
 
     const menu = screen.getByRole('menu', { name: 'Create resource' });
-    expect(within(menu).getByRole('menuitem', { name: /Project/ }).getAttribute('href')).toBe('/projects');
+    expect(within(menu).getByRole('menuitem', { name: /Project/ }).getAttribute('href')).toBe('/projects?create=1');
     expect(within(menu).getByRole('menuitem', { name: /Task/ }).getAttribute('href')).toBe('/beacons?module=shell');
     expect(within(menu).getByRole('menuitem', { name: /Target/ }).getAttribute('href')).toBe('/projects/scope');
     expect(within(menu).getByRole('menuitem', { name: /Resource/ }).getAttribute('href')).toBe('/assets');

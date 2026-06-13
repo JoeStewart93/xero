@@ -308,6 +308,42 @@ export interface FileBrowserSessionCreateRequest {
   root_path?: string | null;
 }
 
+export type FileTransferDirection = 'download' | 'upload';
+export type FileTransferStatus = 'completed' | 'failed' | 'staged' | 'transferring';
+
+export interface FileTransfer {
+  acked_chunks: number;
+  artifact_available?: boolean | null;
+  artifact_id: string | null;
+  beacon_id: string;
+  chunk_size_bytes: number;
+  completed_at: string | null;
+  created_at: string;
+  direction: FileTransferDirection;
+  error_message: string | null;
+  filename: string;
+  id: string;
+  remote_path: string;
+  session_id: string;
+  sha256: string | null;
+  size_bytes: number;
+  staged_chunks: number;
+  started_at: string | null;
+  status: FileTransferStatus;
+  total_chunks: number;
+  updated_at: string;
+}
+
+export interface FileTransferCreateRequest {
+  beacon_id: string;
+  filename: string;
+  overwrite?: boolean;
+  remote_path: string;
+  session_id: string;
+  sha256: string;
+  size_bytes: number;
+}
+
 export interface RegistrySession {
   actor_subject: string;
   beacon_id: string;
@@ -1210,6 +1246,56 @@ export async function closeFileBrowserSession(
   return c2Fetch<FileBrowserSession>(baseUrl, accessToken, `/api/v1/sessions/${sessionId}`, {
     method: 'DELETE',
   });
+}
+
+export async function createFileTransferUpload(
+  baseUrl: string,
+  accessToken: string,
+  payload: FileTransferCreateRequest,
+): Promise<FileTransfer> {
+  return c2Fetch<FileTransfer>(baseUrl, accessToken, '/api/v1/file-transfers/uploads', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function uploadFileTransferChunk(
+  baseUrl: string,
+  accessToken: string,
+  transferId: string,
+  sequence: number,
+  payload: { chunk_sha256: string; data_b64: string },
+): Promise<FileTransfer> {
+  return c2Fetch<FileTransfer>(
+    baseUrl,
+    accessToken,
+    `/api/v1/file-transfers/${transferId}/chunks/${sequence}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function getFileTransfer(baseUrl: string, accessToken: string, transferId: string): Promise<FileTransfer> {
+  return c2Fetch<FileTransfer>(baseUrl, accessToken, `/api/v1/file-transfers/${transferId}`);
+}
+
+export async function downloadFileTransferArtifact(
+  baseUrl: string,
+  accessToken: string,
+  transferId: string,
+): Promise<Blob> {
+  const headers = new Headers();
+  headers.set('Authorization', `Bearer ${accessToken}`);
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/file-transfers/${transferId}/artifact`, {
+    headers,
+  });
+  if (!response.ok) {
+    const payload = await parseResponseJson<Record<string, string>>(response);
+    throw new Error(payload.detail || 'File transfer artifact download failed');
+  }
+  return response.blob();
 }
 
 export async function closeRegistrySession(

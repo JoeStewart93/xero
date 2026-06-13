@@ -21,10 +21,13 @@ const apiMocks = vi.hoisted(() => ({
   closeRegistrySession: vi.fn(),
   closeShellSession: vi.fn(),
   createFileBrowserSession: vi.fn(),
+  createFileTransferUpload: vi.fn(),
   createRegistrySession: vi.fn(),
   createShellSession: vi.fn(),
   createTask: vi.fn(),
+  downloadFileTransferArtifact: vi.fn(),
   downloadTaskResultText: vi.fn(),
+  getFileTransfer: vi.fn(),
   getBeaconActivity: vi.fn(),
   getModules: vi.fn(),
   getTaskResult: vi.fn(),
@@ -32,6 +35,7 @@ const apiMocks = vi.hoisted(() => ({
   getTasks: vi.fn(),
   getTrafficProfiles: vi.fn(),
   killBeacon: vi.fn(),
+  uploadFileTransferChunk: vi.fn(),
 }));
 
 const terminalMocks = vi.hoisted(() => ({
@@ -48,10 +52,13 @@ vi.mock('../api', async (importOriginal) => ({
   closeRegistrySession: apiMocks.closeRegistrySession,
   closeShellSession: apiMocks.closeShellSession,
   createFileBrowserSession: apiMocks.createFileBrowserSession,
+  createFileTransferUpload: apiMocks.createFileTransferUpload,
   createRegistrySession: apiMocks.createRegistrySession,
   createShellSession: apiMocks.createShellSession,
   createTask: apiMocks.createTask,
+  downloadFileTransferArtifact: apiMocks.downloadFileTransferArtifact,
   downloadTaskResultText: apiMocks.downloadTaskResultText,
+  getFileTransfer: apiMocks.getFileTransfer,
   getBeaconActivity: apiMocks.getBeaconActivity,
   getModules: apiMocks.getModules,
   getTaskResult: apiMocks.getTaskResult,
@@ -59,6 +66,7 @@ vi.mock('../api', async (importOriginal) => ({
   getTasks: apiMocks.getTasks,
   getTrafficProfiles: apiMocks.getTrafficProfiles,
   killBeacon: apiMocks.killBeacon,
+  uploadFileTransferChunk: apiMocks.uploadFileTransferChunk,
 }));
 
 vi.mock('@xterm/xterm', () => ({
@@ -374,6 +382,15 @@ describe('BeaconsPage', () => {
     terminalMocks.terminals = [];
     terminalMocks.writes = [];
     vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('crypto', {
+      subtle: {
+        digest: vi.fn(async (_algorithm: string, buffer: ArrayBuffer) => {
+          const digest = new Uint8Array(32);
+          digest[0] = new Uint8Array(buffer).length;
+          return digest.buffer;
+        }),
+      },
+    });
     mocks.useAuth.mockReturnValue({
       logout: vi.fn(),
       session: {
@@ -444,6 +461,70 @@ describe('BeaconsPage', () => {
     });
     apiMocks.getTaskResultChunks.mockResolvedValue({ items: [] });
     apiMocks.downloadTaskResultText.mockResolvedValue(new Blob(['output line\n'], { type: 'text/plain' }));
+    apiMocks.createFileTransferUpload.mockResolvedValue({
+      acked_chunks: 0,
+      artifact_id: null,
+      beacon_id: beaconOne.id,
+      chunk_size_bytes: 4,
+      completed_at: null,
+      created_at: '2026-06-08T14:16:00Z',
+      direction: 'upload',
+      error_message: null,
+      filename: 'payload.bin',
+      id: '99999999-9999-9999-9999-999999999999',
+      remote_path: 'payload.bin',
+      session_id: fileBrowserSession.id,
+      sha256: 'sha',
+      size_bytes: 7,
+      staged_chunks: 0,
+      started_at: null,
+      status: 'staged',
+      total_chunks: 2,
+      updated_at: '2026-06-08T14:16:00Z',
+    });
+    apiMocks.uploadFileTransferChunk.mockResolvedValue({
+      acked_chunks: 0,
+      artifact_id: null,
+      beacon_id: beaconOne.id,
+      chunk_size_bytes: 4,
+      completed_at: null,
+      created_at: '2026-06-08T14:16:00Z',
+      direction: 'upload',
+      error_message: null,
+      filename: 'payload.bin',
+      id: '99999999-9999-9999-9999-999999999999',
+      remote_path: 'payload.bin',
+      session_id: fileBrowserSession.id,
+      sha256: 'sha',
+      size_bytes: 7,
+      staged_chunks: 1,
+      started_at: null,
+      status: 'staged',
+      total_chunks: 2,
+      updated_at: '2026-06-08T14:16:00Z',
+    });
+    apiMocks.getFileTransfer.mockResolvedValue({
+      acked_chunks: 2,
+      artifact_id: 'artifact-one',
+      beacon_id: beaconOne.id,
+      chunk_size_bytes: 4,
+      completed_at: '2026-06-08T14:17:00Z',
+      created_at: '2026-06-08T14:16:00Z',
+      direction: 'download',
+      error_message: null,
+      filename: 'report.bin',
+      id: '88888888-8888-8888-8888-888888888888',
+      remote_path: 'report.bin',
+      session_id: fileBrowserSession.id,
+      sha256: 'sha',
+      size_bytes: 8,
+      staged_chunks: 2,
+      started_at: '2026-06-08T14:16:00Z',
+      status: 'completed',
+      total_chunks: 2,
+      updated_at: '2026-06-08T14:17:00Z',
+    });
+    apiMocks.downloadFileTransferArtifact.mockResolvedValue(new Blob(['downloaded'], { type: 'application/octet-stream' }));
     apiMocks.getBeaconActivity.mockResolvedValue({
       items: [
         {
@@ -876,7 +957,7 @@ describe('BeaconsPage', () => {
     }));
 
     expect(await screen.findByText('notes.txt')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /notes.txt/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'notes.txt' }));
     expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual({
       op: 'read_file',
       path: 'Documents/notes.txt',
@@ -896,6 +977,211 @@ describe('BeaconsPage', () => {
     }));
 
     expect((await screen.findByTestId('file-preview-output')).textContent).toContain('hello from preview');
+  });
+
+  it('uploads a file through staged transfer chunks and beacon ACKs', async () => {
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 1,
+      beacons: [beaconOne],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 0,
+      status: 'connected',
+    });
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    fireEvent.click(screen.getByRole('button', { name: /Files/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    await waitFor(() => {
+      expect(apiMocks.createFileBrowserSession).toHaveBeenCalled();
+    });
+    FakeWebSocket.instances[0].open();
+    FakeWebSocket.instances[0].receive(JSON.stringify({ op: 'attached', session: fileBrowserSession }));
+    FakeWebSocket.instances[0].receive(JSON.stringify({ op: 'opened', session: { ...fileBrowserSession, status: 'open' } }));
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      entries: [],
+      ok: true,
+      op: 'list_dir',
+      path: '',
+      request_id: 'file-1',
+    }));
+
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).toBeTruthy();
+    fireEvent.change(input!, { target: { files: [new File(['payload'], 'payload.bin')] } });
+
+    await waitFor(() => {
+      expect(apiMocks.createFileTransferUpload).toHaveBeenCalledWith(
+        'http://localhost:18001',
+        'c2-token',
+        expect.objectContaining({
+          beacon_id: beaconOne.id,
+          filename: 'payload.bin',
+          remote_path: 'payload.bin',
+          session_id: fileBrowserSession.id,
+          size_bytes: 7,
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(apiMocks.uploadFileTransferChunk).toHaveBeenCalledTimes(2);
+    });
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual(expect.objectContaining({
+      op: 'upload_start',
+      transfer_id: '99999999-9999-9999-9999-999999999999',
+    }));
+
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      next_sequence: 0,
+      ok: true,
+      op: 'upload_ready',
+      transfer_id: '99999999-9999-9999-9999-999999999999',
+    }));
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual(expect.objectContaining({
+      op: 'upload_chunk',
+      sequence: 0,
+      transfer_id: '99999999-9999-9999-9999-999999999999',
+    }));
+
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      acked_chunks: 0,
+      next_sequence: 0,
+      ok: false,
+      op: 'upload_nack',
+      sequence: 0,
+      transfer_id: '99999999-9999-9999-9999-999999999999',
+    }));
+    expect(FakeWebSocket.instances[0].sent
+      .map((item) => JSON.parse(item))
+      .filter((item) => item.op === 'upload_chunk' && item.sequence === 0)).toHaveLength(2);
+
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      message: 'Network interrupted',
+      ok: false,
+      op: 'transfer_error',
+      transfer_id: '99999999-9999-9999-9999-999999999999',
+    }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry upload transfer' }));
+    expect(FakeWebSocket.instances[0].sent
+      .map((item) => JSON.parse(item))
+      .filter((item) => item.op === 'upload_start' && item.transfer_id === '99999999-9999-9999-9999-999999999999'))
+      .toHaveLength(2);
+
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      acked_chunks: 1,
+      next_sequence: 1,
+      ok: true,
+      op: 'upload_ack',
+      total_chunks: 2,
+      transfer_id: '99999999-9999-9999-9999-999999999999',
+    }));
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      acked_chunks: 2,
+      next_sequence: null,
+      ok: true,
+      op: 'upload_ack',
+      total_chunks: 2,
+      transfer_id: '99999999-9999-9999-9999-999999999999',
+    }));
+
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual(expect.objectContaining({
+      op: 'upload_complete',
+      transfer_id: '99999999-9999-9999-9999-999999999999',
+    }));
+
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      ok: true,
+      op: 'upload_complete',
+      transfer_id: '99999999-9999-9999-9999-999999999999',
+    }));
+    await waitFor(() => {
+      expect(screen.getByTestId('file-transfer-progress').textContent).toContain('100%');
+    });
+  });
+
+  it('downloads a file through beacon chunks and saves the assembled artifact', async () => {
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 1,
+      beacons: [beaconOne],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 0,
+      status: 'connected',
+    });
+    const createObjectURL = vi.fn(() => 'blob:file-transfer');
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    fireEvent.click(screen.getByRole('button', { name: /Files/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    await waitFor(() => {
+      expect(apiMocks.createFileBrowserSession).toHaveBeenCalled();
+    });
+    FakeWebSocket.instances[0].open();
+    FakeWebSocket.instances[0].receive(JSON.stringify({ op: 'attached', session: fileBrowserSession }));
+    FakeWebSocket.instances[0].receive(JSON.stringify({ op: 'opened', session: { ...fileBrowserSession, status: 'open' } }));
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      entries: [
+        { modified_at: '2026-06-08T14:02:00Z', name: 'report.bin', path: 'report.bin', permissions: '-rw-r--r--', size: 8, type: 'file' },
+      ],
+      ok: true,
+      op: 'list_dir',
+      path: '',
+      request_id: 'file-1',
+    }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Download report.bin' }));
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual(expect.objectContaining({
+      op: 'download_init',
+      path: 'report.bin',
+    }));
+
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      ok: true,
+      op: 'download_ready',
+      path: 'report.bin',
+      total_chunks: 2,
+      transfer_id: '88888888-8888-8888-8888-888888888888',
+    }));
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      acked_chunks: 1,
+      next_sequence: 1,
+      ok: true,
+      op: 'download_chunk',
+      total_chunks: 2,
+      transfer_id: '88888888-8888-8888-8888-888888888888',
+    }));
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual(expect.objectContaining({
+      op: 'download_chunk_request',
+      sequence: 1,
+      transfer_id: '88888888-8888-8888-8888-888888888888',
+    }));
+
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      artifact_id: 'artifact-one',
+      ok: true,
+      op: 'download_complete',
+      transfer_id: '88888888-8888-8888-8888-888888888888',
+    }));
+
+    await waitFor(() => {
+      expect(apiMocks.downloadFileTransferArtifact).toHaveBeenCalledWith(
+        'http://localhost:18001',
+        'c2-token',
+        '88888888-8888-8888-8888-888888888888',
+      );
+    });
+    expect(anchorClick).toHaveBeenCalled();
+    expect(createObjectURL).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:file-transfer');
+    expect(screen.getByTestId('file-transfer-progress').textContent).toContain('Download complete');
   });
 
   it('opens a registry session and confirms value write and delete before applying them', async () => {

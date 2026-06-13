@@ -23,6 +23,7 @@ from xero_c2.artifacts import ArtifactNotFound, artifact_store_for_settings
 from xero_c2.beacon_liveness import BEACON_STATUS_OFFLINE, mark_stale_beacons_offline
 from xero_c2.beacon_transport import WS_CLOSE_DUPLICATE, WS_CLOSE_OVERLOADED, BeaconTransportManager
 from xero_c2.config import Settings, get_settings
+from xero_c2.file_transfers import create_download_transfer
 from xero_c2.infrastructure_workers import mark_stale_workers
 from xero_c2.models import (
     Artifact,
@@ -30,6 +31,8 @@ from xero_c2.models import (
     Beacon,
     BeaconBuild,
     BeaconEvent,
+    FileTransfer,
+    FileTransferChunk,
     InfrastructureWorker,
     InteractiveSession,
     ProtocolFrameReceipt,
@@ -2517,6 +2520,242 @@ def test_file_browser_access_error_keeps_session_open(c2_client):
     assert outcome.operator_message["error_code"] == "access_denied"
     assert outcome.operator_message["request_id"] == "seq-denied"
     assert file_session.status == "open"
+
+
+def test_file_transfer_upload_stages_chunks_and_records_ack(result_c2_client, monkeypatch):
+    token = connect_c2(result_c2_client)
+    registered = register_beacon(result_c2_client)
+    attach_protocol_metadata(registered["beacon_id"])
+
+    async def capture_send(_, _frame: bytes) -> bool:
+        return True
+
+    monkeypatch.setattr(result_c2_client.app.state.beacon_transport_manager, "send_to_beacon", capture_send)
+    created_session = result_c2_client.post(
+        "/api/v1/sessions/file-browser",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"beacon_id": registered["beacon_id"]},
+    ).json()
+    content = b"hello transfer"
+    created = result_c2_client.post(
+        "/api/v1/file-transfers/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "beacon_id": registered["beacon_id"],
+            "filename": "payload.bin",
+            "remote_path": "payload.bin",
+            "session_id": created_session["id"],
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size_bytes": len(content),
+        },
+    )
+    transfer = created.json()
+    staged = result_c2_client.put(
+        f"/api/v1/file-transfers/{transfer['id']}/chunks/0",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "chunk_sha256": hashlib.sha256(content).hexdigest(),
+            "data_b64": base64.b64encode(content).decode("ascii"),
+        },
+    )
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        stored = session.get(FileTransfer, uuid.UUID(transfer["id"]))
+        assert stored is not None
+        outcome = apply_beacon_session_data(
+            session,
+            beacon_id=uuid.UUID(registered["beacon_id"]),
+            payload={
+                "op": "upload_ack",
+                "request_id": "upload-ack-0",
+                "sequence": 0,
+                "session_id": created_session["id"],
+                "session_type": "file_browser",
+                "transfer_id": transfer["id"],
+            },
+            settings=settings,
+        )
+        session.commit()
+        chunks = (
+            session.execute(select(FileTransferChunk).where(FileTransferChunk.transfer_id == stored.id))
+            .scalars()
+            .all()
+        )
+        session.refresh(stored)
+
+    assert created.status_code == 200
+    assert transfer["total_chunks"] == 1
+    assert staged.status_code == 200
+    assert staged.json()["staged_chunks"] == 1
+    assert outcome.operator_message is not None
+    json.dumps(outcome.operator_message)
+    assert outcome.operator_message["op"] == "upload_ack"
+    assert outcome.operator_message["next_sequence"] is None
+    assert isinstance(outcome.operator_message["updated_at"], str)
+    assert stored.acked_chunks == 1
+    assert len(chunks) == 1
+    assert chunks[0].acked_at is not None
+
+
+def test_file_transfer_upload_rejects_hash_mismatch(result_c2_client, monkeypatch):
+    token = connect_c2(result_c2_client)
+    registered = register_beacon(result_c2_client)
+    attach_protocol_metadata(registered["beacon_id"])
+
+    async def capture_send(_, _frame: bytes) -> bool:
+        return True
+
+    monkeypatch.setattr(result_c2_client.app.state.beacon_transport_manager, "send_to_beacon", capture_send)
+    created_session = result_c2_client.post(
+        "/api/v1/sessions/file-browser",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"beacon_id": registered["beacon_id"]},
+    ).json()
+    content = b"hello transfer"
+    transfer = result_c2_client.post(
+        "/api/v1/file-transfers/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "beacon_id": registered["beacon_id"],
+            "filename": "payload.bin",
+            "remote_path": "payload.bin",
+            "session_id": created_session["id"],
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size_bytes": len(content),
+        },
+    ).json()
+
+    rejected = result_c2_client.put(
+        f"/api/v1/file-transfers/{transfer['id']}/chunks/0",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "chunk_sha256": "0" * 64,
+            "data_b64": base64.b64encode(content).decode("ascii"),
+        },
+    )
+
+    assert rejected.status_code == 400
+    assert "SHA-256" in rejected.json()["detail"]
+
+
+def test_file_transfer_download_reassembles_artifact(result_c2_client):
+    registered = register_beacon(result_c2_client)
+    content = b"alpha-bravo"
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        beacon = session.get(Beacon, uuid.UUID(registered["beacon_id"]))
+        assert beacon is not None
+        file_session = InteractiveSession(
+            actor_subject="operator:admin",
+            beacon_id=beacon.id,
+            session_type="file_browser",
+            shell_type="none",
+            status="open",
+        )
+        session.add(file_session)
+        session.flush()
+        transfer = create_download_transfer(
+            session,
+            actor_subject="operator:admin",
+            beacon_id=beacon.id,
+            session_id=file_session.id,
+            remote_path="loot.bin",
+            chunk_size_bytes=6,
+        )
+        session.commit()
+        outcome_ready = apply_beacon_session_data(
+            session,
+            beacon_id=beacon.id,
+            payload={
+                "chunk_size_bytes": 6,
+                "op": "download_ready",
+                "path": "loot.bin",
+                "request_id": "download-ready",
+                "session_id": str(file_session.id),
+                "session_type": "file_browser",
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "size_bytes": len(content),
+                "total_chunks": 2,
+                "transfer_id": str(transfer.id),
+            },
+            settings=settings,
+        )
+        outcome_first = apply_beacon_session_data(
+            session,
+            beacon_id=beacon.id,
+            payload={
+                "chunk_sha256": hashlib.sha256(content[:6]).hexdigest(),
+                "data_b64": base64.b64encode(content[:6]).decode("ascii"),
+                "op": "download_chunk",
+                "request_id": "download-chunk-0",
+                "sequence": 0,
+                "session_id": str(file_session.id),
+                "session_type": "file_browser",
+                "transfer_id": str(transfer.id),
+            },
+            settings=settings,
+        )
+        outcome_final = apply_beacon_session_data(
+            session,
+            beacon_id=beacon.id,
+            payload={
+                "chunk_sha256": hashlib.sha256(content[6:]).hexdigest(),
+                "data_b64": base64.b64encode(content[6:]).decode("ascii"),
+                "op": "download_chunk",
+                "request_id": "download-chunk-1",
+                "sequence": 1,
+                "session_id": str(file_session.id),
+                "session_type": "file_browser",
+                "transfer_id": str(transfer.id),
+            },
+            settings=settings,
+        )
+        session.commit()
+        session.refresh(transfer)
+        artifact = session.get(Artifact, transfer.artifact_id)
+        stored_bytes = artifact_store_for_settings(settings).get(artifact.object_key)
+
+    assert outcome_ready.operator_message["next_sequence"] == 0
+    assert outcome_first.operator_message["next_sequence"] == 1
+    assert outcome_final.operator_message["op"] == "download_complete"
+    assert outcome_final.operator_message["artifact_id"] == str(transfer.artifact_id)
+    assert transfer.status == "completed"
+    assert stored_bytes == content
+
+
+def test_file_transfer_upload_rejects_max_size(result_c2_client, monkeypatch):
+    token = connect_c2(result_c2_client)
+    registered = register_beacon(result_c2_client)
+    attach_protocol_metadata(registered["beacon_id"])
+
+    async def capture_send(_, _frame: bytes) -> bool:
+        return True
+
+    monkeypatch.setattr(result_c2_client.app.state.beacon_transport_manager, "send_to_beacon", capture_send)
+    created_session = result_c2_client.post(
+        "/api/v1/sessions/file-browser",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"beacon_id": registered["beacon_id"]},
+    ).json()
+
+    rejected = result_c2_client.post(
+        "/api/v1/file-transfers/uploads",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "beacon_id": registered["beacon_id"],
+            "filename": "too-large.bin",
+            "remote_path": "too-large.bin",
+            "session_id": created_session["id"],
+            "sha256": hashlib.sha256(b"too-large").hexdigest(),
+            "size_bytes": 101 * 1024 * 1024,
+        },
+    )
+
+    assert rejected.status_code == 400
+    assert "size limit" in rejected.json()["detail"]
 
 
 def test_registry_confirmation_token_is_single_use_and_bound_to_value(c2_client):

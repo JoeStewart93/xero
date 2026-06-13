@@ -56,6 +56,13 @@ from xero_c2.beacon_transport import BeaconTransportManager
 from xero_c2.beacon_websocket import run_beacon_websocket
 from xero_c2.config import get_settings
 from xero_c2.dashboard import public_dashboard_summary
+from xero_c2.file_transfers import (
+    FileTransferError,
+    create_upload_transfer,
+    download_transfer_artifact,
+    public_file_transfer,
+    stage_upload_chunk,
+)
 from xero_c2.infrastructure_workers import (
     WORKER_ORIGIN_C2_MANAGED,
     WORKER_ORIGIN_EMBEDDED,
@@ -77,6 +84,7 @@ from xero_c2.models import (
     Beacon,
     BeaconBuild,
     BeaconEvent,
+    FileTransfer,
     InfrastructureWorker,
     InteractiveSession,
     ProtocolSecurityEvent,
@@ -156,6 +164,9 @@ from xero_c2.schemas import (
     DashboardSummaryResponse,
     FileBrowserSessionCreateRequest,
     FileBrowserSessionResponse,
+    FileTransferChunkUploadRequest,
+    FileTransferCreateRequest,
+    FileTransferResponse,
     InfrastructureWorkerListResponse,
     InfrastructureWorkerResponse,
     ModuleDefinitionResponse,
@@ -643,7 +654,12 @@ async def build_next_longpoll_task_frame(app: FastAPI, settings, beacon_id: uuid
     SessionFactory = session_factory_for_settings(settings)
     with SessionFactory() as session:
         beacon = session.get(Beacon, beacon_id)
-        if beacon is None or beacon.removed_at is not None or not beacon.protocol_session_id or not beacon.protocol_peer_public_key_b64:
+        if (
+            beacon is None
+            or beacon.removed_at is not None
+            or not beacon.protocol_session_id
+            or not beacon.protocol_peer_public_key_b64
+        ):
             return None
         task = await dispatch_next_task(
             session,
@@ -1066,7 +1082,11 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Traffic profile not found")
         return TrafficProfileResponse(**public_traffic_profile(session, profile))
 
-    @api_router.patch("/traffic-profiles/{profile_id}", response_model=TrafficProfileResponse, tags=["traffic-profiles"])
+    @api_router.patch(
+        "/traffic-profiles/{profile_id}",
+        response_model=TrafficProfileResponse,
+        tags=["traffic-profiles"],
+    )
     def update_traffic_profile(
         profile_id: uuid.UUID,
         payload: TrafficProfileUpdateRequest,
@@ -1350,6 +1370,7 @@ def create_app() -> FastAPI:
                     session,
                     beacon_id=beacon_id,
                     payload=decoded.payload,
+                    settings=settings,
                 )
             record_frame_receipt(session, decoded, beacon_id=beacon_id)
             session.commit()
@@ -1891,6 +1912,136 @@ def create_app() -> FastAPI:
             session.refresh(shell_session)
             await publish_closed_session_payload(request.app, settings, session_payload)
         return SessionResponse(**public_session(shell_session))
+
+    @api_router.post("/file-transfers/uploads", response_model=FileTransferResponse, tags=["file-transfers"])
+    def create_file_transfer_upload(
+        payload: FileTransferCreateRequest,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> FileTransferResponse:
+        claims = authorize_c2_token(settings, authorization)
+        actor_subject = actor_subject_from_claims(claims)
+        try:
+            beacon_id = uuid.UUID(payload.beacon_id)
+            session_id = uuid.UUID(payload.session_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="beacon_id and session_id must be UUIDs",
+            ) from exc
+        beacon = session.get(Beacon, beacon_id)
+        file_session = session.get(InteractiveSession, session_id)
+        if beacon is None or file_session is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File transfer session not found")
+        if (
+            file_session.actor_subject != actor_subject
+            or file_session.beacon_id != beacon.id
+            or file_session.session_type != FILE_BROWSER_SESSION_TYPE
+        ):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="File transfer session is not available")
+        try:
+            transfer = create_upload_transfer(
+                session,
+                actor_subject=actor_subject,
+                beacon_id=beacon.id,
+                session_id=file_session.id,
+                filename=payload.filename,
+                remote_path=payload.remote_path,
+                size_bytes=payload.size_bytes,
+                sha256=payload.sha256,
+                chunk_size_bytes=settings.file_transfer_chunk_size_bytes,
+                max_size_bytes=settings.file_transfer_max_size_bytes,
+                overwrite=payload.overwrite,
+            )
+        except FileTransferError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        session.commit()
+        session.refresh(transfer)
+        return FileTransferResponse(**public_file_transfer(transfer))
+
+    @api_router.get("/file-transfers/{transfer_id}", response_model=FileTransferResponse, tags=["file-transfers"])
+    def get_file_transfer(
+        transfer_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> FileTransferResponse:
+        claims = authorize_c2_token(settings, authorization)
+        actor_subject = actor_subject_from_claims(claims)
+        transfer = session.get(FileTransfer, transfer_id)
+        if transfer is None or transfer.actor_subject != actor_subject:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File transfer not found")
+        return FileTransferResponse(**public_file_transfer(transfer))
+
+    @api_router.put(
+        "/file-transfers/{transfer_id}/chunks/{sequence}",
+        response_model=FileTransferResponse,
+        tags=["file-transfers"],
+    )
+    def upload_file_transfer_chunk(
+        transfer_id: uuid.UUID,
+        sequence: int,
+        payload: FileTransferChunkUploadRequest,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> FileTransferResponse:
+        claims = authorize_c2_token(settings, authorization)
+        actor_subject = actor_subject_from_claims(claims)
+        if sequence < 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="sequence must be non-negative",
+            )
+        try:
+            stage_upload_chunk(
+                session,
+                settings,
+                transfer_id,
+                actor_subject=actor_subject,
+                sequence=sequence,
+                data_b64=payload.data_b64,
+                chunk_sha256=payload.chunk_sha256,
+            )
+            transfer = session.get(FileTransfer, transfer_id)
+            if transfer is None:
+                raise FileTransferError("File transfer not found")
+        except FileTransferError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        session.commit()
+        session.refresh(transfer)
+        return FileTransferResponse(**public_file_transfer(transfer))
+
+    @api_router.get("/file-transfers/{transfer_id}/artifact", response_model=None, tags=["file-transfers"])
+    def download_file_transfer_artifact(
+        transfer_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> Response:
+        claims = authorize_c2_token(settings, authorization)
+        actor_subject = actor_subject_from_claims(claims)
+        try:
+            transfer, artifact, content = download_transfer_artifact(
+                session,
+                settings,
+                transfer_id,
+                actor_subject=actor_subject,
+            )
+        except ArtifactNotFound as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File transfer artifact not found",
+            ) from exc
+        except FileTransferError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        filename = artifact.filename or transfer.filename
+        return Response(
+            content=content,
+            media_type=artifact.content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(content)),
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     @api_router.post("/tasks", response_model=TaskResponse, tags=["tasks"])
     async def create_task(
@@ -2522,6 +2673,7 @@ def create_app() -> FastAPI:
                     session,
                     beacon_id=processed_beacon_id,
                     payload=decoded.payload,
+                    settings=settings,
                 )
             record_frame_receipt(session, decoded, beacon_id=processed_beacon_id)
             session.commit()
@@ -2655,7 +2807,10 @@ def create_app() -> FastAPI:
         active_sessions = (
             session.execute(
                 select(InteractiveSession)
-                .where(InteractiveSession.beacon_id == beacon.id, InteractiveSession.status.in_(ACTIVE_SESSION_STATUSES))
+                .where(
+                    InteractiveSession.beacon_id == beacon.id,
+                    InteractiveSession.status.in_(ACTIVE_SESSION_STATUSES),
+                )
                 .order_by(InteractiveSession.updated_at.desc())
             )
             .scalars()

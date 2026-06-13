@@ -20,6 +20,29 @@ from xero_common.models import utc_now
 from xero_common.redis_bus import publish_operator_event
 from xero_common.security import AuthTokenError, decode_c2_access_token
 
+from xero_c2.file_transfers import (
+    DIRECTION_DOWNLOAD,
+    DIRECTION_UPLOAD,
+    FILE_TRANSFER_BEACON_OPS,
+    FILE_TRANSFER_OPERATOR_OPS,
+    FILE_TRANSFER_SESSION_OPS,
+    SESSION_OP_DOWNLOAD_CHUNK_REQUEST,
+    SESSION_OP_DOWNLOAD_INIT,
+    SESSION_OP_UPLOAD_CHUNK,
+    SESSION_OP_UPLOAD_COMPLETE,
+    SESSION_OP_UPLOAD_INIT,
+    SESSION_OP_UPLOAD_START,
+    FileTransferError,
+    apply_beacon_file_transfer_payload,
+    create_download_transfer,
+    download_chunk_request_frame_fields,
+    download_init_frame_fields,
+    get_transfer_for_actor,
+    normalize_transfer_path,
+    upload_chunk_frame_fields,
+    upload_complete_frame_fields,
+    upload_init_frame_fields,
+)
 from xero_c2.models import Beacon, InteractiveSession
 from xero_c2.protocol import SESSION_DATA, ProtocolError, encode_frame, load_private_key
 from xero_c2.registry_sessions import (
@@ -86,6 +109,7 @@ SESSION_DATA_OPS = {
     SESSION_OP_LIST_DIR,
     SESSION_OP_STAT,
     SESSION_OP_READ_FILE,
+    *FILE_TRANSFER_SESSION_OPS,
     *REGISTRY_BEACON_OPS,
 }
 
@@ -433,7 +457,14 @@ def parse_file_browser_request(raw_message: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("File browser message must be a JSON object")
     op = payload.get("op")
-    if op not in {SESSION_OP_LIST_DIR, SESSION_OP_STAT, SESSION_OP_READ_FILE, SESSION_OP_CLOSE, "ping"}:
+    if op not in {
+        SESSION_OP_LIST_DIR,
+        SESSION_OP_STAT,
+        SESSION_OP_READ_FILE,
+        SESSION_OP_CLOSE,
+        "ping",
+        *FILE_TRANSFER_OPERATOR_OPS,
+    }:
         raise ValueError("File browser message op is invalid")
     if op == "ping":
         return {"op": "ping"}
@@ -442,6 +473,24 @@ def parse_file_browser_request(raw_message: str) -> dict[str, Any]:
     request_id = payload.get("request_id")
     if not isinstance(request_id, str) or not request_id.strip():
         raise ValueError("File browser request_id is required")
+    if op in FILE_TRANSFER_OPERATOR_OPS:
+        message: dict[str, Any] = {"op": op, "request_id": request_id.strip()}
+        if op == SESSION_OP_DOWNLOAD_INIT:
+            message["path"] = normalize_transfer_path(str(payload.get("path") or ""))
+            return message
+        raw_transfer_id = payload.get("transfer_id")
+        if not isinstance(raw_transfer_id, str):
+            raise ValueError("File transfer transfer_id is required")
+        try:
+            message["transfer_id"] = uuid.UUID(raw_transfer_id)
+        except ValueError as exc:
+            raise ValueError("File transfer transfer_id must be a UUID") from exc
+        if op in {SESSION_OP_UPLOAD_CHUNK, SESSION_OP_DOWNLOAD_CHUNK_REQUEST}:
+            sequence = payload.get("sequence")
+            if not isinstance(sequence, int) or sequence < 0:
+                raise ValueError("File transfer sequence must be a non-negative integer")
+            message["sequence"] = sequence
+        return message
     path = normalize_file_browser_path(str(payload.get("path") or ""))
     return {
         "op": op,
@@ -469,6 +518,19 @@ def validate_session_data_payload(payload: dict[str, Any]) -> None:
         SHELL_SESSION_TYPE,
     }:
         raise ProtocolError("INVALID_PAYLOAD", "SESSION_DATA session_type is invalid")
+    if op in FILE_TRANSFER_SESSION_OPS and session_type != FILE_BROWSER_SESSION_TYPE:
+        raise ProtocolError("INVALID_PAYLOAD", "File transfer SESSION_DATA requires file_browser session_type")
+    transfer_id = payload.get("transfer_id")
+    if op in FILE_TRANSFER_SESSION_OPS:
+        if not isinstance(transfer_id, str):
+            raise ProtocolError("INVALID_PAYLOAD", "SESSION_DATA transfer_id is required")
+        try:
+            uuid.UUID(transfer_id)
+        except ValueError as exc:
+            raise ProtocolError("INVALID_PAYLOAD", "SESSION_DATA transfer_id must be a UUID") from exc
+    sequence = payload.get("sequence")
+    if sequence is not None and (not isinstance(sequence, int) or sequence < 0):
+        raise ProtocolError("INVALID_PAYLOAD", "SESSION_DATA sequence is invalid")
     request_id = payload.get("request_id")
     if request_id is not None and (not isinstance(request_id, str) or not request_id.strip()):
         raise ProtocolError("INVALID_PAYLOAD", "SESSION_DATA request_id is invalid")
@@ -560,6 +622,7 @@ def apply_beacon_session_data(
     *,
     beacon_id: uuid.UUID,
     payload: dict[str, Any],
+    settings=None,
 ) -> SessionDataOutcome:
     validate_session_data_payload(payload)
     shell_session_id = uuid.UUID(str(payload["session_id"]))
@@ -623,6 +686,21 @@ def apply_beacon_session_data(
             "encoding": payload.get("encoding"),
         }
         event_type = "session.file.response.received" if operator_message["ok"] else "session.file.error"
+    elif op in FILE_TRANSFER_BEACON_OPS:
+        if shell_session.session_type != FILE_BROWSER_SESSION_TYPE:
+            raise ProtocolError("INVALID_SESSION_OP", "File transfer op is only valid for file browser sessions")
+        if shell_session.status in {SESSION_STATUS_OPENING, SESSION_STATUS_DETACHED}:
+            shell_session.status = SESSION_STATUS_OPEN
+            shell_session.detached_at = None
+        try:
+            operator_message, event_type = apply_beacon_file_transfer_payload(
+                session,
+                settings,
+                shell_session=shell_session,
+                payload=payload,
+            )
+        except FileTransferError as exc:
+            raise ProtocolError("INVALID_PAYLOAD", str(exc)) from exc
     elif op in REGISTRY_BEACON_OPS:
         if shell_session.session_type != REGISTRY_SESSION_TYPE:
             raise ProtocolError("INVALID_SESSION_OP", "Registry op is only valid for registry sessions")
@@ -809,6 +887,51 @@ def parse_operator_terminal_message(raw_message: str, max_chunk_bytes: int) -> d
     return payload
 
 
+def file_transfer_frame_payload_for_operator(
+    db: Session,
+    settings,
+    shell_session: InteractiveSession,
+    actor_subject: str,
+    message: dict[str, Any],
+) -> dict[str, Any]:
+    op = str(message["op"])
+    if op == SESSION_OP_DOWNLOAD_INIT:
+        transfer = create_download_transfer(
+            db,
+            actor_subject=actor_subject,
+            beacon_id=shell_session.beacon_id,
+            session_id=shell_session.id,
+            remote_path=str(message.get("path") or ""),
+            chunk_size_bytes=settings.file_transfer_chunk_size_bytes,
+        )
+        fields = download_init_frame_fields(transfer)
+        return session_frame_payload(shell_session, SESSION_OP_DOWNLOAD_INIT, **fields)
+
+    transfer = get_transfer_for_actor(
+        db,
+        uuid.UUID(str(message["transfer_id"])),
+        actor_subject=actor_subject,
+        direction=DIRECTION_UPLOAD if op.startswith("upload_") else DIRECTION_DOWNLOAD,
+    )
+    if transfer.session_id != shell_session.id or transfer.beacon_id != shell_session.beacon_id:
+        raise FileTransferError("File transfer does not belong to this session")
+
+    if op == SESSION_OP_UPLOAD_START:
+        fields = upload_init_frame_fields(transfer)
+        db.add(transfer)
+        return session_frame_payload(shell_session, SESSION_OP_UPLOAD_INIT, **fields)
+    if op == SESSION_OP_UPLOAD_CHUNK:
+        fields = upload_chunk_frame_fields(db, settings, transfer, int(message["sequence"]))
+        return session_frame_payload(shell_session, SESSION_OP_UPLOAD_CHUNK, **fields)
+    if op == SESSION_OP_UPLOAD_COMPLETE:
+        fields = upload_complete_frame_fields(transfer)
+        return session_frame_payload(shell_session, SESSION_OP_UPLOAD_COMPLETE, **fields)
+    if op == SESSION_OP_DOWNLOAD_CHUNK_REQUEST:
+        fields = download_chunk_request_frame_fields(transfer, int(message["sequence"]))
+        return session_frame_payload(shell_session, SESSION_OP_DOWNLOAD_CHUNK_REQUEST, **fields)
+    raise FileTransferError("File transfer message op is invalid")
+
+
 async def run_shell_session_websocket(websocket: WebSocket, *, settings, session_id: uuid.UUID) -> None:
     authenticated = authenticate_session_websocket(websocket, settings)
     if authenticated is None:
@@ -894,6 +1017,31 @@ async def run_shell_session_websocket(websocket: WebSocket, *, settings, session
                         session_type=FILE_BROWSER_SESSION_TYPE,
                     )
                     await enqueue_session_data_frame(websocket.app, settings, db, shell_session, frame_payload)
+                    continue
+                if session_type == FILE_BROWSER_SESSION_TYPE and message["op"] in FILE_TRANSFER_OPERATOR_OPS:
+                    try:
+                        frame_payload = file_transfer_frame_payload_for_operator(
+                            db,
+                            settings,
+                            shell_session,
+                            actor_subject,
+                            message,
+                        )
+                    except FileTransferError as exc:
+                        await connection.enqueue(
+                            {
+                                "message": str(exc),
+                                "ok": False,
+                                "op": "transfer_error",
+                                "request_id": message.get("request_id"),
+                                "transfer_id": str(message.get("transfer_id")) if message.get("transfer_id") else None,
+                            }
+                        )
+                        continue
+                    shell_session.last_activity_at = utc_now()
+                    db.add(shell_session)
+                    await enqueue_session_data_frame(websocket.app, settings, db, shell_session, frame_payload)
+                    db.commit()
                     continue
                 if session_type == REGISTRY_SESSION_TYPE and message["op"] != SESSION_OP_CLOSE:
                     if message["op"] in {

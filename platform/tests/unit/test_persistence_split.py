@@ -119,6 +119,8 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert "traffic_profile_versions" in inspector.get_table_names()
     assert "scan_jobs" in inspector.get_table_names()
     assert "scan_result_chunks" in inspector.get_table_names()
+    assert "file_transfers" in inspector.get_table_names()
+    assert "file_transfer_chunks" in inspector.get_table_names()
     assert "protocol_version" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "protocol_peer_public_key_b64" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "transport_mode" in {column["name"] for column in inspector.get_columns("beacons")}
@@ -255,6 +257,27 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert {"scan_job_id", "sequence", "kind", "payload", "probes_completed", "probes_total", "emitted_at"}.issubset(
         scan_chunk_columns
     )
+    file_transfer_columns = {column["name"] for column in inspector.get_columns("file_transfers")}
+    assert {
+        "beacon_id",
+        "session_id",
+        "artifact_id",
+        "actor_subject",
+        "direction",
+        "status",
+        "remote_path",
+        "filename",
+        "size_bytes",
+        "sha256",
+        "chunk_size_bytes",
+        "total_chunks",
+        "staged_chunks",
+        "acked_chunks",
+    }.issubset(file_transfer_columns)
+    file_transfer_chunk_columns = {column["name"] for column in inspector.get_columns("file_transfer_chunks")}
+    assert {"transfer_id", "sequence", "size_bytes", "chunk_sha256", "object_key", "acked_at"}.issubset(
+        file_transfer_chunk_columns
+    )
     beacon_columns = {column["name"] for column in inspector.get_columns("beacons")}
     assert {
         "profile_id",
@@ -266,7 +289,7 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     }.issubset(beacon_columns)
     with engine.connect() as connection:
         context = MigrationContext.configure(connection, opts={"version_table": "c2_alembic_version"})
-        assert context.get_current_heads() == ("c2_0016_beacon_soft_removal",)
+        assert context.get_current_heads() == ("c2_0017_file_transfers",)
 
 
 def test_generic_crud_helpers_work_with_service_models(tmp_path):

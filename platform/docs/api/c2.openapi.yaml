@@ -1242,6 +1242,156 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/file-transfers/uploads:
+    post:
+      tags:
+      - file-transfers
+      summary: Create File Transfer Upload
+      operationId: create_file_transfer_upload_api_v1_file_transfers_uploads_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FileTransferCreateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileTransferResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/file-transfers/{transfer_id}:
+    get:
+      tags:
+      - file-transfers
+      summary: Get File Transfer
+      operationId: get_file_transfer_api_v1_file_transfers__transfer_id__get
+      parameters:
+      - name: transfer_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Transfer Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileTransferResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/file-transfers/{transfer_id}/chunks/{sequence}:
+    put:
+      tags:
+      - file-transfers
+      summary: Upload File Transfer Chunk
+      operationId: upload_file_transfer_chunk_api_v1_file_transfers__transfer_id__chunks__sequence__put
+      parameters:
+      - name: transfer_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Transfer Id
+      - name: sequence
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Sequence
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FileTransferChunkUploadRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileTransferResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/file-transfers/{transfer_id}/artifact:
+    get:
+      tags:
+      - file-transfers
+      summary: Download File Transfer Artifact
+      operationId: download_file_transfer_artifact_api_v1_file_transfers__transfer_id__artifact_get
+      parameters:
+      - name: transfer_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Transfer Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/tasks:
     post:
       tags:
@@ -2930,6 +3080,165 @@ components:
       - created_at
       - updated_at
       title: FileBrowserSessionResponse
+    FileTransferChunkUploadRequest:
+      properties:
+        chunk_sha256:
+          type: string
+          maxLength: 64
+          minLength: 64
+          title: Chunk Sha256
+        data_b64:
+          type: string
+          minLength: 1
+          title: Data B64
+      type: object
+      required:
+      - chunk_sha256
+      - data_b64
+      title: FileTransferChunkUploadRequest
+    FileTransferCreateRequest:
+      properties:
+        beacon_id:
+          type: string
+          title: Beacon Id
+        session_id:
+          type: string
+          title: Session Id
+        filename:
+          type: string
+          maxLength: 255
+          minLength: 1
+          title: Filename
+        remote_path:
+          type: string
+          maxLength: 1024
+          minLength: 1
+          title: Remote Path
+        size_bytes:
+          type: integer
+          minimum: 0.0
+          title: Size Bytes
+        sha256:
+          type: string
+          maxLength: 64
+          minLength: 64
+          title: Sha256
+        overwrite:
+          type: boolean
+          title: Overwrite
+          default: false
+      type: object
+      required:
+      - beacon_id
+      - session_id
+      - filename
+      - remote_path
+      - size_bytes
+      - sha256
+      title: FileTransferCreateRequest
+    FileTransferResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        beacon_id:
+          type: string
+          title: Beacon Id
+        session_id:
+          type: string
+          title: Session Id
+        direction:
+          type: string
+          enum:
+          - download
+          - upload
+          title: Direction
+        status:
+          type: string
+          enum:
+          - completed
+          - failed
+          - staged
+          - transferring
+          title: Status
+        remote_path:
+          type: string
+          title: Remote Path
+        filename:
+          type: string
+          title: Filename
+        size_bytes:
+          type: integer
+          title: Size Bytes
+        sha256:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Sha256
+        chunk_size_bytes:
+          type: integer
+          title: Chunk Size Bytes
+        total_chunks:
+          type: integer
+          title: Total Chunks
+        staged_chunks:
+          type: integer
+          title: Staged Chunks
+        acked_chunks:
+          type: integer
+          title: Acked Chunks
+        artifact_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Artifact Id
+        artifact_available:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Artifact Available
+        error_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Message
+        started_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Started At
+        completed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Completed At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - beacon_id
+      - session_id
+      - direction
+      - status
+      - remote_path
+      - filename
+      - size_bytes
+      - chunk_size_bytes
+      - total_chunks
+      - staged_chunks
+      - acked_chunks
+      - created_at
+      - updated_at
+      title: FileTransferResponse
     HTTPValidationError:
       properties:
         detail:

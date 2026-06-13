@@ -330,6 +330,16 @@ func (a *Agent) handleSessionData(ctx context.Context, payload map[string]any, s
 		return a.sendFileStat(sessionID, payload, send)
 	case "read_file":
 		return a.sendFileRead(sessionID, payload, send)
+	case "upload_init":
+		return a.sendFileUploadReady(sessionID, payload, send)
+	case "upload_chunk":
+		return a.sendFileUploadAck(sessionID, payload, send)
+	case "upload_complete":
+		return a.sendFileUploadComplete(sessionID, payload, send)
+	case "download_init":
+		return a.sendFileDownloadReady(sessionID, payload, send)
+	case "download_chunk_request":
+		return a.sendFileDownloadChunk(sessionID, payload, send)
 	case "reg_list_key":
 		return a.sendRegistryList(sessionID, payload, send)
 	case "reg_read_value":
@@ -439,6 +449,160 @@ func (a *Agent) sendFileRead(sessionID string, payload map[string]any, send func
 		"size":         result.Size,
 		"truncated":    result.Truncated,
 		"type":         "file",
+	}, send)
+}
+
+func (a *Agent) sendFileUploadReady(sessionID string, payload map[string]any, send func(map[string]any) error) error {
+	requestID := stringValue(payload["request_id"])
+	transferID := stringValue(payload["transfer_id"])
+	path := stringValue(payload["path"])
+	status, err := a.Files.StartUpload(
+		sessionID,
+		transferID,
+		path,
+		int64(numericInt(payload["size_bytes"], 0)),
+		stringValue(payload["sha256"]),
+		int64(numericInt(payload["chunk_size_bytes"], int(filebrowser.DefaultTransferChunkBytes))),
+		numericInt(payload["total_chunks"], 0),
+		payloadBool(payload["overwrite"]),
+	)
+	if err != nil {
+		return a.sendFileTransferError(sessionID, requestID, transferID, path, err, send)
+	}
+	return a.sendSessionData(sessionID, "upload_ready", map[string]any{
+		"next_sequence":      status.NextSequence,
+		"ok":                 true,
+		"path":               path,
+		"received_sequences": status.ReceivedSequences,
+		"request_id":         requestID,
+		"session_type":       "file_browser",
+		"transfer_id":        transferID,
+	}, send)
+}
+
+func (a *Agent) sendFileUploadAck(sessionID string, payload map[string]any, send func(map[string]any) error) error {
+	requestID := stringValue(payload["request_id"])
+	transferID := stringValue(payload["transfer_id"])
+	path := stringValue(payload["path"])
+	sequence := numericInt(payload["sequence"], -1)
+	data, err := terminalData(payload)
+	if err != nil {
+		return a.sendFileTransferError(sessionID, requestID, transferID, path, err, send)
+	}
+	status, err := a.Files.WriteUploadChunk(sessionID, transferID, sequence, data, stringValue(payload["chunk_sha256"]))
+	if err != nil {
+		if errors.Is(err, filebrowser.ErrHashMismatch) {
+			return a.sendSessionData(sessionID, "upload_nack", map[string]any{
+				"error_code":   filebrowser.ErrorCode(err),
+				"message":      err.Error(),
+				"ok":           false,
+				"path":         path,
+				"request_id":   requestID,
+				"sequence":     sequence,
+				"session_type": "file_browser",
+				"transfer_id":  transferID,
+			}, send)
+		}
+		return a.sendFileTransferError(sessionID, requestID, transferID, path, err, send)
+	}
+	return a.sendSessionData(sessionID, "upload_ack", map[string]any{
+		"next_sequence":      status.NextSequence,
+		"ok":                 true,
+		"path":               path,
+		"received_sequences": status.ReceivedSequences,
+		"request_id":         requestID,
+		"sequence":           sequence,
+		"session_type":       "file_browser",
+		"transfer_id":        transferID,
+	}, send)
+}
+
+func (a *Agent) sendFileUploadComplete(sessionID string, payload map[string]any, send func(map[string]any) error) error {
+	requestID := stringValue(payload["request_id"])
+	transferID := stringValue(payload["transfer_id"])
+	path := stringValue(payload["path"])
+	digest, err := a.Files.CompleteUpload(sessionID, transferID)
+	if err != nil {
+		return a.sendFileTransferError(sessionID, requestID, transferID, path, err, send)
+	}
+	return a.sendSessionData(sessionID, "upload_complete", map[string]any{
+		"ok":           true,
+		"path":         path,
+		"request_id":   requestID,
+		"session_type": "file_browser",
+		"sha256":       digest,
+		"transfer_id":  transferID,
+	}, send)
+}
+
+func (a *Agent) sendFileDownloadReady(sessionID string, payload map[string]any, send func(map[string]any) error) error {
+	requestID := stringValue(payload["request_id"])
+	transferID := stringValue(payload["transfer_id"])
+	path := stringValue(payload["path"])
+	info, err := a.Files.StartDownload(
+		sessionID,
+		path,
+		int64(numericInt(payload["chunk_size_bytes"], int(filebrowser.DefaultTransferChunkBytes))),
+	)
+	if err != nil {
+		return a.sendFileTransferError(sessionID, requestID, transferID, path, err, send)
+	}
+	return a.sendSessionData(sessionID, "download_ready", map[string]any{
+		"chunk_size_bytes": info.ChunkSizeBytes,
+		"ok":               true,
+		"path":             info.Path,
+		"request_id":       requestID,
+		"session_type":     "file_browser",
+		"sha256":           info.SHA256,
+		"size_bytes":       info.SizeBytes,
+		"total_chunks":     info.TotalChunks,
+		"transfer_id":      transferID,
+	}, send)
+}
+
+func (a *Agent) sendFileDownloadChunk(sessionID string, payload map[string]any, send func(map[string]any) error) error {
+	requestID := stringValue(payload["request_id"])
+	transferID := stringValue(payload["transfer_id"])
+	path := stringValue(payload["path"])
+	sequence := numericInt(payload["sequence"], -1)
+	data, digest, err := a.Files.ReadDownloadChunk(
+		sessionID,
+		path,
+		sequence,
+		int64(numericInt(payload["chunk_size_bytes"], int(filebrowser.DefaultTransferChunkBytes))),
+	)
+	if err != nil {
+		return a.sendFileTransferError(sessionID, requestID, transferID, path, err, send)
+	}
+	return a.sendSessionData(sessionID, "download_chunk", map[string]any{
+		"chunk_sha256": digest,
+		"data_b64":     base64.StdEncoding.EncodeToString(data),
+		"ok":           true,
+		"path":         path,
+		"request_id":   requestID,
+		"sequence":     sequence,
+		"session_type": "file_browser",
+		"size_bytes":   len(data),
+		"transfer_id":  transferID,
+	}, send)
+}
+
+func (a *Agent) sendFileTransferError(
+	sessionID string,
+	requestID string,
+	transferID string,
+	path string,
+	err error,
+	send func(map[string]any) error,
+) error {
+	return a.sendSessionData(sessionID, "transfer_error", map[string]any{
+		"error_code":   filebrowser.ErrorCode(err),
+		"message":      err.Error(),
+		"ok":           false,
+		"path":         path,
+		"request_id":   requestID,
+		"session_type": "file_browser",
+		"transfer_id":  transferID,
 	}, send)
 }
 
@@ -893,6 +1057,11 @@ func numericInt(value any, fallback int) int {
 	default:
 		return fallback
 	}
+}
+
+func payloadBool(value any) bool {
+	typed, _ := value.(bool)
+	return typed
 }
 
 func stringValue(value any) string {

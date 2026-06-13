@@ -52,7 +52,7 @@ class Beacon(BaseModel):
     removed_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
-    profile: Mapped["TrafficProfile | None"] = relationship(foreign_keys=[profile_id])
+    profile: Mapped[TrafficProfile | None] = relationship(foreign_keys=[profile_id])
 
 
 class TrafficProfile(BaseModel):
@@ -403,6 +403,64 @@ class TaskResultArtifact(BaseModel):
     )
     role: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     artifact: Mapped[Artifact] = relationship(foreign_keys=[artifact_id])
+
+
+class FileTransfer(BaseModel):
+    __tablename__ = "file_transfers"
+
+    beacon_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("beacons.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("artifacts.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    actor_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    remote_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    chunk_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_chunks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    staged_chunks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    acked_chunks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    overwrite: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    transfer_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    artifact: Mapped[Artifact | None] = relationship(foreign_keys=[artifact_id])
+
+
+class FileTransferChunk(BaseModel):
+    __tablename__ = "file_transfer_chunks"
+    __table_args__ = (UniqueConstraint("transfer_id", "sequence", name="uq_file_transfer_chunks_sequence"),)
+
+    transfer_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("file_transfers.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    staged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    acked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class ScanJob(BaseModel):

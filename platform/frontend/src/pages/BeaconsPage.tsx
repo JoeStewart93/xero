@@ -1,6 +1,6 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
-import { KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownUp,
   Boxes,
@@ -23,6 +23,7 @@ import {
   ShieldCheck,
   TerminalSquare,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
@@ -34,15 +35,20 @@ import {
   closeFileBrowserSession,
   closeShellSession,
   createFileBrowserSession,
+  createFileTransferUpload,
   createShellSession,
+  downloadFileTransferArtifact,
+  getFileTransfer,
   getBeaconActivity,
   getTrafficProfiles,
   killBeacon,
+  uploadFileTransferChunk,
 } from '../api';
 import type {
   Beacon,
   BeaconActivityItem,
   FileBrowserSession,
+  FileTransfer,
   ShellSession,
   ShellType,
   TrafficProfile,
@@ -259,10 +265,14 @@ function beaconCsv(beacons: Beacon[]): string {
 
 function downloadBeaconCsv(beacons: Beacon[]): void {
   const blob = new Blob([beaconCsv(beacons)], { type: 'text/csv;charset=utf-8' });
+  downloadBlob(blob, `xero-beacons-${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `xero-beacons-${new Date().toISOString().slice(0, 10)}.csv`;
+  anchor.download = filename;
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
@@ -282,6 +292,31 @@ function fileBreadcrumbs(path: string): Array<{ label: string; path: string }> {
   return crumbs;
 }
 
+function joinFileBrowserPath(parent: string, filename: string): string {
+  const cleanParent = parent.split('/').filter(Boolean).join('/');
+  const cleanName = filename.replace(/[\\/]+/g, '').trim();
+  return cleanParent ? `${cleanParent}/${cleanName}` : cleanName;
+}
+
+async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error('SHA-256 is not available in this browser.');
+  }
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const parts: string[] = [];
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    parts.push(String.fromCharCode(...bytes.subarray(index, index + 0x8000)));
+  }
+  return btoa(parts.join(''));
+}
+
 function fileErrorMessage(message: ShellSessionMessage): string {
   if (message.message) {
     return message.message;
@@ -294,6 +329,16 @@ function fileErrorMessage(message: ShellSessionMessage): string {
 
 function isTerminalSessionActive(session: ShellSession | null): boolean {
   return Boolean(session && !['closed', 'failed'].includes(session.status));
+}
+
+interface FileTransferView {
+  direction: 'download' | 'upload';
+  filename: string;
+  id: string;
+  message: string;
+  progress: number;
+  retryable?: boolean;
+  status: FileTransfer['status'] | 'preparing';
 }
 
 function decodeTerminalData(message: ShellSessionMessage): string {
@@ -540,8 +585,11 @@ function FileBrowserPanel({
   connection: C2Connection;
 }) {
   const clientRef = useRef<ShellSessionClient | null>(null);
+  const downloadTransferRef = useRef<{ filename: string; id: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const hasRequestedRootRef = useRef(false);
   const requestCounterRef = useRef(0);
+  const uploadTransferRef = useRef<{ filename: string; id: string; totalChunks: number } | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ShellSessionConnectionStatus>('disconnected');
   const [currentPath, setCurrentPath] = useState('');
   const [entries, setEntries] = useState<FileBrowserEntry[]>([]);
@@ -557,7 +605,10 @@ function FileBrowserPanel({
     truncated: boolean;
   } | null>(null);
   const [session, setSession] = useState<FileBrowserSession | null>(null);
+  const [transfer, setTransfer] = useState<FileTransferView | null>(null);
   const activeSession = Boolean(session && !['closed', 'failed'].includes(session.status));
+  const fileSocketOpen = connectionStatus === 'connected';
+  const transferBusy = Boolean(transfer && !['completed', 'failed'].includes(transfer.status));
 
   const sendFileRequest = useCallback((op: 'list_dir' | 'read_file' | 'stat', path: string, refresh = false) => {
     requestCounterRef.current += 1;
@@ -571,11 +622,72 @@ function FileBrowserPanel({
     return requestId;
   }, []);
 
+  const nextTransferRequestId = useCallback((prefix: string) => {
+    requestCounterRef.current += 1;
+    return `${prefix}-${requestCounterRef.current}`;
+  }, []);
+
   const loadDirectory = useCallback((path: string, refresh = false) => {
     setIsLoadingPath(true);
     setError('');
     sendFileRequest('list_dir', path, refresh);
   }, [sendFileRequest]);
+
+  const sendUploadChunkRequest = useCallback((transferId: string, sequence: number) => {
+    clientRef.current?.sendMessage({
+      op: 'upload_chunk',
+      request_id: nextTransferRequestId('upload-chunk'),
+      sequence,
+      transfer_id: transferId,
+    });
+  }, [nextTransferRequestId]);
+
+  const sendUploadCompleteRequest = useCallback((transferId: string) => {
+    clientRef.current?.sendMessage({
+      op: 'upload_complete',
+      request_id: nextTransferRequestId('upload-complete'),
+      transfer_id: transferId,
+    });
+  }, [nextTransferRequestId]);
+
+  const sendDownloadChunkRequest = useCallback((transferId: string, sequence: number) => {
+    clientRef.current?.sendMessage({
+      op: 'download_chunk_request',
+      request_id: nextTransferRequestId('download-chunk'),
+      sequence,
+      transfer_id: transferId,
+    });
+  }, [nextTransferRequestId]);
+
+  const handleDownloadComplete = useCallback(async (message: ShellSessionMessage) => {
+    const transferId = message.transfer_id;
+    if (!transferId) {
+      return;
+    }
+    const filename = downloadTransferRef.current?.id === transferId
+      ? downloadTransferRef.current.filename
+      : 'download.bin';
+    try {
+      const latest = await getFileTransfer(connection.baseUrl, connection.accessToken, transferId);
+      const blob = await downloadFileTransferArtifact(connection.baseUrl, connection.accessToken, transferId);
+      downloadBlob(blob, latest.filename || filename);
+      setTransfer({
+        direction: 'download',
+        filename: latest.filename || filename,
+        id: transferId,
+        message: 'Download complete',
+        progress: 1,
+        status: 'completed',
+      });
+      downloadTransferRef.current = null;
+    } catch (caught) {
+      const errorMessage = caught instanceof Error ? caught.message : 'Unable to download transfer artifact.';
+      setError(errorMessage);
+      setTransfer((current) => current && current.id === transferId
+        ? { ...current, message: errorMessage, status: 'failed' }
+        : current);
+    }
+  }, [connection.accessToken, connection.baseUrl]);
 
   const requestInitialRoot = useCallback(() => {
     if (hasRequestedRootRef.current) {
@@ -622,6 +734,143 @@ function FileBrowserPanel({
       setError('');
       return;
     }
+    if (message.op === 'upload_ready') {
+      const activeUpload = uploadTransferRef.current;
+      if (!message.transfer_id || !activeUpload || activeUpload.id !== message.transfer_id) {
+        return;
+      }
+      const nextSequence = typeof message.next_sequence === 'number' ? message.next_sequence : 0;
+      setTransfer({
+        direction: 'upload',
+        filename: activeUpload.filename,
+        id: activeUpload.id,
+        message: 'Uploading to beacon',
+        progress: activeUpload.totalChunks === 0 ? 1 : 0,
+        status: 'transferring',
+      });
+      if (nextSequence >= 0) {
+        sendUploadChunkRequest(activeUpload.id, nextSequence);
+      } else {
+        sendUploadCompleteRequest(activeUpload.id);
+      }
+      return;
+    }
+    if (message.op === 'upload_ack') {
+      const activeUpload = uploadTransferRef.current;
+      if (!message.transfer_id || !activeUpload || activeUpload.id !== message.transfer_id) {
+        return;
+      }
+      const ackedChunks = message.acked_chunks ?? 0;
+      const nextSequence = typeof message.next_sequence === 'number' ? message.next_sequence : -1;
+      setTransfer({
+        direction: 'upload',
+        filename: activeUpload.filename,
+        id: activeUpload.id,
+        message: 'Uploading to beacon',
+        progress: activeUpload.totalChunks > 0 ? ackedChunks / activeUpload.totalChunks : 1,
+        status: 'transferring',
+      });
+      if (nextSequence >= 0) {
+        sendUploadChunkRequest(activeUpload.id, nextSequence);
+      } else {
+        sendUploadCompleteRequest(activeUpload.id);
+      }
+      return;
+    }
+    if (message.op === 'upload_nack') {
+      const activeUpload = uploadTransferRef.current;
+      if (!message.transfer_id || !activeUpload || activeUpload.id !== message.transfer_id) {
+        return;
+      }
+      const retrySequence = typeof message.next_sequence === 'number'
+        ? message.next_sequence
+        : typeof message.sequence === 'number'
+          ? message.sequence
+          : 0;
+      setTransfer({
+        direction: 'upload',
+        filename: activeUpload.filename,
+        id: activeUpload.id,
+        message: 'Retrying upload chunk',
+        progress: activeUpload.totalChunks > 0 ? (message.acked_chunks ?? 0) / activeUpload.totalChunks : 1,
+        status: 'transferring',
+      });
+      sendUploadChunkRequest(activeUpload.id, retrySequence);
+      return;
+    }
+    if (message.op === 'upload_complete') {
+      const activeUpload = uploadTransferRef.current;
+      if (message.transfer_id && activeUpload?.id === message.transfer_id) {
+        setTransfer({
+          direction: 'upload',
+          filename: activeUpload.filename,
+          id: activeUpload.id,
+          message: 'Upload complete',
+          progress: 1,
+          status: 'completed',
+        });
+        uploadTransferRef.current = null;
+        loadDirectory(currentPath, true);
+      }
+      return;
+    }
+    if (message.op === 'download_ready') {
+      if (!message.transfer_id) {
+        return;
+      }
+      const filename = message.path?.split('/').filter(Boolean).pop() || 'download.bin';
+      downloadTransferRef.current = { filename, id: message.transfer_id };
+      setTransfer({
+        direction: 'download',
+        filename,
+        id: message.transfer_id,
+        message: 'Downloading from beacon',
+        progress: 0,
+        status: 'transferring',
+      });
+      if ((message.total_chunks ?? 0) > 0) {
+        sendDownloadChunkRequest(message.transfer_id, 0);
+      } else {
+        void handleDownloadComplete(message);
+      }
+      return;
+    }
+    if (message.op === 'download_chunk') {
+      if (!message.transfer_id) {
+        return;
+      }
+      const activeDownload = downloadTransferRef.current;
+      const totalChunks = message.total_chunks ?? 0;
+      const ackedChunks = message.acked_chunks ?? 0;
+      setTransfer({
+        direction: 'download',
+        filename: activeDownload?.filename ?? 'download.bin',
+        id: message.transfer_id,
+        message: 'Downloading from beacon',
+        progress: totalChunks > 0 ? ackedChunks / totalChunks : 1,
+        status: 'transferring',
+      });
+      if (typeof message.next_sequence === 'number' && message.next_sequence >= 0) {
+        sendDownloadChunkRequest(message.transfer_id, message.next_sequence);
+      }
+      return;
+    }
+    if (message.op === 'download_complete') {
+      void handleDownloadComplete(message);
+      return;
+    }
+    if (message.op === 'transfer_error') {
+      const errorMessage = fileErrorMessage(message);
+      setError(errorMessage);
+      const retryable = Boolean(
+        message.transfer_id &&
+        uploadTransferRef.current?.id === message.transfer_id,
+      );
+      setTransfer((current) => current && (!message.transfer_id || current.id === message.transfer_id)
+        ? { ...current, message: errorMessage, retryable, status: 'failed' }
+        : current);
+      return;
+    }
     if (message.op === 'closed') {
       clientRef.current?.stop();
       return;
@@ -629,7 +878,15 @@ function FileBrowserPanel({
     if (message.op === 'error') {
       setError(fileErrorMessage(message));
     }
-  }, [requestInitialRoot]);
+  }, [
+    currentPath,
+    handleDownloadComplete,
+    loadDirectory,
+    requestInitialRoot,
+    sendDownloadChunkRequest,
+    sendUploadChunkRequest,
+    sendUploadCompleteRequest,
+  ]);
 
   const handleSessionStatus = useCallback((status: ShellSessionConnectionStatus, message?: string) => {
     setConnectionStatus(status);
@@ -707,6 +964,130 @@ function FileBrowserPanel({
     sendFileRequest('read_file', entry.path);
   }
 
+  async function handleUploadFile(file: File): Promise<void> {
+    if (!session || !clientRef.current?.isOpen()) {
+      setError('Open a file browser session before uploading.');
+      return;
+    }
+    const remotePath = joinFileBrowserPath(currentPath, file.name);
+    const existingFile = entries.some((entry) => entry.path === remotePath);
+    const overwrite = existingFile
+      ? window.confirm(`${file.name} already exists in ${filePathLabel(currentPath)}. Replace it?`)
+      : false;
+    if (existingFile && !overwrite) {
+      return;
+    }
+    setError('');
+    setTransfer({
+      direction: 'upload',
+      filename: file.name,
+      id: 'preparing',
+      message: 'Preparing upload',
+      progress: 0,
+      status: 'preparing',
+    });
+    try {
+      const fileBuffer = await file.arrayBuffer();
+      const fileHash = await sha256Hex(fileBuffer);
+      const created = await createFileTransferUpload(connection.baseUrl, connection.accessToken, {
+        beacon_id: beacon.id,
+        filename: file.name,
+        overwrite,
+        remote_path: remotePath,
+        session_id: session.id,
+        sha256: fileHash,
+        size_bytes: file.size,
+      });
+      uploadTransferRef.current = {
+        filename: file.name,
+        id: created.id,
+        totalChunks: created.total_chunks,
+      };
+      setTransfer({
+        direction: 'upload',
+        filename: file.name,
+        id: created.id,
+        message: 'Staging upload',
+        progress: 0,
+        status: 'staged',
+      });
+      for (let sequence = 0; sequence < created.total_chunks; sequence += 1) {
+        const start = sequence * created.chunk_size_bytes;
+        const chunk = fileBuffer.slice(start, start + created.chunk_size_bytes);
+        await uploadFileTransferChunk(connection.baseUrl, connection.accessToken, created.id, sequence, {
+          chunk_sha256: await sha256Hex(chunk),
+          data_b64: arrayBufferToBase64(chunk),
+        });
+        setTransfer({
+          direction: 'upload',
+          filename: file.name,
+          id: created.id,
+          message: 'Staging upload',
+          progress: created.total_chunks > 0 ? (sequence + 1) / created.total_chunks : 1,
+          status: 'staged',
+        });
+      }
+      clientRef.current?.sendMessage({
+        op: 'upload_start',
+        request_id: nextTransferRequestId('upload-start'),
+        transfer_id: created.id,
+      });
+    } catch (caught) {
+      const errorMessage = caught instanceof Error ? caught.message : 'Unable to upload file.';
+      setError(errorMessage);
+      setTransfer((current) => current ? { ...current, message: errorMessage, status: 'failed' } : current);
+      uploadTransferRef.current = null;
+    }
+  }
+
+  function handleUploadInputChange(event: ChangeEvent<HTMLInputElement>): void {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (file) {
+      void handleUploadFile(file);
+    }
+  }
+
+  function handleDownloadEntry(entry: FileBrowserEntry): void {
+    if (!session || !clientRef.current?.isOpen()) {
+      setError('Open a file browser session before downloading.');
+      return;
+    }
+    setError('');
+    setTransfer({
+      direction: 'download',
+      filename: entry.name,
+      id: 'preparing',
+      message: 'Preparing download',
+      progress: 0,
+      status: 'preparing',
+    });
+    clientRef.current.sendMessage({
+      op: 'download_init',
+      path: entry.path,
+      request_id: nextTransferRequestId('download-start'),
+    });
+  }
+
+  function handleRetryTransfer(): void {
+    if (
+      !transfer ||
+      transfer.direction !== 'upload' ||
+      transfer.status !== 'failed' ||
+      uploadTransferRef.current?.id !== transfer.id ||
+      !clientRef.current?.isOpen()
+    ) {
+      return;
+    }
+    setError('');
+    setTransfer({ ...transfer, message: 'Retrying upload', retryable: false, status: 'transferring' });
+    clientRef.current.sendMessage({
+      op: 'upload_start',
+      request_id: nextTransferRequestId('upload-retry'),
+      transfer_id: transfer.id,
+    });
+  }
+
   return (
     <div className="file-browser-panel">
       <div className="shell-session-toolbar">
@@ -738,6 +1119,23 @@ function FileBrowserPanel({
           <RefreshCw aria-hidden="true" size={15} strokeWidth={2.2} />
           <span>{isLoadingPath ? 'Loading' : 'Refresh'}</span>
         </button>
+        <input
+          className="sr-only"
+          onChange={handleUploadInputChange}
+          ref={fileInputRef}
+          type="file"
+        />
+        <button
+          aria-label="Upload file to current directory"
+          className="secondary-button shell-session-action"
+          disabled={!activeSession || !fileSocketOpen || transferBusy}
+          onClick={() => fileInputRef.current?.click()}
+          title="Upload file"
+          type="button"
+        >
+          <Upload aria-hidden="true" size={15} strokeWidth={2.2} />
+          <span>Upload</span>
+        </button>
       </div>
 
       <div className="shell-session-status-strip">
@@ -747,6 +1145,29 @@ function FileBrowserPanel({
       </div>
 
       {error ? <p className="task-queue-error" role="alert">{error}</p> : null}
+
+      {transfer ? (
+        <div className="file-transfer-progress" data-testid="file-transfer-progress">
+          <div>
+            <strong>{transfer.filename}</strong>
+            <span>{transfer.message}</span>
+          </div>
+          <progress max={1} value={Math.max(0, Math.min(1, transfer.progress))} />
+          <span>{Math.round(Math.max(0, Math.min(1, transfer.progress)) * 100)}%</span>
+          {transfer.direction === 'upload' && transfer.status === 'failed' && transfer.retryable ? (
+            <button
+              aria-label="Retry upload transfer"
+              className="file-transfer-retry-button"
+              disabled={!fileSocketOpen}
+              onClick={handleRetryTransfer}
+              title="Retry upload"
+              type="button"
+            >
+              <RotateCcw aria-hidden="true" size={14} strokeWidth={2.2} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="file-browser-breadcrumbs" aria-label="File browser breadcrumbs">
         {fileBreadcrumbs(currentPath).map((crumb) => (
@@ -771,12 +1192,13 @@ function FileBrowserPanel({
                 <th scope="col">Size</th>
                 <th scope="col">Modified</th>
                 <th scope="col">Mode</th>
+                <th scope="col">Actions</th>
               </tr>
             </thead>
             <tbody>
               {entries.length === 0 ? (
                 <tr>
-                  <td colSpan={5}>
+                  <td colSpan={6}>
                     <span className="file-browser-empty">{activeSession ? 'No entries.' : 'Open a file browser session.'}</span>
                   </td>
                 </tr>
@@ -796,6 +1218,22 @@ function FileBrowserPanel({
                       <td>{entry.modified_at ? compactDateTime(entry.modified_at) : '-'}</td>
                       <td>
                         <span className="beacon-mono">{entry.permissions}</span>
+                      </td>
+                      <td>
+                        {entry.type === 'file' ? (
+                          <button
+                            aria-label={`Download ${entry.name}`}
+                            className="file-transfer-icon-button"
+                            disabled={!activeSession || !fileSocketOpen || transferBusy}
+                            onClick={() => handleDownloadEntry(entry)}
+                            title="Download file"
+                            type="button"
+                          >
+                            <Download aria-hidden="true" size={15} strokeWidth={2.1} />
+                          </button>
+                        ) : (
+                          <span className="file-browser-empty-cell">-</span>
+                        )}
                       </td>
                     </tr>
                   );

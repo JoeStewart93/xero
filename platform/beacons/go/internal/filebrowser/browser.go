@@ -1,6 +1,8 @@
 package filebrowser
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -14,11 +16,13 @@ import (
 )
 
 const DefaultPreviewLimitBytes int64 = 1024 * 1024
+const DefaultTransferChunkBytes int64 = 512 * 1024
 
 var (
 	ErrAccessDenied         = errors.New("access denied")
 	ErrBinaryFile           = errors.New("binary file preview blocked")
 	ErrDuplicateSession     = errors.New("file browser session already exists")
+	ErrHashMismatch         = errors.New("file transfer hash mismatch")
 	ErrInvalidPath          = errors.New("path invalid")
 	ErrNotFound             = errors.New("path not found")
 	ErrUnsupportedOperation = errors.New("unsupported operation")
@@ -31,7 +35,8 @@ type Manager struct {
 }
 
 type Session struct {
-	root string
+	root    string
+	uploads map[string]*UploadTransfer
 }
 
 type Entry struct {
@@ -48,6 +53,33 @@ type ReadResult struct {
 	Encoding  string
 	Size      int64
 	Truncated bool
+}
+
+type UploadTransfer struct {
+	ChunkHashes      map[int]string
+	ChunkSizeBytes   int64
+	Overwrite        bool
+	ReceivedSequence map[int]bool
+	RemotePath       string
+	SHA256           string
+	SizeBytes        int64
+	TargetPath       string
+	TempPath         string
+	TotalChunks      int
+	TransferID       string
+}
+
+type TransferStatus struct {
+	ReceivedSequences []int
+	NextSequence      int
+}
+
+type DownloadInfo struct {
+	ChunkSizeBytes int64
+	Path           string
+	SHA256         string
+	SizeBytes      int64
+	TotalChunks    int
 }
 
 func NewManager() *Manager {
@@ -68,7 +100,7 @@ func (m *Manager) Open(id string, rootPath string) (string, error) {
 	if _, exists := m.sessions[id]; exists {
 		return "", ErrDuplicateSession
 	}
-	m.sessions[id] = &Session{root: root}
+	m.sessions[id] = &Session{root: root, uploads: map[string]*UploadTransfer{}}
 	return root, nil
 }
 
@@ -185,6 +217,228 @@ func (m *Manager) ReadFile(id string, path string, limitBytes int64) (ReadResult
 	}, nil
 }
 
+func (m *Manager) StartUpload(
+	id string,
+	transferID string,
+	path string,
+	sizeBytes int64,
+	sha256Hex string,
+	chunkSizeBytes int64,
+	totalChunks int,
+	overwrite bool,
+) (TransferStatus, error) {
+	session, err := m.session(id)
+	if err != nil {
+		return TransferStatus{}, err
+	}
+	if chunkSizeBytes <= 0 {
+		chunkSizeBytes = DefaultTransferChunkBytes
+	}
+	if strings.TrimSpace(transferID) == "" || !isSHA256Hex(sha256Hex) || sizeBytes < 0 {
+		return TransferStatus{}, ErrInvalidPath
+	}
+	expectedChunks := totalChunksForSize(sizeBytes, chunkSizeBytes)
+	if totalChunks != expectedChunks {
+		return TransferStatus{}, ErrInvalidPath
+	}
+	normalizedPath, err := normalizeRelativePath(path)
+	if err != nil || normalizedPath == "" {
+		return TransferStatus{}, ErrInvalidPath
+	}
+	if existing := session.uploads[transferID]; existing != nil {
+		if existing.RemotePath != normalizedPath ||
+			existing.SizeBytes != sizeBytes ||
+			existing.SHA256 != strings.ToLower(sha256Hex) ||
+			existing.ChunkSizeBytes != chunkSizeBytes ||
+			existing.TotalChunks != totalChunks {
+			return TransferStatus{}, ErrInvalidPath
+		}
+		return existing.status(), nil
+	}
+	target, relative, err := session.safeCreatePath(path)
+	if err != nil {
+		return TransferStatus{}, err
+	}
+	if existing, statErr := os.Lstat(target); statErr == nil {
+		if existing.IsDir() || existing.Mode()&os.ModeSymlink != 0 {
+			return TransferStatus{}, ErrInvalidPath
+		}
+		if !overwrite {
+			return TransferStatus{}, ErrUnsupportedOperation
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return TransferStatus{}, mapOSError(statErr)
+	}
+	tempPath := target + ".xero-transfer-" + safeTransferID(transferID) + ".tmp"
+	if err := os.WriteFile(tempPath, nil, 0o600); err != nil {
+		return TransferStatus{}, mapOSError(err)
+	}
+	upload := &UploadTransfer{
+		ChunkHashes:      map[int]string{},
+		ChunkSizeBytes:   chunkSizeBytes,
+		Overwrite:        overwrite,
+		ReceivedSequence: map[int]bool{},
+		RemotePath:       relative,
+		SHA256:           strings.ToLower(sha256Hex),
+		SizeBytes:        sizeBytes,
+		TargetPath:       target,
+		TempPath:         tempPath,
+		TotalChunks:      totalChunks,
+		TransferID:       transferID,
+	}
+	session.uploads[transferID] = upload
+	return upload.status(), nil
+}
+
+func (m *Manager) WriteUploadChunk(
+	id string,
+	transferID string,
+	sequence int,
+	data []byte,
+	chunkSHA256 string,
+) (TransferStatus, error) {
+	session, err := m.session(id)
+	if err != nil {
+		return TransferStatus{}, err
+	}
+	upload := session.uploads[transferID]
+	if upload == nil {
+		return TransferStatus{}, ErrNotFound
+	}
+	if sequence < 0 || sequence >= upload.TotalChunks {
+		return TransferStatus{}, ErrInvalidPath
+	}
+	expectedSize := upload.ChunkSizeBytes
+	if sequence == upload.TotalChunks-1 {
+		expectedSize = upload.SizeBytes - int64(sequence)*upload.ChunkSizeBytes
+	}
+	if int64(len(data)) != expectedSize {
+		return TransferStatus{}, ErrInvalidPath
+	}
+	chunkSHA256 = strings.ToLower(strings.TrimSpace(chunkSHA256))
+	if !isSHA256Hex(chunkSHA256) || sha256Hex(data) != chunkSHA256 {
+		return TransferStatus{}, ErrHashMismatch
+	}
+	if previous, ok := upload.ChunkHashes[sequence]; ok && previous != chunkSHA256 {
+		return TransferStatus{}, ErrHashMismatch
+	}
+	file, err := os.OpenFile(upload.TempPath, os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return TransferStatus{}, mapOSError(err)
+	}
+	defer file.Close()
+	if _, err := file.WriteAt(data, int64(sequence)*upload.ChunkSizeBytes); err != nil {
+		return TransferStatus{}, mapOSError(err)
+	}
+	upload.ChunkHashes[sequence] = chunkSHA256
+	upload.ReceivedSequence[sequence] = true
+	return upload.status(), nil
+}
+
+func (m *Manager) CompleteUpload(id string, transferID string) (string, error) {
+	session, err := m.session(id)
+	if err != nil {
+		return "", err
+	}
+	upload := session.uploads[transferID]
+	if upload == nil {
+		return "", ErrNotFound
+	}
+	if len(upload.ReceivedSequence) != upload.TotalChunks {
+		return "", ErrInvalidPath
+	}
+	digest, err := fileSHA256(upload.TempPath)
+	if err != nil {
+		return "", err
+	}
+	if digest != upload.SHA256 {
+		return "", ErrHashMismatch
+	}
+	if upload.Overwrite {
+		if err := os.Remove(upload.TargetPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", mapOSError(err)
+		}
+	}
+	if err := os.Rename(upload.TempPath, upload.TargetPath); err != nil {
+		return "", mapOSError(err)
+	}
+	delete(session.uploads, transferID)
+	return digest, nil
+}
+
+func (m *Manager) StartDownload(id string, path string, chunkSizeBytes int64) (DownloadInfo, error) {
+	if chunkSizeBytes <= 0 {
+		chunkSizeBytes = DefaultTransferChunkBytes
+	}
+	session, err := m.session(id)
+	if err != nil {
+		return DownloadInfo{}, err
+	}
+	target, relative, err := session.safePath(path)
+	if err != nil {
+		return DownloadInfo{}, err
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return DownloadInfo{}, mapOSError(err)
+	}
+	if info.IsDir() {
+		return DownloadInfo{}, ErrInvalidPath
+	}
+	digest, err := fileSHA256(target)
+	if err != nil {
+		return DownloadInfo{}, err
+	}
+	return DownloadInfo{
+		ChunkSizeBytes: chunkSizeBytes,
+		Path:           relative,
+		SHA256:         digest,
+		SizeBytes:      info.Size(),
+		TotalChunks:    totalChunksForSize(info.Size(), chunkSizeBytes),
+	}, nil
+}
+
+func (m *Manager) ReadDownloadChunk(id string, path string, sequence int, chunkSizeBytes int64) ([]byte, string, error) {
+	if chunkSizeBytes <= 0 {
+		chunkSizeBytes = DefaultTransferChunkBytes
+	}
+	session, err := m.session(id)
+	if err != nil {
+		return nil, "", err
+	}
+	target, _, err := session.safePath(path)
+	if err != nil {
+		return nil, "", err
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return nil, "", mapOSError(err)
+	}
+	if info.IsDir() {
+		return nil, "", ErrInvalidPath
+	}
+	totalChunks := totalChunksForSize(info.Size(), chunkSizeBytes)
+	if sequence < 0 || sequence >= totalChunks {
+		return nil, "", ErrInvalidPath
+	}
+	size := chunkSizeBytes
+	if sequence == totalChunks-1 {
+		size = info.Size() - int64(sequence)*chunkSizeBytes
+	}
+	data := make([]byte, size)
+	file, err := os.Open(target)
+	if err != nil {
+		return nil, "", mapOSError(err)
+	}
+	defer file.Close()
+	n, err := file.ReadAt(data, int64(sequence)*chunkSizeBytes)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, "", mapOSError(err)
+	}
+	data = data[:n]
+	return data, sha256Hex(data), nil
+}
+
 func (m *Manager) session(id string) (*Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -242,6 +496,36 @@ func (s *Session) safePath(path string) (string, string, error) {
 		return "", "", ErrInvalidPath
 	}
 	return resolved, normalized, nil
+}
+
+func (s *Session) safeCreatePath(path string) (string, string, error) {
+	normalized, err := normalizeRelativePath(path)
+	if err != nil {
+		return "", "", err
+	}
+	if normalized == "" {
+		return "", "", ErrInvalidPath
+	}
+	parent := filepath.ToSlash(filepath.Dir(filepath.FromSlash(normalized)))
+	if parent == "." {
+		parent = ""
+	}
+	parentTarget, _, err := s.safePath(parent)
+	if err != nil {
+		return "", "", err
+	}
+	info, err := os.Stat(parentTarget)
+	if err != nil {
+		return "", "", mapOSError(err)
+	}
+	if !info.IsDir() {
+		return "", "", ErrInvalidPath
+	}
+	target := filepath.Join(parentTarget, filepath.Base(filepath.FromSlash(normalized)))
+	if !isWithinRoot(s.root, target) {
+		return "", "", ErrInvalidPath
+	}
+	return target, normalized, nil
 }
 
 func normalizeRelativePath(path string) (string, error) {
@@ -317,6 +601,62 @@ func containsNUL(data []byte) bool {
 	return false
 }
 
+func totalChunksForSize(sizeBytes int64, chunkSizeBytes int64) int {
+	if sizeBytes == 0 {
+		return 0
+	}
+	return int((sizeBytes + chunkSizeBytes - 1) / chunkSizeBytes)
+}
+
+func (u *UploadTransfer) status() TransferStatus {
+	received := make([]int, 0, len(u.ReceivedSequence))
+	for sequence := range u.ReceivedSequence {
+		received = append(received, sequence)
+	}
+	sort.Ints(received)
+	next := -1
+	for sequence := range u.TotalChunks {
+		if !u.ReceivedSequence[sequence] {
+			next = sequence
+			break
+		}
+	}
+	return TransferStatus{ReceivedSequences: received, NextSequence: next}
+}
+
+func safeTransferID(value string) string {
+	value = strings.TrimSpace(value)
+	replacer := strings.NewReplacer("/", "-", "\\", "-", ":", "-", "..", "-")
+	return replacer.Replace(value)
+}
+
+func isSHA256Hex(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func fileSHA256(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", mapOSError(err)
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", mapOSError(err)
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
 func mapOSError(err error) error {
 	if errors.Is(err, os.ErrPermission) {
 		return ErrAccessDenied
@@ -333,6 +673,8 @@ func ErrorCode(err error) string {
 		return "access_denied"
 	case errors.Is(err, ErrBinaryFile):
 		return "binary_file"
+	case errors.Is(err, ErrHashMismatch):
+		return "hash_mismatch"
 	case errors.Is(err, ErrInvalidPath):
 		return "path_invalid"
 	case errors.Is(err, ErrNotFound), errors.Is(err, ErrUnknownSession):

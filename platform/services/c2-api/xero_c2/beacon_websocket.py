@@ -269,6 +269,7 @@ async def run_beacon_websocket(websocket: WebSocket, *, settings, public_beacon:
                             session,
                             beacon_id=beacon_id,
                             payload=decoded.payload,
+                            settings=settings,
                         )
                     record_frame_receipt(session, decoded, beacon_id=beacon_id)
                     session.commit()

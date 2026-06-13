@@ -593,6 +593,48 @@ class FileBrowserSessionResponse(BaseModel):
     updated_at: datetime
 
 
+FileTransferDirection = Literal["download", "upload"]
+FileTransferStatus = Literal["completed", "failed", "staged", "transferring"]
+
+
+class FileTransferCreateRequest(BaseModel):
+    beacon_id: str
+    session_id: str
+    filename: str = Field(min_length=1, max_length=255)
+    remote_path: str = Field(min_length=1, max_length=1024)
+    size_bytes: int = Field(ge=0)
+    sha256: str = Field(min_length=64, max_length=64)
+    overwrite: bool = False
+
+
+class FileTransferChunkUploadRequest(BaseModel):
+    chunk_sha256: str = Field(min_length=64, max_length=64)
+    data_b64: str = Field(min_length=1)
+
+
+class FileTransferResponse(BaseModel):
+    id: str
+    beacon_id: str
+    session_id: str
+    direction: FileTransferDirection
+    status: FileTransferStatus
+    remote_path: str
+    filename: str
+    size_bytes: int
+    sha256: str | None = None
+    chunk_size_bytes: int
+    total_chunks: int
+    staged_chunks: int
+    acked_chunks: int
+    artifact_id: str | None = None
+    artifact_available: bool | None = None
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class RegistrySessionResponse(BaseModel):
     id: str
     beacon_id: str

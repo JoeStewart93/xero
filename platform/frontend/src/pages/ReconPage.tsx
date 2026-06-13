@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Crosshair, Play, RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 
 import {
   createScanJob,
@@ -19,6 +20,7 @@ import { AppShell } from '../components/AppShell';
 import { C2RequiredPanel } from '../components/C2RequiredPanel';
 import { StreamOutput } from '../components/StreamOutput';
 import type { StreamOutputChunk } from '../components/StreamOutput';
+import { decodeLaunchArgs, stringValue } from '../modules/moduleCatalog';
 import { useC2Connection } from '../useC2Connection';
 import { useRealtime } from '../useRealtime';
 
@@ -188,6 +190,7 @@ function tlsExpiryState(result: ServiceEnumResultRecord): 'critical' | 'warning'
 }
 
 export function ReconPage() {
+  const location = useLocation();
   const { connection } = useC2Connection();
   const realtime = useRealtime();
   const [form, setForm] = useState<ScanFormState>(initialForm);
@@ -200,6 +203,8 @@ export function ReconPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [serviceEnumPending, setServiceEnumPending] = useState('');
   const [scanChunksByJob, setScanChunksByJob] = useState<Record<string, ScanResultChunk[]>>({});
+  const routeModuleId = useMemo(() => new URLSearchParams(location.search).get('module') ?? '', [location.search]);
+  const routeModuleArgs = useMemo(() => decodeLaunchArgs(new URLSearchParams(location.search).get('args')), [location.search]);
   const selectedJob = useMemo(
     () => jobs.find((job) => job.id === selectedJobId) ?? jobs[0] ?? null,
     [jobs, selectedJobId],
@@ -272,6 +277,22 @@ export function ReconPage() {
     const handle = window.setTimeout(() => void loadReconState(), 0);
     return () => window.clearTimeout(handle);
   }, [loadReconState]);
+
+  useEffect(() => {
+    if (routeModuleId !== 'builtin.portscan') {
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      setForm((current) => ({
+        maxThreads: stringValue(routeModuleArgs.max_threads) || current.maxThreads,
+        portRange: stringValue(routeModuleArgs.port_range) || current.portRange,
+        targets: stringValue(routeModuleArgs.targets) || current.targets,
+        timeoutMs: stringValue(routeModuleArgs.timeout_ms) || current.timeoutMs,
+      }));
+      setMessage('Port scan loaded from Inventory.');
+    }, 0);
+    return () => window.clearTimeout(handle);
+  }, [routeModuleArgs, routeModuleId]);
 
   useEffect(() => {
     if (!connection || !selectedJob || selectedJob.status === 'completed' || selectedJob.status === 'failed') {

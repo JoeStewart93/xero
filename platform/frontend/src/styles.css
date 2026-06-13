@@ -4937,6 +4937,194 @@ h2 {
   line-height: 18px;
 }
 
+.module-inventory-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(360px, 0.85fr);
+  align-items: start;
+  gap: 14px;
+}
+
+.module-catalog-panel,
+.module-detail-panel {
+  min-width: 0;
+}
+
+.module-catalog-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, 220px);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.module-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid rgba(0, 231, 255, 0.14);
+  border-radius: 5px;
+  padding: 0 10px;
+  background: rgba(1, 5, 9, 0.62);
+  color: var(--xero-muted);
+}
+
+.module-search input,
+.module-catalog-toolbar select {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--xero-text);
+  font: inherit;
+}
+
+.module-catalog-toolbar select {
+  border: 1px solid rgba(0, 231, 255, 0.14);
+  border-radius: 5px;
+  padding: 0 10px;
+  background: rgba(1, 5, 9, 0.62);
+}
+
+.module-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.module-card {
+  display: grid;
+  gap: 8px;
+  min-height: 154px;
+  border: 1px solid rgba(0, 231, 255, 0.12);
+  border-radius: 6px;
+  padding: 12px;
+  background: rgba(1, 5, 9, 0.44);
+  color: inherit;
+  text-align: left;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.module-card:hover,
+.module-card.is-selected {
+  border-color: rgba(0, 231, 255, 0.32);
+  background: rgba(0, 231, 255, 0.07);
+}
+
+.module-card.is-disabled {
+  opacity: 0.62;
+}
+
+.module-card-head {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.module-card-head strong {
+  color: var(--xero-text);
+  font-size: 15px;
+  line-height: 19px;
+}
+
+.module-card-head small {
+  overflow-wrap: anywhere;
+  color: var(--xero-muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.module-card-description,
+.module-detail-description {
+  color: var(--xero-muted);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.module-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.module-badge-row span {
+  border: 1px solid rgba(0, 231, 255, 0.12);
+  border-radius: 5px;
+  padding: 3px 7px;
+  background: rgba(0, 0, 0, 0.18);
+  color: var(--xero-muted);
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.module-schema-table-wrap {
+  overflow: auto;
+  margin-top: 12px;
+  border: 1px solid rgba(0, 231, 255, 0.1);
+  border-radius: 6px;
+}
+
+.module-schema-table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.module-schema-table th,
+.module-schema-table td {
+  border-bottom: 1px solid rgba(0, 231, 255, 0.08);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.module-schema-table th {
+  color: var(--xero-muted);
+  font-weight: 760;
+}
+
+.module-example-block {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.module-example-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.module-example-toolbar strong {
+  color: var(--xero-text);
+  font-size: 13px;
+}
+
+.module-example-block pre {
+  overflow: auto;
+  max-height: 260px;
+  margin: 0;
+  border: 1px solid rgba(0, 231, 255, 0.1);
+  border-radius: 5px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.24);
+  color: var(--xero-text);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.module-launch-button {
+  width: 100%;
+  justify-content: center;
+  margin-top: 12px;
+}
+
 .recon-workspace {
   display: grid;
   grid-template-columns: minmax(300px, 0.85fr) minmax(280px, 0.7fr) minmax(420px, 1.25fr);
@@ -5576,6 +5764,10 @@ h2 {
     grid-column: 1 / -1;
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .module-inventory-workspace {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
@@ -5668,8 +5860,14 @@ h2 {
   .task-result-meta,
   .task-row,
   .beacon-detail-grid,
-  .beacon-metadata-band {
+  .beacon-metadata-band,
+  .module-inventory-workspace,
+  .module-catalog-toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .module-schema-table {
+    min-width: 540px;
   }
 
   .beacon-operations-backdrop {

@@ -11,7 +11,14 @@ class ModuleDefinition(BaseModel):
     category: str
     description: str
     source: str = "builtin"
+    author: str = "Xero"
     version: str = "0.1.0"
+    status: str = "enabled"
+    disabled_reason: str | None = None
+    plugin_id: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    updated_at: str | None = None
+    documentation_url: str | None = None
     execution_kind: str
     supported_execution_targets: list[str] = Field(default_factory=list)
     required_capabilities: list[str] = Field(default_factory=list)
@@ -137,6 +144,7 @@ BUILTIN_MODULES: list[ModuleDefinition] = [
         execution_kind="beacon-task",
         supported_execution_targets=["beacon"],
         required_capabilities=[],
+        tags=["command", "beacon-task", "utility"],
         args_schema={
             "type": "object",
             "required": ["command"],
@@ -157,6 +165,7 @@ BUILTIN_MODULES: list[ModuleDefinition] = [
         execution_kind="scan-job",
         supported_execution_targets=["auto"],
         required_capabilities=["tcp-connect"],
+        tags=["recon", "tcp", "scan-job"],
         args_schema=PORTSCAN_ARGS_SCHEMA,
         result_schema=PORTSCAN_RESULT_SCHEMA,
         example={
@@ -174,10 +183,13 @@ BUILTIN_MODULES: list[ModuleDefinition] = [
         id="builtin.serviceenum",
         name="Service Enumeration",
         category="scanning",
-        description="Probe open TCP ports for banners, HTTP headers, TLS certificate metadata, and service fingerprints.",
+        description=(
+            "Probe open TCP ports for banners, HTTP headers, TLS certificate metadata, and service fingerprints."
+        ),
         execution_kind="scan-job",
         supported_execution_targets=["auto"],
         required_capabilities=["service-enumeration"],
+        tags=["recon", "service-enumeration", "scan-job"],
         args_schema=SERVICEENUM_ARGS_SCHEMA,
         result_schema=SERVICEENUM_RESULT_SCHEMA,
         example={

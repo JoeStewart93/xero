@@ -6,6 +6,7 @@ import { BeaconsDeployPage } from './pages/BeaconsDeployPage';
 import { BeaconsPage } from './pages/BeaconsPage';
 import { C2SettingsPage } from './pages/C2SettingsPage';
 import { HomePage } from './pages/HomePage';
+import { InventoryPage } from './pages/InventoryPage';
 import { LoginPage } from './pages/LoginPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { ProjectsPage } from './pages/ProjectsPage';
@@ -235,7 +236,7 @@ export function App() {
         path="/assets"
         element={
           <ProtectedRoute>
-            <StubSectionPage section="assets" tabId="inventory" />
+            <InventoryPage />
           </ProtectedRoute>
         }
       />

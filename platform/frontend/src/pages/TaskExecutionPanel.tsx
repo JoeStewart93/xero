@@ -28,6 +28,8 @@ import type {
 } from '../api';
 import { StreamOutput } from '../components/StreamOutput';
 import type { C2Connection } from '../c2ConnectionContext';
+import { argsStateFromRecord, fieldAriaLabel, fieldLabel, initialModuleArgs, schemaFields, schemaType } from '../modules/moduleCatalog';
+import type { ArgsState } from '../modules/moduleCatalog';
 import type { OperatorRealtimeEvent, RealtimeStatus } from '../operatorRealtime';
 import { taskResultFromRealtimeEvent } from '../operatorRealtime';
 import type { TaskResultStreamBuffer } from '../taskResultStreams';
@@ -38,128 +40,21 @@ import { BEACON_DRAG_MIME } from './taskDrag';
 const taskPriorities: TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
 const taskStatusFilters: Array<TaskStatus | 'all'> = ['all', 'queued', 'dispatched', 'running', 'completed', 'failed', 'cancelled'];
 
-type JsonSchema = Record<string, unknown>;
-type FieldValue = string;
-type ArgsState = Record<string, FieldValue>;
 type FieldErrors = Record<string, string>;
 type ResultStream = 'stderr' | 'stdout';
 
 interface TaskExecutionPanelProps {
   beacons: Beacon[];
   connection: C2Connection;
+  initialArgs?: Record<string, unknown>;
   initialBeaconId?: string;
+  initialModuleId?: string;
   initialTaskId?: string;
   labelPrefix?: string;
   latestEvent: OperatorRealtimeEvent | null;
   realtimeStatus?: RealtimeStatus;
   testIdPrefix?: string;
   title?: string;
-}
-
-interface SchemaField {
-  isRequired: boolean;
-  key: string;
-  schema: JsonSchema;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-function schemaProperties(schema: JsonSchema): Record<string, JsonSchema> {
-  const properties = asRecord(schema.properties);
-  return Object.fromEntries(
-    Object.entries(properties).filter(([, value]) => typeof value === 'object' && value !== null && !Array.isArray(value)),
-  ) as Record<string, JsonSchema>;
-}
-
-function schemaRequired(schema: JsonSchema): string[] {
-  return Array.isArray(schema.required) ? schema.required.filter((item): item is string => typeof item === 'string') : [];
-}
-
-function schemaFields(module: ModuleDefinition | null): SchemaField[] {
-  if (!module) {
-    return [];
-  }
-  const required = new Set(schemaRequired(module.args_schema));
-  return Object.entries(schemaProperties(module.args_schema)).map(([key, schema]) => ({
-    isRequired: required.has(key),
-    key,
-    schema,
-  }));
-}
-
-function schemaType(schema: JsonSchema): string {
-  if (typeof schema.type === 'string') {
-    return schema.type;
-  }
-  if (Array.isArray(schema.type)) {
-    return schema.type.find((item): item is string => typeof item === 'string' && item !== 'null') ?? 'string';
-  }
-  return 'string';
-}
-
-function fieldLabel(key: string): string {
-  if (key === 'command') {
-    return 'Command';
-  }
-  if (key === 'shell_type') {
-    return 'Shell';
-  }
-  if (key === 'timeout_seconds') {
-    return 'Timeout';
-  }
-  return key.replace(/_/g, ' ');
-}
-
-function fieldAriaLabel(key: string, labelPrefix = ''): string {
-  const prefix = labelPrefix ? `${labelPrefix} ` : '';
-  if (key === 'command') {
-    return `${prefix}Shell command`;
-  }
-  if (key === 'shell_type') {
-    return `${prefix}Shell type`;
-  }
-  if (key === 'timeout_seconds') {
-    return `${prefix}Timeout seconds`;
-  }
-  return `${prefix}${fieldLabel(key)}`;
-}
-
-function moduleExampleArgs(module: ModuleDefinition): Record<string, unknown> {
-  const example = asRecord(module.example);
-  return asRecord(example.args);
-}
-
-function stringValue(value: unknown): string {
-  if (value === null || typeof value === 'undefined') {
-    return '';
-  }
-  return String(value);
-}
-
-function defaultFieldValue(module: ModuleDefinition, field: SchemaField): string {
-  const example = moduleExampleArgs(module);
-  if (field.key === 'command') {
-    return '';
-  }
-  if (typeof field.schema.default !== 'undefined') {
-    return stringValue(field.schema.default);
-  }
-  if (typeof example[field.key] !== 'undefined') {
-    return stringValue(example[field.key]);
-  }
-  if (module.id === 'shell' && field.key === 'timeout_seconds') {
-    return '60';
-  }
-  return '';
-}
-
-function initialArgs(module: ModuleDefinition | null): ArgsState {
-  if (!module) {
-    return {};
-  }
-  return Object.fromEntries(schemaFields(module).map((field) => [field.key, defaultFieldValue(module, field)]));
 }
 
 function formatBytes(value: number): string {
@@ -610,7 +505,9 @@ function TaskDetailPanel({
 export function TaskExecutionPanel({
   beacons,
   connection,
+  initialArgs,
   initialBeaconId,
+  initialModuleId,
   initialTaskId,
   labelPrefix,
   latestEvent,
@@ -749,13 +646,19 @@ export function TaskExecutionPanel({
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
+      const requestedModule = initialModuleId ? taskModules.find((module) => module.id === initialModuleId) ?? null : null;
+      if (requestedModule && moduleId !== requestedModule.id) {
+        setModuleId(requestedModule.id);
+        setArgs(argsStateFromRecord(requestedModule, initialArgs ?? {}));
+        return;
+      }
       if (!moduleId && taskModules.length > 0) {
         setModuleId(taskModules[0].id);
-        setArgs(initialArgs(taskModules[0]));
+        setArgs(initialModuleArgs(taskModules[0]));
       }
     }, 0);
     return () => window.clearTimeout(handle);
-  }, [moduleId, taskModules]);
+  }, [initialArgs, initialModuleId, moduleId, taskModules]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => void loadTasks(), 0);
@@ -802,7 +705,7 @@ export function TaskExecutionPanel({
   function handleModuleChange(nextModuleId: string): void {
     const nextModule = taskModules.find((module) => module.id === nextModuleId) ?? null;
     setModuleId(nextModuleId);
-    setArgs(initialArgs(nextModule));
+    setArgs(initialModuleArgs(nextModule));
     setSelectedTaskId('');
     setTaskResult(null);
     setTaskResultError('');
@@ -831,7 +734,7 @@ export function TaskExecutionPanel({
         buildArgs(selectedModule, args),
         priority,
       );
-      setArgs(initialArgs(selectedModule));
+      setArgs(initialModuleArgs(selectedModule));
       setTaskError('');
       await loadTasks();
     } catch (caught) {

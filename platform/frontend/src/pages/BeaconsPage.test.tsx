@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Beacon } from '../api';
+import { encodeLaunchArgs } from '../modules/moduleCatalog';
 import type { OperatorRealtimeEvent } from '../operatorRealtime';
 import { BeaconsPage } from './BeaconsPage';
 
@@ -1091,6 +1092,27 @@ describe('BeaconsPage', () => {
     });
     expect(await screen.findByText('whoami')).toBeTruthy();
     expect(screen.getByText('urgent')).toBeTruthy();
+  });
+
+  it('prefills task modules launched from Inventory', async () => {
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 1,
+      beacons: [beaconOne],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 0,
+      status: 'connected',
+    });
+    const args = encodeLaunchArgs({ command: 'hostname', shell_type: 'powershell', timeout_seconds: 15 });
+
+    renderBeaconsPage([`/beacons?module=shell&args=${args}`]);
+
+    expect(await screen.findByRole('option', { name: 'Shell Command' })).toBeTruthy();
+    expect(((await screen.findByLabelText('Shell command')) as HTMLInputElement).value).toBe('hostname');
+    expect((screen.getByLabelText('Shell type') as HTMLSelectElement).value).toBe('powershell');
+    expect((screen.getByLabelText('Timeout seconds') as HTMLInputElement).value).toBe('15');
+    expect(screen.getByTestId('beacon-task-target-chip').textContent).toContain('beacon-alpha');
   });
 
   it('sets the task target by dragging a beacon row onto the form', async () => {

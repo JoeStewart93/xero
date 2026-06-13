@@ -400,10 +400,17 @@ def test_module_registry_exposes_builtin_portscan(c2_client):
     assert modules["shell"]["supported_execution_targets"] == ["beacon"]
     assert modules["shell"]["args_schema"]["required"] == ["command"]
     assert modules["shell"]["args_schema"]["properties"]["command"]["type"] == "string"
+    assert modules["shell"]["author"] == "Xero"
+    assert modules["shell"]["status"] == "enabled"
+    assert "beacon-task" in modules["shell"]["tags"]
     assert "builtin.portscan" in modules
     assert modules["builtin.portscan"]["execution_kind"] == "scan-job"
     assert modules["builtin.portscan"]["supported_execution_targets"] == ["auto"]
     assert modules["builtin.portscan"]["args_schema"]["properties"]["execution_target"]["enum"] == ["auto"]
+    assert modules["builtin.portscan"]["author"] == "Xero"
+    assert modules["builtin.portscan"]["plugin_id"] is None
+    assert modules["builtin.portscan"]["status"] == "enabled"
+    assert "scan-job" in modules["builtin.portscan"]["tags"]
 
 
 def test_portscan_args_validation_rejects_public_and_non_auto_targets(c2_client):
@@ -617,6 +624,8 @@ def test_serviceenum_module_registry_and_args_validation(c2_client):
     assert "builtin.serviceenum" in modules
     assert modules["builtin.serviceenum"]["execution_kind"] == "scan-job"
     assert modules["builtin.serviceenum"]["required_capabilities"] == ["service-enumeration"]
+    assert modules["builtin.serviceenum"]["status"] == "enabled"
+    assert "service-enumeration" in modules["builtin.serviceenum"]["tags"]
     assert len(FINGERPRINT_RULES) >= 50
 
     public_target = c2_client.post(

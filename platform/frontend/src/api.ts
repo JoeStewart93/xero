@@ -465,16 +465,23 @@ export interface TaskResultChunkListResponse {
 
 export interface ModuleDefinition {
   args_schema: Record<string, unknown>;
+  author?: string;
   category: string;
   description: string;
+  disabled_reason?: string | null;
+  documentation_url?: string | null;
   example: Record<string, unknown>;
   execution_kind: string;
   id: string;
   name: string;
+  plugin_id?: string | null;
   required_capabilities: string[];
   result_schema: Record<string, unknown>;
   source: string;
+  status?: 'disabled' | 'enabled' | 'unavailable';
   supported_execution_targets: string[];
+  tags?: string[];
+  updated_at?: string | null;
   version: string;
 }
 

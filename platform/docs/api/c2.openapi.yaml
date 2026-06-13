@@ -3063,9 +3063,47 @@ components:
         source:
           type: string
           title: Source
+        author:
+          type: string
+          title: Author
+          default: Xero
         version:
           type: string
           title: Version
+        status:
+          type: string
+          enum:
+          - enabled
+          - disabled
+          - unavailable
+          title: Status
+          default: enabled
+        disabled_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Disabled Reason
+        plugin_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Plugin Id
+        tags:
+          items:
+            type: string
+          type: array
+          title: Tags
+        updated_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Updated At
+        documentation_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Documentation Url
         execution_kind:
           type: string
           title: Execution Kind

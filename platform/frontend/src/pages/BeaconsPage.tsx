@@ -52,6 +52,7 @@ import { C2RequiredPanel } from '../components/C2RequiredPanel';
 import { ModalShell } from '../components/ModalShell';
 import type { C2Connection } from '../c2ConnectionContext';
 import type { OperatorRealtimeEvent } from '../operatorRealtime';
+import { decodeLaunchArgs } from '../modules/moduleCatalog';
 import { useC2Connection } from '../useC2Connection';
 import { useRealtime } from '../useRealtime';
 import { ShellSessionClient } from '../shellSessionClient';
@@ -949,6 +950,8 @@ export function BeaconsPage() {
   const { connection } = useC2Connection();
   const realtime = useRealtime();
   const routeBeaconId = useMemo(() => new URLSearchParams(location.search).get('beacon_id') ?? '', [location.search]);
+  const routeModuleId = useMemo(() => new URLSearchParams(location.search).get('module') ?? '', [location.search]);
+  const routeModuleArgs = useMemo(() => decodeLaunchArgs(new URLSearchParams(location.search).get('args')), [location.search]);
   const routeTaskId = useMemo(() => new URLSearchParams(location.search).get('task_id') ?? '', [location.search]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBeaconId, setSelectedBeaconId] = useState('');
@@ -1425,7 +1428,9 @@ export function BeaconsPage() {
                   <TaskExecutionPanel
                     beacons={visibleBeacons}
                     connection={connection}
+                    initialArgs={routeModuleArgs}
                     initialBeaconId={selectedBeacon.id}
+                    initialModuleId={routeModuleId || undefined}
                     initialTaskId={selectedBeacon.id === routeBeaconId ? routeTaskId : undefined}
                     latestEvent={realtime.latestEvent}
                     realtimeStatus={realtime.status}

@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { encodeLaunchArgs } from '../modules/moduleCatalog';
 import { ReconPage } from './ReconPage';
 
 const mocks = vi.hoisted(() => ({
@@ -70,9 +71,9 @@ const completedScan = {
   worker_id: 'worker-one',
 };
 
-function renderPage() {
+function renderPage(initialEntries = ['/recon']) {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntries}>
       <ReconPage />
     </MemoryRouter>,
   );
@@ -146,6 +147,23 @@ describe('ReconPage', () => {
         }),
       );
     });
+  });
+
+  it('loads port scan args from Inventory launch query params', async () => {
+    const launchArgs = encodeLaunchArgs({
+      max_threads: 4,
+      port_range: '22,443',
+      targets: ['127.0.0.1', 'localhost'],
+      timeout_ms: 750,
+    });
+
+    renderPage([`/recon?module=builtin.portscan&args=${launchArgs}`]);
+
+    expect(await screen.findByText('Port scan loaded from Inventory.')).toBeTruthy();
+    expect((screen.getByLabelText('Scan targets') as HTMLTextAreaElement).value).toBe('127.0.0.1,localhost');
+    expect((screen.getByLabelText('Port range') as HTMLInputElement).value).toBe('22,443');
+    expect((screen.getByLabelText('Timeout ms') as HTMLInputElement).value).toBe('750');
+    expect((screen.getByLabelText('Max threads') as HTMLInputElement).value).toBe('4');
   });
 
   it('queues service enumeration from an open port scan result', async () => {

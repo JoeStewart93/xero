@@ -451,7 +451,14 @@ class ModuleDefinitionResponse(BaseModel):
     category: str
     description: str
     source: str
+    author: str = "Xero"
     version: str
+    status: Literal["enabled", "disabled", "unavailable"] = "enabled"
+    disabled_reason: str | None = None
+    plugin_id: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    updated_at: datetime | None = None
+    documentation_url: str | None = None
     execution_kind: str
     supported_execution_targets: list[str] = Field(default_factory=list)
     required_capabilities: list[str] = Field(default_factory=list)

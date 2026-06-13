@@ -7,6 +7,7 @@ export interface OperatorRealtimeEvent {
   scope: {
     beacon_id?: string | null;
     project_id?: string | null;
+    scan_job_id?: string | null;
     session_id?: string | null;
     task_id?: string | null;
   };

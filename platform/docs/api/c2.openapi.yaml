@@ -140,6 +140,187 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/modules:
+    get:
+      tags:
+      - modules
+      summary: List Module Catalog
+      operationId: list_module_catalog_api_v1_modules_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModuleListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/scan-jobs:
+    post:
+      tags:
+      - scan-jobs
+      summary: Create Port Scan Job
+      operationId: create_port_scan_job_api_v1_scan_jobs_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScanJobCreateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanJobResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - scan-jobs
+      summary: List Scan Jobs
+      operationId: list_scan_jobs_api_v1_scan_jobs_get
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - completed
+            - failed
+            - queued
+            - running
+            type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 25
+          title: Limit
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanJobListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/scan-jobs/{scan_job_id}:
+    get:
+      tags:
+      - scan-jobs
+      summary: Get Scan Job
+      operationId: get_scan_job_api_v1_scan_jobs__scan_job_id__get
+      parameters:
+      - name: scan_job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Scan Job Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanJobResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/scan-jobs/{scan_job_id}/chunks:
+    get:
+      tags:
+      - scan-jobs
+      summary: List Scan Result Chunks
+      operationId: list_scan_result_chunks_api_v1_scan_jobs__scan_job_id__chunks_get
+      parameters:
+      - name: scan_job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Scan Job Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanResultChunkListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/security/events:
     get:
       tags:
@@ -2463,6 +2644,65 @@ components:
       - created_at
       - updated_at
       title: InfrastructureWorkerResponse
+    ModuleDefinitionResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        category:
+          type: string
+          title: Category
+        description:
+          type: string
+          title: Description
+        source:
+          type: string
+          title: Source
+        version:
+          type: string
+          title: Version
+        execution_kind:
+          type: string
+          title: Execution Kind
+        supported_execution_targets:
+          items:
+            type: string
+          type: array
+          title: Supported Execution Targets
+        args_schema:
+          additionalProperties: true
+          type: object
+          title: Args Schema
+        result_schema:
+          additionalProperties: true
+          type: object
+          title: Result Schema
+        example:
+          additionalProperties: true
+          type: object
+          title: Example
+      type: object
+      required:
+      - id
+      - name
+      - category
+      - description
+      - source
+      - version
+      - execution_kind
+      title: ModuleDefinitionResponse
+    ModuleListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ModuleDefinitionResponse'
+          type: array
+          title: Items
+      type: object
+      title: ModuleListResponse
     PairingTokenCreateRequest:
       properties:
         kind:
@@ -2686,6 +2926,182 @@ components:
       - created_at
       - updated_at
       title: RegistrySessionResponse
+    ScanJobCreateRequest:
+      properties:
+        module:
+          type: string
+          const: builtin.portscan
+          title: Module
+        args:
+          additionalProperties: true
+          type: object
+          title: Args
+      type: object
+      required:
+      - module
+      title: ScanJobCreateRequest
+    ScanJobListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ScanJobResponse'
+          type: array
+          title: Items
+      type: object
+      title: ScanJobListResponse
+    ScanJobResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        module:
+          type: string
+          title: Module
+        args:
+          additionalProperties: true
+          type: object
+          title: Args
+        status:
+          type: string
+          enum:
+          - completed
+          - failed
+          - queued
+          - running
+          title: Status
+        actor_subject:
+          type: string
+          title: Actor Subject
+        execution_target_requested:
+          type: string
+          title: Execution Target Requested
+        execution_target_resolved:
+          type: string
+          title: Execution Target Resolved
+        worker_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Worker Id
+        progress_completed:
+          type: integer
+          title: Progress Completed
+        progress_total:
+          type: integer
+          title: Progress Total
+        state_counts:
+          additionalProperties: true
+          type: object
+          title: State Counts
+        summary:
+          additionalProperties: true
+          type: object
+          title: Summary
+        results:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Results
+        error_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Message
+        queued_at:
+          type: string
+          format: date-time
+          title: Queued At
+        started_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Started At
+        completed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Completed At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - module
+      - args
+      - status
+      - actor_subject
+      - execution_target_requested
+      - execution_target_resolved
+      - progress_completed
+      - progress_total
+      - queued_at
+      - created_at
+      - updated_at
+      title: ScanJobResponse
+    ScanResultChunkListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ScanResultChunkResponse'
+          type: array
+          title: Items
+      type: object
+      title: ScanResultChunkListResponse
+    ScanResultChunkResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        scan_job_id:
+          type: string
+          title: Scan Job Id
+        sequence:
+          type: integer
+          title: Sequence
+        kind:
+          type: string
+          enum:
+          - progress
+          - summary
+          title: Kind
+        payload:
+          additionalProperties: true
+          type: object
+          title: Payload
+        probes_completed:
+          type: integer
+          title: Probes Completed
+        probes_total:
+          type: integer
+          title: Probes Total
+        emitted_at:
+          type: string
+          format: date-time
+          title: Emitted At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - scan_job_id
+      - sequence
+      - kind
+      - probes_completed
+      - probes_total
+      - emitted_at
+      - created_at
+      title: ScanResultChunkResponse
     SessionResponse:
       properties:
         id:

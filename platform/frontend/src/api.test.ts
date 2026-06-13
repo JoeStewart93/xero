@@ -13,6 +13,7 @@ import {
   cloneTrafficProfile,
   closeRegistrySession,
   closeShellSession,
+  createScanJob,
   createBeaconBuild,
   createFileBrowserSession,
   createRegistrySession,
@@ -26,9 +27,13 @@ import {
   getBeaconBuilds,
   getBeaconBuildTargets,
   getCurrentOperator,
+  getModules,
   getProtocolInfo,
   getProtocolSecurityEvents,
   getShellSession,
+  getScanJob,
+  getScanJobs,
+  getScanResultChunks,
   getTaskAuditEvents,
   getTaskResult,
   getTaskResults,
@@ -262,6 +267,83 @@ describe('api client', () => {
     const [url] = firstFetchCall(fetchMock);
     expect(url).toBe('http://c2.local:8001/api/v1/transport');
     expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
+  });
+
+  it('calls C2 module and scan job endpoints with bearer auth', async () => {
+    const scanJobPayload = {
+      actor_subject: 'operator-one',
+      args: {
+        execution_target: 'auto',
+        max_threads: 8,
+        port_range: '80,443',
+        targets: ['127.0.0.1'],
+        timeout_ms: 1000,
+      },
+      completed_at: null,
+      created_at: new Date().toISOString(),
+      error_message: null,
+      execution_target_requested: 'auto',
+      execution_target_resolved: 'embedded-c2',
+      id: 'scan-one',
+      module: 'builtin.portscan',
+      progress_completed: 0,
+      progress_total: 2,
+      queued_at: new Date().toISOString(),
+      results: [],
+      started_at: null,
+      state_counts: { closed: 0, filtered: 0, open: 0 },
+      status: 'queued',
+      summary: {},
+      updated_at: new Date().toISOString(),
+      worker_id: 'worker-one',
+    };
+    const chunkPayload = {
+      created_at: new Date().toISOString(),
+      emitted_at: new Date().toISOString(),
+      id: 'chunk-one',
+      kind: 'progress',
+      payload: { results: [] },
+      probes_completed: 2,
+      probes_total: 2,
+      scan_job_id: 'scan-one',
+      sequence: 1,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ id: 'builtin.portscan', name: 'Port Scan' }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(scanJobPayload), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [scanJobPayload] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...scanJobPayload, status: 'completed' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [chunkPayload] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getModules('http://c2.local:8001/', 'c2-token');
+    await createScanJob('http://c2.local:8001/', 'c2-token', {
+      max_threads: 8,
+      port_range: '80,443',
+      targets: ['127.0.0.1'],
+      timeout_ms: 1000,
+    });
+    await getScanJobs('http://c2.local:8001/', 'c2-token', { limit: 5, status: 'completed' });
+    await getScanJob('http://c2.local:8001/', 'c2-token', 'scan-one');
+    await getScanResultChunks('http://c2.local:8001/', 'c2-token', 'scan-one');
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://c2.local:8001/api/v1/modules');
+    expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
+    expect(fetchMock.mock.calls[1][0]).toBe('http://c2.local:8001/api/v1/scan-jobs');
+    expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)).toEqual({
+      args: {
+        execution_target: 'auto',
+        max_threads: 8,
+        port_range: '80,443',
+        targets: ['127.0.0.1'],
+        timeout_ms: 1000,
+      },
+      module: 'builtin.portscan',
+    });
+    expect(fetchMock.mock.calls[2][0]).toBe('http://c2.local:8001/api/v1/scan-jobs?status=completed&limit=5');
+    expect(fetchMock.mock.calls[3][0]).toBe('http://c2.local:8001/api/v1/scan-jobs/scan-one');
+    expect(fetchMock.mock.calls[4][0]).toBe('http://c2.local:8001/api/v1/scan-jobs/scan-one/chunks');
   });
 
   it('calls C2 traffic profile endpoints with bearer auth', async () => {

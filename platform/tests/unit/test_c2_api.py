@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import socket
 import threading
 import time
 import uuid
@@ -31,6 +32,8 @@ from xero_c2.models import (
     RegistryAuditEvent,
     RegistryConfirmation,
     ResultChunk,
+    ScanJob,
+    ScanResultChunk,
     Task,
     TaskAuditEvent,
     TaskResult,
@@ -38,6 +41,7 @@ from xero_c2.models import (
 )
 from xero_c2.protocol import HEARTBEAT, REGISTER, SESSION_DATA, TASK_POLL, TASK_RESULT
 from xero_c2.protocol.codec import public_key_bytes
+from xero_c2.portscan import run_scan_job
 from xero_c2.registry_sessions import (
     consume_registry_confirmation,
     create_registry_confirmation,
@@ -263,6 +267,222 @@ def test_protocol_info_requires_c2_auth_and_exposes_public_metadata(c2_client):
     assert payload["frame_header_length"] == 72
     assert payload["c2_public_key_b64"]
     assert payload["frame_harness_enabled"] is False
+
+
+def test_module_registry_exposes_builtin_portscan(c2_client):
+    unauthenticated = c2_client.get("/api/v1/modules")
+    token = connect_c2(c2_client)
+    response = c2_client.get("/api/v1/modules", headers={"Authorization": f"Bearer {token}"})
+
+    assert unauthenticated.status_code == 401
+    assert response.status_code == 200
+    modules = {item["id"]: item for item in response.json()["items"]}
+    assert "builtin.portscan" in modules
+    assert modules["builtin.portscan"]["execution_kind"] == "scan-job"
+    assert modules["builtin.portscan"]["supported_execution_targets"] == ["auto"]
+    assert modules["builtin.portscan"]["args_schema"]["properties"]["execution_target"]["enum"] == ["auto"]
+
+
+def test_portscan_args_validation_rejects_public_and_non_auto_targets(c2_client):
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    public_target = c2_client.post(
+        "/api/v1/scan-jobs",
+        headers=headers,
+        json={
+            "module": "builtin.portscan",
+            "args": {"execution_target": "auto", "port_range": "80", "targets": ["8.8.8.8"]},
+        },
+    )
+    external_target = c2_client.post(
+        "/api/v1/scan-jobs",
+        headers=headers,
+        json={
+            "module": "builtin.portscan",
+            "args": {"execution_target": "external", "port_range": "80", "targets": ["127.0.0.1"]},
+        },
+    )
+    invalid_port = c2_client.post(
+        "/api/v1/scan-jobs",
+        headers=headers,
+        json={
+            "module": "builtin.portscan",
+            "args": {"execution_target": "auto", "port_range": "70000", "targets": ["127.0.0.1"]},
+        },
+    )
+
+    assert public_target.status_code == 422
+    assert external_target.status_code == 422
+    assert invalid_port.status_code == 422
+
+
+def test_portscan_job_scans_loopback_and_records_chunks(c2_client, monkeypatch):
+    monkeypatch.setattr("xero_c2.main.schedule_scan_execution", lambda *args, **kwargs: None)
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(4)
+    open_port = listener.getsockname()[1]
+    closed_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    closed_socket.bind(("127.0.0.1", 0))
+    closed_port = closed_socket.getsockname()[1]
+    closed_socket.close()
+    stop_accepting = threading.Event()
+
+    def accept_connections():
+        listener.settimeout(0.1)
+        while not stop_accepting.is_set():
+            try:
+                connection, _ = listener.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+            connection.close()
+
+    accept_thread = threading.Thread(target=accept_connections, daemon=True)
+    accept_thread.start()
+    try:
+        created = c2_client.post(
+            "/api/v1/scan-jobs",
+            headers=headers,
+            json={
+                "module": "builtin.portscan",
+                "args": {
+                    "execution_target": "auto",
+                    "max_threads": 2,
+                    "port_range": f"{open_port},{closed_port}",
+                    "targets": ["127.0.0.1"],
+                    "timeout_ms": 500,
+                },
+            },
+        )
+        assert created.status_code == 200
+        job = created.json()
+        assert job["status"] == "queued"
+        assert job["progress_total"] == 2
+
+        settings = get_settings()
+        asyncio.run(run_scan_job(c2_client.app, settings, uuid.UUID(job["id"])))
+        fetched = c2_client.get(f"/api/v1/scan-jobs/{job['id']}", headers=headers)
+        assert fetched.status_code == 200
+        job = fetched.json()
+        assert job["status"] == "completed"
+        assert job["summary"]["ports_scanned"] == 2
+        assert job["summary"]["open_count"] == 1
+        results = {(item["host"], item["port"]): item for item in job["results"]}
+        assert results[("127.0.0.1", open_port)]["state"] == "open"
+        assert results[("127.0.0.1", closed_port)]["state"] in {"closed", "filtered"}
+
+        chunks = c2_client.get(f"/api/v1/scan-jobs/{job['id']}/chunks", headers=headers)
+        assert chunks.status_code == 200
+        payload = chunks.json()["items"]
+        assert [chunk["kind"] for chunk in payload] == ["progress", "summary"]
+        assert payload[0]["probes_completed"] == 2
+
+        SessionFactory = get_session_factory(settings.database_url)
+        with SessionFactory() as session:
+            stored_job = session.get(ScanJob, uuid.UUID(job["id"]))
+            assert stored_job is not None
+            stored_chunks = (
+                session.execute(
+                    select(ScanResultChunk).where(ScanResultChunk.scan_job_id == uuid.UUID(job["id"]))
+                )
+                .scalars()
+                .all()
+            )
+            assert len(stored_chunks) == 2
+    finally:
+        stop_accepting.set()
+        listener.close()
+        accept_thread.join(timeout=1)
+
+
+def test_portscan_progress_chunk_emission_for_large_scan(c2_client, monkeypatch):
+    monkeypatch.setattr("xero_c2.main.schedule_scan_execution", lambda *args, **kwargs: None)
+
+    async def fake_probe(host: str, port: int, *, timeout_ms: int) -> dict:
+        return {"host": host, "latency_ms": 1.0, "port": port, "state": "open" if port == 443 else "closed"}
+
+    monkeypatch.setattr("xero_c2.portscan.probe_tcp_connect", fake_probe)
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created = c2_client.post(
+        "/api/v1/scan-jobs",
+        headers=headers,
+        json={
+            "module": "builtin.portscan",
+            "args": {
+                "execution_target": "auto",
+                "max_threads": 32,
+                "port_range": "1-1000",
+                "targets": ["127.0.0.1"],
+                "timeout_ms": 500,
+            },
+        },
+    )
+
+    assert created.status_code == 200
+    job_id = created.json()["id"]
+    asyncio.run(run_scan_job(c2_client.app, get_settings(), uuid.UUID(job_id)))
+
+    fetched = c2_client.get(f"/api/v1/scan-jobs/{job_id}", headers=headers)
+    assert fetched.status_code == 200
+    job = fetched.json()
+    assert job["status"] == "completed"
+    assert job["progress_completed"] == 1000
+    assert job["summary"]["ports_scanned"] == 1000
+    assert job["summary"]["open_count"] == 1
+
+    chunks = c2_client.get(f"/api/v1/scan-jobs/{job_id}/chunks", headers=headers)
+    assert chunks.status_code == 200
+    chunk_items = chunks.json()["items"]
+    progress_chunks = [chunk for chunk in chunk_items if chunk["kind"] == "progress"]
+    assert len(progress_chunks) == 10
+    assert [chunk["probes_completed"] for chunk in progress_chunks] == list(range(100, 1001, 100))
+    assert chunk_items[-1]["kind"] == "summary"
+
+
+def test_portscan_respects_max_threads(c2_client, monkeypatch):
+    monkeypatch.setattr("xero_c2.main.schedule_scan_execution", lambda *args, **kwargs: None)
+    active_probes = 0
+    max_active_probes = 0
+
+    async def fake_probe(host: str, port: int, *, timeout_ms: int) -> dict:
+        nonlocal active_probes, max_active_probes
+        active_probes += 1
+        max_active_probes = max(max_active_probes, active_probes)
+        await asyncio.sleep(0.001)
+        active_probes -= 1
+        return {"host": host, "latency_ms": 1.0, "port": port, "state": "closed"}
+
+    monkeypatch.setattr("xero_c2.portscan.probe_tcp_connect", fake_probe)
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created = c2_client.post(
+        "/api/v1/scan-jobs",
+        headers=headers,
+        json={
+            "module": "builtin.portscan",
+            "args": {
+                "execution_target": "auto",
+                "max_threads": 3,
+                "port_range": "1-25",
+                "targets": ["127.0.0.1"],
+                "timeout_ms": 500,
+            },
+        },
+    )
+
+    assert created.status_code == 200
+    asyncio.run(run_scan_job(c2_client.app, get_settings(), uuid.UUID(created.json()["id"])))
+    assert max_active_probes <= 3
+    assert max_active_probes > 1
 
 
 def test_protocol_frame_harness_is_disabled_by_default(c2_client):

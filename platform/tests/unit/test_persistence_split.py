@@ -11,7 +11,7 @@ from xero_bff.models import User
 from xero_c2.config import Settings as C2Settings
 from xero_c2.config import get_settings as get_c2_settings
 from xero_c2.manage import alembic_config as c2_alembic_config
-from xero_c2.models import Artifact, Beacon, BeaconBuild
+from xero_c2.models import Artifact, Beacon, BeaconBuild, ScanJob
 from xero_c2.models import Base as C2Base
 from xero_common import crud
 from xero_common.database import (
@@ -117,6 +117,8 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert "registry_audit_events" in inspector.get_table_names()
     assert "traffic_profiles" in inspector.get_table_names()
     assert "traffic_profile_versions" in inspector.get_table_names()
+    assert "scan_jobs" in inspector.get_table_names()
+    assert "scan_result_chunks" in inspector.get_table_names()
     assert "protocol_version" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "protocol_peer_public_key_b64" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "transport_mode" in {column["name"] for column in inspector.get_columns("beacons")}
@@ -231,11 +233,33 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     }.issubset(traffic_profile_columns)
     traffic_profile_version_columns = {column["name"] for column in inspector.get_columns("traffic_profile_versions")}
     assert {"profile_id", "version", "config", "created_by"}.issubset(traffic_profile_version_columns)
+    scan_job_columns = {column["name"] for column in inspector.get_columns("scan_jobs")}
+    assert {
+        "module",
+        "args",
+        "status",
+        "actor_subject",
+        "execution_target_requested",
+        "execution_target_resolved",
+        "worker_id",
+        "progress_completed",
+        "progress_total",
+        "state_counts",
+        "summary",
+        "results",
+        "queued_at",
+        "started_at",
+        "completed_at",
+    }.issubset(scan_job_columns)
+    scan_chunk_columns = {column["name"] for column in inspector.get_columns("scan_result_chunks")}
+    assert {"scan_job_id", "sequence", "kind", "payload", "probes_completed", "probes_total", "emitted_at"}.issubset(
+        scan_chunk_columns
+    )
     beacon_columns = {column["name"] for column in inspector.get_columns("beacons")}
     assert {"profile_id", "applied_profile_version", "profile_applied_at"}.issubset(beacon_columns)
     with engine.connect() as connection:
         context = MigrationContext.configure(connection, opts={"version_table": "c2_alembic_version"})
-        assert context.get_current_heads() == ("c2_0014_traffic_profiles",)
+        assert context.get_current_heads() == ("c2_0015_scan_jobs",)
 
 
 def test_generic_crud_helpers_work_with_service_models(tmp_path):
@@ -283,11 +307,27 @@ def test_generic_crud_helpers_work_with_service_models(tmp_path):
             ),
         )
         build.artifact_id = artifact.id
+        scan_job = crud.create(
+            session,
+            ScanJob(
+                actor_subject="operator:test",
+                args={"targets": ["127.0.0.1"], "port_range": "80", "execution_target": "auto"},
+                execution_target_requested="auto",
+                execution_target_resolved="embedded-c2",
+                module="builtin.portscan",
+                progress_completed=0,
+                progress_total=1,
+                state_counts={"closed": 0, "filtered": 0, "open": 0},
+                status="queued",
+            ),
+        )
         beacon_id = beacon.id
         build_id = build.id
+        scan_job_id = scan_job.id
         assert crud.read(session, Beacon, beacon_id) is not None
         assert crud.read(session, BeaconBuild, build_id) is not None
         assert crud.read(session, Artifact, artifact.id) is not None
+        assert crud.read(session, ScanJob, scan_job_id) is not None
         assert crud.update(session, beacon, hostname="crud-renamed").hostname == "crud-renamed"
         crud.delete(session, beacon)
 

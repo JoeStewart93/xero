@@ -242,6 +242,7 @@ class TransportStatusResponse(BaseModel):
 
 TaskPriority = Literal["high", "low", "normal", "urgent"]
 TaskStatus = Literal["cancelled", "completed", "dispatched", "failed", "queued", "running"]
+ScanJobStatus = Literal["completed", "failed", "queued", "running"]
 ShellType = Literal["auto", "bash", "cmd", "powershell"]
 SessionStatus = Literal["closed", "closing", "detached", "failed", "open", "opening"]
 SessionType = Literal["file_browser", "registry", "shell"]
@@ -360,6 +361,71 @@ class TaskResultResponse(BaseModel):
 class TaskResultListResponse(BaseModel):
     items: list[TaskResultResponse] = Field(default_factory=list)
     next_cursor: datetime | None = None
+
+
+class ModuleDefinitionResponse(BaseModel):
+    id: str
+    name: str
+    category: str
+    description: str
+    source: str
+    version: str
+    execution_kind: str
+    supported_execution_targets: list[str] = Field(default_factory=list)
+    args_schema: dict = Field(default_factory=dict)
+    result_schema: dict = Field(default_factory=dict)
+    example: dict = Field(default_factory=dict)
+
+
+class ModuleListResponse(BaseModel):
+    items: list[ModuleDefinitionResponse] = Field(default_factory=list)
+
+
+class ScanJobCreateRequest(BaseModel):
+    module: Literal["builtin.portscan"]
+    args: dict = Field(default_factory=dict)
+
+
+class ScanJobResponse(BaseModel):
+    id: str
+    module: str
+    args: dict
+    status: ScanJobStatus
+    actor_subject: str
+    execution_target_requested: str
+    execution_target_resolved: str
+    worker_id: str | None = None
+    progress_completed: int
+    progress_total: int
+    state_counts: dict = Field(default_factory=dict)
+    summary: dict = Field(default_factory=dict)
+    results: list[dict] = Field(default_factory=list)
+    error_message: str | None = None
+    queued_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScanJobListResponse(BaseModel):
+    items: list[ScanJobResponse] = Field(default_factory=list)
+
+
+class ScanResultChunkResponse(BaseModel):
+    id: str
+    scan_job_id: str
+    sequence: int
+    kind: Literal["progress", "summary"]
+    payload: dict = Field(default_factory=dict)
+    probes_completed: int
+    probes_total: int
+    emitted_at: datetime
+    created_at: datetime
+
+
+class ScanResultChunkListResponse(BaseModel):
+    items: list[ScanResultChunkResponse] = Field(default_factory=list)
 
 
 class ShellSessionCreateRequest(BaseModel):

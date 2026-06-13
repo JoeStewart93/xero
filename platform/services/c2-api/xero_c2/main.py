@@ -77,6 +77,8 @@ from xero_c2.models import (
     InfrastructureWorker,
     InteractiveSession,
     ProtocolSecurityEvent,
+    ScanJob,
+    ScanResultChunk,
     Task,
     TaskAuditEvent,
     TaskResult,
@@ -174,6 +176,23 @@ from xero_c2.schemas import (
     WorkerRegistrationRequest,
     WorkerRegistrationResponse,
     WorkerStopResponse,
+    ModuleDefinitionResponse,
+    ModuleListResponse,
+    ScanJobCreateRequest,
+    ScanJobListResponse,
+    ScanJobResponse,
+    ScanJobStatus,
+    ScanResultChunkListResponse,
+    ScanResultChunkResponse,
+)
+from xero_c2.modules import list_modules
+from xero_c2.portscan import (
+    create_scan_job,
+    mark_abandoned_scan_jobs,
+    public_scan_chunk,
+    public_scan_job,
+    publish_scan_event,
+    run_scan_job,
 )
 from xero_c2.sessions import (
     FILE_BROWSER_SESSION_TYPE,
@@ -358,6 +377,12 @@ async def publish_task_result_event(app: FastAPI, settings, event_type: str, res
         await app.state.operator_realtime_hub.broadcast(event)
 
 
+def schedule_scan_execution(app: FastAPI, settings, scan_job_id: uuid.UUID) -> None:
+    task = asyncio.create_task(run_scan_job(app, settings, scan_job_id))
+    app.state.scan_background_tasks.add(task)
+    task.add_done_callback(app.state.scan_background_tasks.discard)
+
+
 def pairing_command(settings, *, kind: str, token: str, name: str) -> str:
     service = "beacon-handler" if kind == "beacon-handler" else "scanner"
     compose_file = "docker-compose.handler.yml" if kind == "beacon-handler" else "docker-compose.scanner.yml"
@@ -510,6 +535,7 @@ def create_app() -> FastAPI:
     session_relay_manager = SessionRelayManager(queue_size=settings.session_ws_queue_size)
     session_file_cache = FileListingCache(ttl_seconds=5)
     task_queue_service = TaskQueueService(app_env=settings.app_env)
+    scan_background_tasks: set[asyncio.Task[None]] = set()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -520,6 +546,7 @@ def create_app() -> FastAPI:
         app.state.session_relay_manager = session_relay_manager
         app.state.session_file_cache = session_file_cache
         app.state.task_queue_service = task_queue_service
+        app.state.scan_background_tasks = scan_background_tasks
         stale_monitor_task: asyncio.Task[None] | None = None
         worker_monitor_task: asyncio.Task[None] | None = None
         result_retention_task: asyncio.Task[None] | None = None
@@ -528,6 +555,7 @@ def create_app() -> FastAPI:
         with SessionFactory() as session:
             ensure_embedded_workers(session, settings)
             ensure_template_profiles(session)
+            mark_abandoned_scan_jobs(session)
             reset_beacon_transport_connections(session)
             purge_expired_task_results(session, settings)
             expire_idle_sessions(session, settings)
@@ -557,6 +585,11 @@ def create_app() -> FastAPI:
                 session_cleanup_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await session_cleanup_task
+            for task in list(scan_background_tasks):
+                task.cancel()
+            for task in list(scan_background_tasks):
+                with suppress(asyncio.CancelledError):
+                    await task
             await beacon_transport_manager.close_all()
             await beacon_longpoll_manager.close_all()
             await session_relay_manager.close_all()
@@ -570,6 +603,7 @@ def create_app() -> FastAPI:
     app.state.session_relay_manager = session_relay_manager
     app.state.session_file_cache = session_file_cache
     app.state.task_queue_service = task_queue_service
+    app.state.scan_background_tasks = scan_background_tasks
 
     app.add_middleware(
         CORSMiddleware,
@@ -692,6 +726,87 @@ def create_app() -> FastAPI:
             max_frame_bytes=settings.protocol_max_frame_bytes,
             c2_public_key_b64=private_key_public_b64(private_key),
             frame_harness_enabled=settings.protocol_frame_harness_enabled,
+        )
+
+    @api_router.get("/modules", response_model=ModuleListResponse, tags=["modules"])
+    def list_module_catalog(authorization: Annotated[str | None, Header()] = None) -> ModuleListResponse:
+        authorize_c2_token(settings, authorization)
+        return ModuleListResponse(items=[ModuleDefinitionResponse(**item) for item in list_modules()])
+
+    @api_router.post("/scan-jobs", response_model=ScanJobResponse, tags=["scan-jobs"])
+    async def create_port_scan_job(
+        payload: ScanJobCreateRequest,
+        request: Request,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> ScanJobResponse:
+        claims = authorize_c2_token(settings, authorization)
+        try:
+            ensure_embedded_workers(session, settings)
+            job = create_scan_job(
+                session,
+                actor_subject=actor_subject_from_claims(claims),
+                module=payload.module,
+                raw_args=payload.args,
+            )
+            session.commit()
+            session.refresh(job)
+        except ValueError as exc:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        job_payload = public_scan_job(job)
+        await publish_scan_event(request.app, settings, "scan.job.queued", job_payload)
+        schedule_scan_execution(request.app, settings, job.id)
+        return ScanJobResponse(**job_payload)
+
+    @api_router.get("/scan-jobs", response_model=ScanJobListResponse, tags=["scan-jobs"])
+    def list_scan_jobs(
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+        status_filter: Annotated[ScanJobStatus | None, Query(alias="status")] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 25,
+    ) -> ScanJobListResponse:
+        authorize_c2_token(settings, authorization)
+        query = select(ScanJob).order_by(ScanJob.created_at.desc())
+        if status_filter is not None:
+            query = query.where(ScanJob.status == status_filter)
+        query = query.limit(limit)
+        jobs = session.execute(query).scalars().all()
+        return ScanJobListResponse(items=[ScanJobResponse(**public_scan_job(job)) for job in jobs])
+
+    @api_router.get("/scan-jobs/{scan_job_id}", response_model=ScanJobResponse, tags=["scan-jobs"])
+    def get_scan_job(
+        scan_job_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> ScanJobResponse:
+        authorize_c2_token(settings, authorization)
+        job = session.get(ScanJob, scan_job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan job not found")
+        return ScanJobResponse(**public_scan_job(job))
+
+    @api_router.get(
+        "/scan-jobs/{scan_job_id}/chunks",
+        response_model=ScanResultChunkListResponse,
+        tags=["scan-jobs"],
+    )
+    def list_scan_result_chunks(
+        scan_job_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> ScanResultChunkListResponse:
+        authorize_c2_token(settings, authorization)
+        job = session.get(ScanJob, scan_job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan job not found")
+        chunks = session.execute(
+            select(ScanResultChunk)
+            .where(ScanResultChunk.scan_job_id == scan_job_id)
+            .order_by(ScanResultChunk.sequence.asc())
+        ).scalars()
+        return ScanResultChunkListResponse(
+            items=[ScanResultChunkResponse(**public_scan_chunk(chunk)) for chunk in chunks]
         )
 
     @api_router.get(

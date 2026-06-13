@@ -24,6 +24,8 @@ import {
   downloadBeaconBuildArtifact,
   downloadTaskResultArtifact,
   downloadTaskResultText,
+  getAsset,
+  getAssets,
   getBeaconBuilds,
   getBeaconBuildTargets,
   getBeaconActivity,
@@ -302,6 +304,58 @@ describe('api client', () => {
     expect(url).toBe('http://c2.local:8001/api/v1/dashboard/summary');
     expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
     expect(summary.beacons.total).toBe(3);
+  });
+
+  it('calls C2 asset inventory endpoints with bearer auth', async () => {
+    const assetPayload = {
+      asset_type: 'beacon_host',
+      created_at: new Date().toISOString(),
+      display_name: 'alpha.corp.local',
+      domain: 'corp.local',
+      first_seen: new Date().toISOString(),
+      hostname: 'alpha.corp.local',
+      id: 'asset-one',
+      last_seen: new Date().toISOString(),
+      metadata: {},
+      os: 'Windows 11',
+      primary_ip: '10.20.0.5',
+      role: 'beacon',
+      source: 'beacon',
+      updated_at: new Date().toISOString(),
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ items: [assetPayload], limit: 25, offset: 0, total: 1 }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ...assetPayload,
+            identifiers: [],
+            linked_beacons: [],
+            observations: [],
+            relationships: [],
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getAssets('http://c2.local:8001/', 'c2-token', {
+      limit: 25,
+      offset: 0,
+      q: 'alpha',
+      source: 'beacon',
+      type: 'beacon_host',
+    });
+    await getAsset('http://c2.local:8001/', 'c2-token', 'asset-one');
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://c2.local:8001/api/v1/assets?type=beacon_host&source=beacon&q=alpha&limit=25&offset=0',
+    );
+    expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
+    expect(fetchMock.mock.calls[1][0]).toBe('http://c2.local:8001/api/v1/assets/asset-one');
   });
 
   it('calls C2 module and scan job endpoints with bearer auth', async () => {

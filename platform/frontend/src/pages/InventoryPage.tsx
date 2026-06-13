@@ -1,304 +1,477 @@
-import { Clipboard, ExternalLink, Layers3, Play, RefreshCw, Search, ShieldCheck } from 'lucide-react';
-import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Database, RefreshCw, Search, Server, Wifi } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 
-import type { ModuleDefinition } from '../api';
+import type { Asset, AssetSource, AssetType } from '../api';
+import { getAsset, getAssets } from '../api';
 import { AppShell } from '../components/AppShell';
 import { C2RequiredPanel } from '../components/C2RequiredPanel';
-import { useModuleCatalog } from '../hooks/useModuleCatalog';
-import {
-  categoryLabel,
-  encodeLaunchArgs,
-  moduleExampleArgs,
-  moduleExampleJson,
-  schemaFields,
-  schemaType,
-} from '../modules/moduleCatalog';
 import { useC2Connection } from '../useC2Connection';
 
-function moduleSourceLabel(module: ModuleDefinition): string {
-  return module.source === 'builtin' ? 'Built-in' : 'Plugin';
-}
+const PAGE_SIZE = 25;
 
-function moduleUpdatedLabel(module: ModuleDefinition): string {
-  if (module.source !== 'plugin' || !module.updated_at) {
-    return '';
+function assetTypeLabel(type: AssetType): string {
+  if (type === 'beacon_host') {
+    return 'Beacon host';
   }
-  const updatedAt = Date.parse(module.updated_at);
-  if (!Number.isFinite(updatedAt)) {
-    return '';
+  if (type === 'discovered_host') {
+    return 'Discovered host';
   }
-  return `Updated ${new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' }).format(new Date(updatedAt))}`;
+  return 'Service';
 }
 
-function launchPath(module: ModuleDefinition): string | null {
-  const args = encodeLaunchArgs(moduleExampleArgs(module));
-  const encodedModule = encodeURIComponent(module.id);
-  if (module.execution_kind === 'scan-job' && module.id === 'builtin.portscan') {
-    return `/recon?module=${encodedModule}&args=${args}`;
+function sourceLabel(source: AssetSource | string): string {
+  return source === 'beacon' ? 'Beacon' : 'Scan';
+}
+
+function formatTimestamp(value: string | null | undefined): string {
+  if (!value) {
+    return '-';
   }
-  if (module.execution_kind === 'beacon-task') {
-    return `/beacons?module=${encodedModule}&args=${args}`;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    return '-';
   }
-  return null;
+  return new Intl.DateTimeFormat(undefined, {
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    month: 'short',
+  }).format(new Date(parsed));
 }
 
-function ModuleBadges({ module }: { module: ModuleDefinition }) {
-  const status = module.status ?? 'enabled';
-  const updatedLabel = moduleUpdatedLabel(module);
-  return (
-    <div className="module-badge-row" aria-label={`${module.name} metadata`}>
-      <span>{categoryLabel(module.category)}</span>
-      <span>{moduleSourceLabel(module)}</span>
-      {status !== 'enabled' ? <span>{status}</span> : null}
-      <span>v{module.version}</span>
-      <span>{module.author ?? 'Xero'}</span>
-      {updatedLabel ? <span>{updatedLabel}</span> : null}
-    </div>
-  );
+function assetIcon(type: AssetType) {
+  if (type === 'service') {
+    return <Wifi aria-hidden="true" size={15} strokeWidth={2.1} />;
+  }
+  if (type === 'beacon_host') {
+    return <Server aria-hidden="true" size={15} strokeWidth={2.1} />;
+  }
+  return <Database aria-hidden="true" size={15} strokeWidth={2.1} />;
 }
 
-function ModuleCard({
-  isSelected,
-  module,
-  onSelect,
-}: {
-  isSelected: boolean;
-  module: ModuleDefinition;
-  onSelect: (moduleId: string) => void;
-}) {
-  return (
-    <button
-      className={`module-card ${isSelected ? 'is-selected' : ''} ${(module.status ?? 'enabled') !== 'enabled' ? 'is-disabled' : ''}`}
-      onClick={() => onSelect(module.id)}
-      title={(module.status ?? 'enabled') === 'enabled' ? module.description : module.disabled_reason ?? 'Module is not currently available'}
-      type="button"
-    >
-      <span className="module-card-head">
-        <strong>{module.name}</strong>
-        <small>{module.id}</small>
-      </span>
-      <ModuleBadges module={module} />
-      <span className="module-card-description">{module.description}</span>
-    </button>
-  );
+function metadataValue(value: unknown): string {
+  if (value === null || typeof value === 'undefined') {
+    return '-';
+  }
+  if (Array.isArray(value)) {
+    return value.join(', ');
+  }
+  if (typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
 }
 
-function SchemaTable({ module }: { module: ModuleDefinition }) {
-  const fields = schemaFields(module);
-  return (
-    <div className="module-schema-table-wrap">
-      <table className="module-schema-table">
-        <thead>
-          <tr>
-            <th>Argument</th>
-            <th>Type</th>
-            <th>Required</th>
-            <th>Default</th>
-            <th>Description</th>
-          </tr>
-        </thead>
-        <tbody>
-          {fields.length === 0 ? (
-            <tr>
-              <td colSpan={5}>No arguments documented.</td>
-            </tr>
-          ) : fields.map((field) => (
-            <tr key={field.key}>
-              <td>{field.key}</td>
-              <td>{schemaType(field.schema)}</td>
-              <td>{field.isRequired ? 'yes' : 'no'}</td>
-              <td>{typeof field.schema.default === 'undefined' ? '-' : String(field.schema.default)}</td>
-              <td>{typeof field.schema.description === 'string' ? field.schema.description : '-'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function ModuleDetail({
-  copyState,
-  module,
-  onCopy,
-  onLaunch,
-}: {
-  copyState: string;
-  module: ModuleDefinition | null;
-  onCopy: () => void;
-  onLaunch: () => void;
-}) {
-  if (!module) {
+function AssetDetail({ asset, error, isLoading }: { asset: Asset | null; error: string; isLoading: boolean }) {
+  if (isLoading) {
     return (
-      <aside className="workspace-panel module-detail-panel" aria-label="Module detail">
+      <aside className="workspace-panel asset-detail-panel" aria-label="Asset detail">
         <div className="empty-state">
-          <ShieldCheck aria-hidden="true" size={18} strokeWidth={2} />
+          <RefreshCw aria-hidden="true" size={18} strokeWidth={2} />
           <div>
-            <strong>No module selected.</strong>
-            <span>Select a module to inspect its schema.</span>
+            <strong>Loading asset.</strong>
+            <span>Detail data is coming from C2.</span>
           </div>
         </div>
       </aside>
     );
   }
-  const canLaunch = (module.status ?? 'enabled') === 'enabled' && Boolean(launchPath(module));
+
+  if (error) {
+    return (
+      <aside className="workspace-panel asset-detail-panel" aria-label="Asset detail">
+        <p className="task-queue-error" role="alert">{error}</p>
+      </aside>
+    );
+  }
+
+  if (!asset) {
+    return (
+      <aside className="workspace-panel asset-detail-panel" aria-label="Asset detail">
+        <div className="empty-state">
+          <Database aria-hidden="true" size={18} strokeWidth={2} />
+          <div>
+            <strong>No asset selected.</strong>
+            <span>Select an asset row to inspect it.</span>
+          </div>
+        </div>
+      </aside>
+    );
+  }
+
+  const identifiers = asset.identifiers ?? [];
+  const linkedBeacons = asset.linked_beacons ?? [];
+  const relationships = asset.relationships ?? [];
+  const observations = asset.observations ?? [];
+
   return (
-    <aside className="workspace-panel module-detail-panel" aria-label="Module detail">
+    <aside className="workspace-panel asset-detail-panel" aria-label="Asset detail">
       <div className="panel-header">
         <div>
-          <h2>{module.name}</h2>
-          <p className="muted-text">{module.id}</p>
+          <h2>{asset.display_name}</h2>
+          <p className="muted-text">{asset.primary_ip ?? asset.hostname ?? asset.id}</p>
         </div>
-        <div className="panel-icon" aria-hidden="true">
-          <Layers3 size={18} strokeWidth={2} />
-        </div>
+        <span className={`asset-type-chip asset-type-${asset.asset_type}`}>
+          {assetIcon(asset.asset_type)}
+          {assetTypeLabel(asset.asset_type)}
+        </span>
       </div>
 
-      <ModuleBadges module={module} />
-      <p className="module-detail-description">{module.description}</p>
-      {(module.status ?? 'enabled') !== 'enabled' ? (
-        <p className="task-queue-error" role="alert">{module.disabled_reason ?? 'Module is not currently available.'}</p>
+      <dl className="asset-detail-grid">
+        <div>
+          <dt>Source</dt>
+          <dd>{sourceLabel(asset.source)}</dd>
+        </div>
+        <div>
+          <dt>Last seen</dt>
+          <dd>{formatTimestamp(asset.last_seen)}</dd>
+        </div>
+        <div>
+          <dt>Hostname</dt>
+          <dd>{asset.hostname ?? '-'}</dd>
+        </div>
+        <div>
+          <dt>Domain</dt>
+          <dd>{asset.domain ?? '-'}</dd>
+        </div>
+        <div>
+          <dt>OS</dt>
+          <dd>{asset.os ?? '-'}</dd>
+        </div>
+        <div>
+          <dt>Role</dt>
+          <dd>{asset.role ?? '-'}</dd>
+        </div>
+      </dl>
+
+      <section className="asset-detail-section" aria-label="Identifiers">
+        <h3>Identifiers</h3>
+        {identifiers.length === 0 ? (
+          <p className="muted-text">No identifiers recorded.</p>
+        ) : (
+          <div className="asset-detail-list">
+            {identifiers.map((identifier) => (
+              <div className="asset-detail-row" key={identifier.id}>
+                <span>{identifier.kind}</span>
+                <strong>{identifier.value}</strong>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="asset-detail-section" aria-label="Linked beacons">
+        <h3>Linked Beacons</h3>
+        {linkedBeacons.length === 0 ? (
+          <p className="muted-text">No linked beacon.</p>
+        ) : (
+          <div className="asset-detail-list">
+            {linkedBeacons.map((link) => (
+              <div className="asset-detail-row" key={link.id}>
+                <span>{link.hostname ?? link.status ?? 'beacon'}</span>
+                <strong>{link.beacon_id}</strong>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="asset-detail-section" aria-label="Relationships">
+        <h3>Relationships</h3>
+        {relationships.length === 0 ? (
+          <p className="muted-text">No relationships recorded.</p>
+        ) : (
+          <div className="asset-detail-list">
+            {relationships.map((relationship) => (
+              <div className="asset-detail-row" key={relationship.id}>
+                <span>{relationship.relationship_type}</span>
+                <strong>{relationship.related_asset_name ?? relationship.related_asset_id}</strong>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="asset-detail-section" aria-label="Recent observations">
+        <h3>Recent Observations</h3>
+        {observations.length === 0 ? (
+          <p className="muted-text">No observations recorded.</p>
+        ) : (
+          <div className="asset-observation-list">
+            {observations.slice(0, 6).map((observation) => (
+              <div className="asset-observation" key={observation.id}>
+                <span>{formatTimestamp(observation.observed_at)}</span>
+                <strong>{observation.observation_type}</strong>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {Object.keys(asset.metadata).length > 0 ? (
+        <section className="asset-detail-section" aria-label="Metadata">
+          <h3>Metadata</h3>
+          <div className="asset-detail-list">
+            {Object.entries(asset.metadata).map(([key, value]) => (
+              <div className="asset-detail-row" key={key}>
+                <span>{key}</span>
+                <strong>{metadataValue(value)}</strong>
+              </div>
+            ))}
+          </div>
+        </section>
       ) : null}
-
-      <SchemaTable module={module} />
-
-      <div className="module-example-block">
-        <div className="module-example-toolbar">
-          <strong>Example task JSON</strong>
-          <button className="secondary-button" onClick={onCopy} type="button">
-            <Clipboard aria-hidden="true" size={14} strokeWidth={2.1} />
-            <span>{copyState || 'Copy'}</span>
-          </button>
-        </div>
-        <pre>{moduleExampleJson(module)}</pre>
-      </div>
-
-      <button
-        className="primary-button module-launch-button"
-        disabled={!canLaunch}
-        onClick={onLaunch}
-        title={canLaunch ? 'Launch task' : module.disabled_reason ?? 'This module cannot be launched from Inventory'}
-        type="button"
-      >
-        <Play aria-hidden="true" size={15} strokeWidth={2.2} />
-        <span>{module.execution_kind === 'scan-job' ? 'Open in Recon' : 'Launch Task'}</span>
-        <ExternalLink aria-hidden="true" size={14} strokeWidth={2.1} />
-      </button>
     </aside>
   );
 }
 
 export function InventoryPage() {
-  const navigate = useNavigate();
   const { connection } = useC2Connection();
-  const [category, setCategory] = useState('all');
-  const [copyState, setCopyState] = useState('');
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [assetType, setAssetType] = useState<AssetType | 'all'>('all');
+  const [detailAsset, setDetailAsset] = useState<Asset | null>(null);
+  const [detailError, setDetailError] = useState('');
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [listError, setListError] = useState('');
+  const [page, setPage] = useState(0);
   const [query, setQuery] = useState('');
-  const [selectedModuleId, setSelectedModuleId] = useState('');
-  const filters = useMemo(() => ({ category, query }), [category, query]);
-  const {
-    categories,
-    error,
-    filteredModules,
-    isLoading,
-    loadModules,
-    modules,
-  } = useModuleCatalog(connection, filters);
-  const selectedModule = useMemo(() => (
-    modules.find((module) => module.id === selectedModuleId) ?? filteredModules[0] ?? null
-  ), [filteredModules, modules, selectedModuleId]);
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [selectedAssetId, setSelectedAssetId] = useState('');
+  const [source, setSource] = useState<AssetSource | 'all'>('all');
+  const [total, setTotal] = useState(0);
+  const trimmedQuery = query.trim();
 
-  async function handleCopy(): Promise<void> {
-    if (!selectedModule) {
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const currentOffset = page * PAGE_SIZE;
+  const selectedAsset = useMemo(
+    () => assets.find((asset) => asset.id === selectedAssetId) ?? assets[0] ?? null,
+    [assets, selectedAssetId],
+  );
+
+  useEffect(() => {
+    if (!connection) {
       return;
     }
-    await navigator.clipboard.writeText(moduleExampleJson(selectedModule));
-    setCopyState('Copied');
-    window.setTimeout(() => setCopyState(''), 1200);
+
+    let ignore = false;
+    queueMicrotask(() => {
+      if (!ignore) {
+        setIsLoading(true);
+        setListError('');
+      }
+    });
+
+    getAssets(connection.baseUrl, connection.accessToken, {
+      limit: PAGE_SIZE,
+      offset: currentOffset,
+      q: trimmedQuery || undefined,
+      source,
+      type: assetType,
+    })
+      .then((payload) => {
+        if (ignore) {
+          return;
+        }
+        setAssets(payload.items);
+        setTotal(payload.total);
+        if (payload.items.length === 0) {
+          setSelectedAssetId('');
+        } else if (!payload.items.some((asset) => asset.id === selectedAssetId)) {
+          setSelectedAssetId(payload.items[0].id);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!ignore) {
+          setAssets([]);
+          setTotal(0);
+          setSelectedAssetId('');
+          setListError(error instanceof Error ? error.message : 'Asset inventory failed to load.');
+        }
+      })
+      .finally(() => {
+        if (!ignore) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [assetType, connection, currentOffset, refreshTick, selectedAssetId, source, trimmedQuery]);
+
+  useEffect(() => {
+    if (!connection || !selectedAssetId) {
+      return;
+    }
+
+    let ignore = false;
+    queueMicrotask(() => {
+      if (!ignore) {
+        setIsDetailLoading(true);
+        setDetailError('');
+      }
+    });
+
+    getAsset(connection.baseUrl, connection.accessToken, selectedAssetId)
+      .then((asset) => {
+        if (!ignore) {
+          setDetailAsset(asset);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!ignore) {
+          setDetailAsset(null);
+          setDetailError(error instanceof Error ? error.message : 'Asset detail failed to load.');
+        }
+      })
+      .finally(() => {
+        if (!ignore) {
+          setIsDetailLoading(false);
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [connection, selectedAssetId]);
+
+  function resetPageAndSetType(nextType: AssetType | 'all'): void {
+    setPage(0);
+    setAssetType(nextType);
   }
 
-  function handleLaunch(): void {
-    if (!selectedModule) {
-      return;
-    }
-    const target = launchPath(selectedModule);
-    if (target) {
-      navigate(target);
-    }
+  function resetPageAndSetSource(nextSource: AssetSource | 'all'): void {
+    setPage(0);
+    setSource(nextSource);
+  }
+
+  function resetPageAndSetQuery(nextQuery: string): void {
+    setPage(0);
+    setQuery(nextQuery);
   }
 
   return (
-    <AppShell description="Discovered hosts, services, vulnerabilities, domains, and relationships" section="assets" title="Assets" wide>
+    <AppShell description="Discovered hosts, services, and C2-linked systems" section="assets" title="Assets" wide>
       {!connection ? (
         <C2RequiredPanel />
       ) : (
-        <div className="module-inventory-workspace">
-          <section className="workspace-panel module-catalog-panel" aria-label="Module inventory">
+        <div className="asset-inventory-workspace">
+          <section className="workspace-panel asset-list-panel" aria-label="Asset inventory">
             <div className="panel-header">
               <div>
                 <h2>Inventory</h2>
-                <p className="muted-text">{modules.length} modules available</p>
+                <p className="muted-text">{total} assets tracked</p>
               </div>
-              <button className="secondary-button" disabled={isLoading} onClick={() => void loadModules()} type="button">
+              <button className="secondary-button" disabled={isLoading} onClick={() => setRefreshTick((value) => value + 1)} type="button">
                 <RefreshCw aria-hidden="true" size={15} strokeWidth={2.1} />
                 <span>{isLoading ? 'Refreshing' : 'Refresh'}</span>
               </button>
             </div>
 
-            <div className="module-catalog-toolbar">
+            <div className="asset-filter-bar">
               <label className="module-search">
                 <Search aria-hidden="true" size={14} strokeWidth={2} />
                 <input
-                  aria-label="Search modules"
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search modules"
+                  aria-label="Search assets"
+                  onChange={(event) => resetPageAndSetQuery(event.target.value)}
+                  placeholder="Search assets"
                   value={query}
                 />
               </label>
-              <select aria-label="Filter module category" onChange={(event) => setCategory(event.target.value)} value={category}>
-                <option value="all">All categories</option>
-                {categories.map((item) => (
-                  <option key={item} value={item}>{categoryLabel(item)}</option>
-                ))}
+              <select
+                aria-label="Filter asset type"
+                onChange={(event) => resetPageAndSetType(event.target.value as AssetType | 'all')}
+                value={assetType}
+              >
+                <option value="all">All types</option>
+                <option value="beacon_host">Beacon hosts</option>
+                <option value="discovered_host">Discovered hosts</option>
+                <option value="service">Services</option>
+              </select>
+              <select
+                aria-label="Filter asset source"
+                onChange={(event) => resetPageAndSetSource(event.target.value as AssetSource | 'all')}
+                value={source}
+              >
+                <option value="all">All sources</option>
+                <option value="beacon">Beacon</option>
+                <option value="scan">Scan</option>
               </select>
             </div>
 
-            {error ? <p className="task-queue-error" role="alert">{error}</p> : null}
-            <div className="module-card-grid">
-              {isLoading && modules.length === 0 ? (
-                <div className="empty-state">
-                  <Layers3 aria-hidden="true" size={18} strokeWidth={2} />
-                  <div>
-                    <strong>Loading modules.</strong>
-                    <span>Catalog data is coming from C2.</span>
-                  </div>
-                </div>
-              ) : null}
-              {!isLoading && filteredModules.length === 0 ? (
-                <div className="empty-state">
-                  <Layers3 aria-hidden="true" size={18} strokeWidth={2} />
-                  <div>
-                    <strong>No modules found.</strong>
-                    <span>Adjust search or category filters.</span>
-                  </div>
-                </div>
-              ) : filteredModules.map((module) => (
-                <ModuleCard
-                  isSelected={module.id === selectedModule?.id}
-                  key={module.id}
-                  module={module}
-                  onSelect={setSelectedModuleId}
-                />
-              ))}
+            {listError ? <p className="task-queue-error" role="alert">{listError}</p> : null}
+            <div className="asset-table-wrap">
+              <table className="asset-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>IP</th>
+                    <th>Hostname</th>
+                    <th>Source</th>
+                    <th>Last seen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {isLoading && assets.length === 0 ? (
+                    <tr>
+                      <td colSpan={6}>Loading assets.</td>
+                    </tr>
+                  ) : null}
+                  {!isLoading && assets.length === 0 ? (
+                    <tr>
+                      <td colSpan={6}>No assets match current filters.</td>
+                    </tr>
+                  ) : assets.map((asset) => (
+                    <tr
+                      className={asset.id === selectedAssetId ? 'is-selected' : ''}
+                      key={asset.id}
+                      onClick={() => setSelectedAssetId(asset.id)}
+                    >
+                      <td>
+                        <span className="asset-name-cell">
+                          {assetIcon(asset.asset_type)}
+                          <strong>{asset.display_name}</strong>
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`asset-type-chip asset-type-${asset.asset_type}`}>{assetTypeLabel(asset.asset_type)}</span>
+                      </td>
+                      <td>{asset.primary_ip ?? '-'}</td>
+                      <td>{asset.hostname ?? '-'}</td>
+                      <td>{sourceLabel(asset.source)}</td>
+                      <td>{formatTimestamp(asset.last_seen)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="asset-pagination">
+              <span>
+                {total === 0 ? '0-0' : `${currentOffset + 1}-${Math.min(currentOffset + assets.length, total)}`} of {total}
+              </span>
+              <div>
+                <button className="secondary-button" disabled={page === 0 || isLoading} onClick={() => setPage((value) => value - 1)} type="button">
+                  Previous
+                </button>
+                <button
+                  className="secondary-button"
+                  disabled={page + 1 >= totalPages || isLoading}
+                  onClick={() => setPage((value) => value + 1)}
+                  type="button"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </section>
 
-          <ModuleDetail
-            copyState={copyState}
-            module={selectedModule}
-            onCopy={() => void handleCopy()}
-            onLaunch={handleLaunch}
+          <AssetDetail
+            asset={selectedAssetId ? detailAsset ?? selectedAsset : null}
+            error={selectedAssetId ? detailError : ''}
+            isLoading={Boolean(selectedAssetId) && isDetailLoading}
           />
         </div>
       )}

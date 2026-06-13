@@ -28,6 +28,7 @@ from xero_common.security import (
 )
 
 from xero_c2.artifacts import ArtifactNotFound, ArtifactStorageError, artifact_store_for_settings, read_artifact
+from xero_c2.assets import get_asset_payload, list_asset_payloads, upsert_beacon_asset
 from xero_c2.beacon_auth import beacon_auth_exception, bearer_token
 from xero_c2.beacon_builds import (
     SUPPORTED_TARGETS,
@@ -144,6 +145,10 @@ from xero_c2.scan_jobs import (
     run_scan_job,
 )
 from xero_c2.schemas import (
+    AssetListResponse,
+    AssetResponse,
+    AssetSource,
+    AssetType,
     BeaconActivityItemResponse,
     BeaconActivityListResponse,
     BeaconBuildCreateRequest,
@@ -935,6 +940,44 @@ def create_app() -> FastAPI:
     def list_module_catalog(authorization: Annotated[str | None, Header()] = None) -> ModuleListResponse:
         authorize_c2_token(settings, authorization)
         return ModuleListResponse(items=[ModuleDefinitionResponse(**item) for item in list_modules()])
+
+    @api_router.get("/assets", response_model=AssetListResponse, tags=["assets"])
+    def list_assets(
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+        asset_type: Annotated[AssetType | None, Query(alias="type")] = None,
+        source: AssetSource | None = None,
+        q: Annotated[str | None, Query(max_length=255)] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ) -> AssetListResponse:
+        authorize_c2_token(settings, authorization)
+        items, total = list_asset_payloads(
+            session,
+            asset_type=asset_type,
+            source=source,
+            q=q,
+            limit=limit,
+            offset=offset,
+        )
+        return AssetListResponse(
+            items=[AssetResponse(**item) for item in items],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+    @api_router.get("/assets/{asset_id}", response_model=AssetResponse, tags=["assets"])
+    def get_asset(
+        asset_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> AssetResponse:
+        authorize_c2_token(settings, authorization)
+        payload = get_asset_payload(session, asset_id)
+        if payload is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+        return AssetResponse(**payload)
 
     @api_router.post("/scan-jobs", response_model=ScanJobResponse, tags=["scan-jobs"])
     async def create_scan_job_route(
@@ -2403,6 +2446,7 @@ def create_app() -> FastAPI:
 
         session.add(beacon)
         session.flush()
+        upsert_beacon_asset(session, beacon)
         profile_fields = profile_ack_fields(session, settings, beacon)
         session.commit()
         session.refresh(beacon)
@@ -2477,6 +2521,7 @@ def create_app() -> FastAPI:
         )
         session.add(beacon)
         session.flush()
+        upsert_beacon_asset(session, beacon)
         profile_fields = profile_ack_fields(session, settings, beacon)
         session.commit()
         session.refresh(beacon)

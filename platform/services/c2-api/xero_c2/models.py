@@ -55,6 +55,150 @@ class Beacon(BaseModel):
     profile: Mapped[TrafficProfile | None] = relationship(foreign_keys=[profile_id])
 
 
+class Asset(BaseModel):
+    __tablename__ = "assets"
+    __table_args__ = (UniqueConstraint("dedup_key", name="uq_assets_dedup_key"),)
+
+    asset_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    dedup_key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    hostname: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    domain: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    primary_ip: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    os: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    role: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    canonical_asset_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assets.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    asset_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
+
+
+class AssetIdentifier(BaseModel):
+    __tablename__ = "asset_identifiers"
+    __table_args__ = (
+        UniqueConstraint("asset_id", "kind", "normalized_value", name="uq_asset_identifiers_asset_kind_value"),
+    )
+
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    value: Mapped[str] = mapped_column(String(255), nullable=False)
+    normalized_value: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    asset: Mapped[Asset] = relationship(foreign_keys=[asset_id])
+
+
+class AssetBeaconLink(BaseModel):
+    __tablename__ = "asset_beacon_links"
+    __table_args__ = (
+        UniqueConstraint("beacon_id", name="uq_asset_beacon_links_beacon_id"),
+        UniqueConstraint("machine_fingerprint_hash", name="uq_asset_beacon_links_fingerprint"),
+    )
+
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    beacon_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("beacons.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    machine_fingerprint_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    asset: Mapped[Asset] = relationship(foreign_keys=[asset_id])
+    beacon: Mapped[Beacon] = relationship(foreign_keys=[beacon_id])
+
+
+class AssetRelationship(BaseModel):
+    __tablename__ = "asset_relationships"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_asset_id",
+            "target_asset_id",
+            "relationship_type",
+            "scan_job_id",
+            name="uq_asset_relationships_scan_relationship",
+        ),
+    )
+
+    source_asset_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    target_asset_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    relationship_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    scan_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("scan_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    relationship_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    source_asset: Mapped[Asset] = relationship(foreign_keys=[source_asset_id])
+    target_asset: Mapped[Asset] = relationship(foreign_keys=[target_asset_id])
+
+
+class AssetObservation(BaseModel):
+    __tablename__ = "asset_observations"
+
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    observation_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    scan_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("scan_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    scan_result_chunk_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("scan_result_chunks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    beacon_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("beacons.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    asset: Mapped[Asset] = relationship(foreign_keys=[asset_id])
+
+
 class TrafficProfile(BaseModel):
     __tablename__ = "traffic_profiles"
     __table_args__ = (UniqueConstraint("name", name="uq_traffic_profiles_name"),)

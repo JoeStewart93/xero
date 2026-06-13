@@ -13,6 +13,7 @@ from xero_common.database import session_factory_for_settings
 from xero_common.models import utc_now
 from xero_common.redis_bus import publish_operator_event
 
+from xero_c2.assets import ingest_scan_assets
 from xero_c2.infrastructure_workers import WORKER_KIND_SCANNER, WORKER_ORIGIN_EMBEDDED
 from xero_c2.models import InfrastructureWorker, ScanJob, ScanResultChunk
 
@@ -204,6 +205,8 @@ async def run_scan_job(app: Any, settings, scan_job_id: uuid.UUID) -> None:
                 emitted_at=utc_now(),
             )
             session.add(summary_chunk)
+            session.flush()
+            ingest_scan_assets(session, job, summary_chunk)
             session.commit()
             session.refresh(job)
             session.refresh(summary_chunk)
@@ -292,7 +295,9 @@ async def mark_scan_failed(app: Any, settings, scan_job_id: uuid.UUID, error_mes
 
 
 def mark_abandoned_scan_jobs(session: Session) -> list[ScanJob]:
-    jobs = session.execute(select(ScanJob).where(ScanJob.status.in_([SCAN_STATUS_QUEUED, SCAN_STATUS_RUNNING]))).scalars()
+    jobs = session.execute(
+        select(ScanJob).where(ScanJob.status.in_([SCAN_STATUS_QUEUED, SCAN_STATUS_RUNNING]))
+    ).scalars()
     failed: list[ScanJob] = []
     for job in jobs:
         job.status = SCAN_STATUS_FAILED

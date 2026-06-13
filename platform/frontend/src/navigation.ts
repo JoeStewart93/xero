@@ -79,6 +79,7 @@ export const sectionDefinitions: Record<ShellSection, SectionDefinition> = {
       tab('domains', 'Domains', '/assets/domains', Crosshair, true),
       tab('cloud-resources', 'Cloud Resources', '/assets/cloud-resources', Boxes, true),
       tab('relationships', 'Relationships', '/assets/relationships', Activity, true),
+      tab('modules', 'Modules', '/modules', ListChecks, true),
     ],
     to: '/assets',
   },

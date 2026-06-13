@@ -1,9 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ModuleDefinition } from '../api';
-import { decodeLaunchArgs } from '../modules/moduleCatalog';
+import type { Asset } from '../api';
 import { InventoryPage } from './InventoryPage';
 
 const mocks = vi.hoisted(() => ({
@@ -12,12 +11,14 @@ const mocks = vi.hoisted(() => ({
 }));
 
 const apiMocks = vi.hoisted(() => ({
-  getModules: vi.fn(),
+  getAsset: vi.fn(),
+  getAssets: vi.fn(),
 }));
 
 vi.mock('../api', async (importOriginal) => ({
   ...((await importOriginal()) as object),
-  getModules: apiMocks.getModules,
+  getAsset: apiMocks.getAsset,
+  getAssets: apiMocks.getAssets,
 }));
 
 vi.mock('../useAuth', () => ({
@@ -28,116 +29,98 @@ vi.mock('../useC2Connection', () => ({
   useC2Connection: mocks.useC2Connection,
 }));
 
-const portscanModule: ModuleDefinition = {
-  args_schema: {
-    properties: {
-      execution_target: { default: 'auto', enum: ['auto'], type: 'string' },
-      max_threads: { default: 32, minimum: 1, type: 'integer' },
-      port_range: { default: '80,443', type: 'string' },
-      targets: { items: { type: 'string' }, type: 'array' },
-      timeout_ms: { default: 1000, minimum: 50, type: 'integer' },
+const beaconAsset: Asset = {
+  asset_type: 'beacon_host',
+  created_at: '2026-06-13T05:00:00Z',
+  display_name: 'alpha.corp.local',
+  domain: 'corp.local',
+  first_seen: '2026-06-13T05:00:00Z',
+  hostname: 'alpha.corp.local',
+  id: 'asset-alpha',
+  identifiers: [
+    {
+      first_seen: '2026-06-13T05:00:00Z',
+      id: 'identifier-one',
+      kind: 'ip',
+      last_seen: '2026-06-13T05:00:00Z',
+      normalized_value: '10.20.0.5',
+      source: 'beacon',
+      value: '10.20.0.5',
     },
-    required: ['targets', 'port_range'],
-    type: 'object',
-  },
-  author: 'Xero',
-  category: 'scanning',
-  description: 'Run a TCP connect scan against target hosts.',
-  example: {
-    args: {
-      execution_target: 'auto',
-      max_threads: 32,
-      port_range: '22,80,443',
-      targets: ['127.0.0.1'],
-      timeout_ms: 1000,
+  ],
+  last_seen: '2026-06-13T05:10:00Z',
+  linked_beacons: [
+    {
+      beacon_id: 'beacon-one',
+      first_seen: '2026-06-13T05:00:00Z',
+      hostname: 'alpha.corp.local',
+      id: 'link-one',
+      last_seen: '2026-06-13T05:10:00Z',
+      machine_fingerprint_hash: 'fingerprint-one',
+      status: 'online',
     },
-    module: 'builtin.portscan',
-  },
-  execution_kind: 'scan-job',
-  id: 'builtin.portscan',
-  name: 'Port Scan',
-  required_capabilities: ['tcp-connect'],
-  result_schema: {},
-  source: 'builtin',
-  status: 'enabled',
-  supported_execution_targets: ['auto'],
-  tags: ['recon', 'tcp'],
-  version: '0.1.0',
+  ],
+  metadata: { architecture: 'x64', status: 'online' },
+  observations: [
+    {
+      beacon_id: 'beacon-one',
+      id: 'observation-one',
+      observation_type: 'beacon.registered',
+      observed_at: '2026-06-13T05:10:00Z',
+      payload: {},
+      scan_job_id: null,
+      scan_result_chunk_id: null,
+      source: 'beacon',
+    },
+  ],
+  os: 'Windows 11',
+  primary_ip: '10.20.0.5',
+  relationships: [],
+  role: 'beacon',
+  source: 'beacon',
+  updated_at: '2026-06-13T05:10:00Z',
 };
 
-const shellModule: ModuleDefinition = {
-  args_schema: {
-    properties: {
-      command: { minLength: 1, type: 'string' },
-      shell_type: { default: 'auto', enum: ['auto', 'bash', 'cmd', 'powershell'], type: 'string' },
-      timeout_seconds: { default: 60, minimum: 1, type: 'integer' },
+const serviceAsset: Asset = {
+  asset_type: 'service',
+  created_at: '2026-06-13T05:00:00Z',
+  display_name: 'ssh on 10.20.0.5:22',
+  domain: null,
+  first_seen: '2026-06-13T05:00:00Z',
+  hostname: null,
+  id: 'asset-service',
+  identifiers: [],
+  last_seen: '2026-06-13T05:11:00Z',
+  linked_beacons: [],
+  metadata: { port: 22, service_guess: 'ssh' },
+  observations: [],
+  os: null,
+  primary_ip: '10.20.0.5',
+  relationships: [
+    {
+      asset_id: 'asset-service',
+      direction: 'inbound',
+      first_seen: '2026-06-13T05:11:00Z',
+      id: 'relationship-one',
+      last_seen: '2026-06-13T05:11:00Z',
+      metadata: { port: 22 },
+      related_asset_id: 'asset-alpha',
+      related_asset_name: 'alpha.corp.local',
+      relationship_type: 'exposes_service',
+      scan_job_id: 'scan-one',
+      source: 'scan',
     },
-    required: ['command'],
-    type: 'object',
-  },
-  author: 'Xero',
-  category: 'utility',
-  description: 'Queue a shell command for an active beacon.',
-  example: { args: { command: 'whoami', shell_type: 'auto', timeout_seconds: 60 }, module: 'shell' },
-  execution_kind: 'beacon-task',
-  id: 'shell',
-  name: 'Shell Command',
-  required_capabilities: [],
-  result_schema: {},
-  source: 'builtin',
-  status: 'enabled',
-  supported_execution_targets: ['beacon'],
-  tags: ['command'],
-  version: '1.0.0',
+  ],
+  role: 'ssh',
+  source: 'scan',
+  updated_at: '2026-06-13T05:11:00Z',
 };
 
-const pluginModule: ModuleDefinition = {
-  args_schema: {
-    properties: {
-      target: { type: 'string' },
-    },
-    required: ['target'],
-    type: 'object',
-  },
-  author: 'Acme Labs',
-  category: 'post-exploitation',
-  description: 'Demonstrates plugin metadata in the inventory.',
-  disabled_reason: 'Plugin runtime is not connected.',
-  example: { args: { target: 'beacon-alpha' }, module: 'plugin.acme.demo' },
-  execution_kind: 'beacon-task',
-  id: 'plugin.acme.demo',
-  name: 'Acme Plugin Demo',
-  plugin_id: 'acme-demo',
-  required_capabilities: [],
-  result_schema: {},
-  source: 'plugin',
-  status: 'disabled',
-  supported_execution_targets: ['beacon'],
-  tags: ['plugin'],
-  updated_at: '2026-06-13T05:00:00Z',
-  version: '0.2.0',
-};
-
-function LocationProbe() {
-  const location = useLocation();
-  const params = new URLSearchParams(location.search);
-  const args = decodeLaunchArgs(params.get('args'));
-  return (
-    <div data-testid="location-probe">
-      <span>{location.pathname}</span>
-      <span>{params.get('module')}</span>
-      <span>{JSON.stringify(args)}</span>
-    </div>
-  );
-}
-
-function renderInventory(initialEntries = ['/assets']) {
+function renderInventory() {
   return render(
-    <MemoryRouter initialEntries={initialEntries}>
+    <MemoryRouter initialEntries={['/assets']}>
       <Routes>
         <Route path="/assets" element={<InventoryPage />} />
-        <Route path="/recon" element={<LocationProbe />} />
-        <Route path="/beacons" element={<LocationProbe />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -145,7 +128,8 @@ function renderInventory(initialEntries = ['/assets']) {
 
 describe('InventoryPage', () => {
   beforeEach(() => {
-    apiMocks.getModules.mockResolvedValue({ items: [portscanModule, shellModule, pluginModule] });
+    apiMocks.getAsset.mockResolvedValue(beaconAsset);
+    apiMocks.getAssets.mockResolvedValue({ items: [beaconAsset, serviceAsset], limit: 25, offset: 0, total: 2 });
     mocks.useAuth.mockReturnValue({
       logout: vi.fn(),
       session: {
@@ -171,10 +155,6 @@ describe('InventoryPage', () => {
       error: '',
       isChecking: false,
     });
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText: vi.fn().mockResolvedValue(undefined) },
-    });
   });
 
   it('requires an active C2 connection', () => {
@@ -189,58 +169,59 @@ describe('InventoryPage', () => {
     renderInventory();
 
     expect(screen.getByRole('heading', { name: 'Xero C2 backend required' })).toBeTruthy();
-    expect(screen.queryByRole('heading', { name: 'Inventory' })).toBeNull();
+    expect(apiMocks.getAssets).not.toHaveBeenCalled();
   });
 
-  it('renders and filters the C2 module catalog', async () => {
+  it('renders assets and selected asset detail', async () => {
     renderInventory();
 
-    expect(await screen.findByRole('button', { name: /Port Scan/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Shell Command/ })).toBeTruthy();
-    expect(screen.getByText('3 modules available')).toBeTruthy();
+    expect((await screen.findAllByText('alpha.corp.local')).length).toBeGreaterThan(0);
+    expect(screen.getByText('ssh on 10.20.0.5:22')).toBeTruthy();
+    expect(screen.getByText('2 assets tracked')).toBeTruthy();
+    expect(apiMocks.getAssets).toHaveBeenCalledWith('http://localhost:18001', 'c2-token', {
+      limit: 25,
+      offset: 0,
+      q: undefined,
+      source: 'all',
+      type: 'all',
+    });
 
-    fireEvent.change(screen.getByLabelText('Search modules'), { target: { value: 'shell' } });
-
-    expect(screen.getByRole('button', { name: /Shell Command/ })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Port Scan/ })).toBeNull();
-
-    fireEvent.change(screen.getByLabelText('Search modules'), { target: { value: '' } });
-    fireEvent.change(screen.getByLabelText('Filter module category'), { target: { value: 'scanning' } });
-
-    expect(screen.getByRole('button', { name: /Port Scan/ })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Shell Command/ })).toBeNull();
+    await waitFor(() => expect(apiMocks.getAsset).toHaveBeenCalledWith('http://localhost:18001', 'c2-token', 'asset-alpha'));
+    const detail = screen.getByRole('complementary', { name: 'Asset detail' });
+    expect(within(detail).getByText('Windows 11')).toBeTruthy();
+    expect(within(detail).getByText('beacon-one')).toBeTruthy();
+    expect(within(detail).getByText('beacon.registered')).toBeTruthy();
   });
 
-  it('shows schema, plugin metadata, and copyable example JSON', async () => {
+  it('filters by search, type, and source', async () => {
     renderInventory();
+    await screen.findAllByText('alpha.corp.local');
 
-    fireEvent.click(await screen.findByRole('button', { name: /Acme Plugin Demo/ }));
-
-    expect(screen.getAllByText('Acme Labs').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Plugin').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('disabled').length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Updated/).length).toBeGreaterThan(0);
-    expect(screen.getByRole('alert').textContent).toContain('Plugin runtime is not connected.');
-    expect(within(screen.getByRole('table')).getByText('target')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+    fireEvent.change(screen.getByLabelText('Search assets'), { target: { value: 'ssh' } });
+    fireEvent.change(screen.getByLabelText('Filter asset type'), { target: { value: 'service' } });
+    fireEvent.change(screen.getByLabelText('Filter asset source'), { target: { value: 'scan' } });
 
     await waitFor(() => {
-      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining('"plugin.acme.demo"'));
+      expect(apiMocks.getAssets).toHaveBeenLastCalledWith('http://localhost:18001', 'c2-token', {
+        limit: 25,
+        offset: 0,
+        q: 'ssh',
+        source: 'scan',
+        type: 'service',
+      });
     });
-    expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy();
   });
 
-  it('opens compatible scan modules in Recon with encoded example args', async () => {
+  it('selects a service asset and shows relationships', async () => {
+    apiMocks.getAsset.mockResolvedValueOnce(beaconAsset).mockResolvedValueOnce(serviceAsset);
     renderInventory();
 
-    fireEvent.click(await screen.findByRole('button', { name: /Port Scan/ }));
-    fireEvent.click(screen.getByRole('button', { name: /Open in Recon/ }));
+    fireEvent.click(await screen.findByText('ssh on 10.20.0.5:22'));
 
-    const probe = await screen.findByTestId('location-probe');
-    expect(probe.textContent).toContain('/recon');
-    expect(probe.textContent).toContain('builtin.portscan');
-    expect(probe.textContent).toContain('"targets":["127.0.0.1"]');
-    expect(probe.textContent).toContain('"port_range":"22,80,443"');
+    await waitFor(() => expect(apiMocks.getAsset).toHaveBeenLastCalledWith('http://localhost:18001', 'c2-token', 'asset-service'));
+    const detail = screen.getByRole('complementary', { name: 'Asset detail' });
+    expect(within(detail).getByText('exposes_service')).toBeTruthy();
+    expect(within(detail).getByText('alpha.corp.local')).toBeTruthy();
+    expect(within(detail).getByText('service_guess')).toBeTruthy();
   });
 });

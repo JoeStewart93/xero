@@ -196,6 +196,118 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/assets:
+    get:
+      tags:
+      - assets
+      summary: List Assets
+      operationId: list_assets_api_v1_assets_get
+      parameters:
+      - name: type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - beacon_host
+            - discovered_host
+            - service
+            type: string
+          - type: 'null'
+          title: Type
+      - name: source
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - beacon
+            - scan
+            type: string
+          - type: 'null'
+          title: Source
+      - name: q
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 255
+          - type: 'null'
+          title: Q
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/assets/{asset_id}:
+    get:
+      tags:
+      - assets
+      summary: Get Asset
+      operationId: get_asset_api_v1_assets__asset_id__get
+      parameters:
+      - name: asset_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Asset Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/scan-jobs:
     post:
       tags:
@@ -2247,6 +2359,311 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
+    AssetBeaconLinkResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        beacon_id:
+          type: string
+          title: Beacon Id
+        hostname:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Hostname
+        machine_fingerprint_hash:
+          type: string
+          title: Machine Fingerprint Hash
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+        first_seen:
+          type: string
+          format: date-time
+          title: First Seen
+        last_seen:
+          type: string
+          format: date-time
+          title: Last Seen
+      type: object
+      required:
+      - id
+      - beacon_id
+      - machine_fingerprint_hash
+      - first_seen
+      - last_seen
+      title: AssetBeaconLinkResponse
+    AssetIdentifierResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        kind:
+          type: string
+          title: Kind
+        value:
+          type: string
+          title: Value
+        normalized_value:
+          type: string
+          title: Normalized Value
+        source:
+          anyOf:
+          - type: string
+            enum:
+            - beacon
+            - scan
+          - type: string
+          title: Source
+        first_seen:
+          type: string
+          format: date-time
+          title: First Seen
+        last_seen:
+          type: string
+          format: date-time
+          title: Last Seen
+      type: object
+      required:
+      - id
+      - kind
+      - value
+      - normalized_value
+      - source
+      - first_seen
+      - last_seen
+      title: AssetIdentifierResponse
+    AssetListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/AssetResponse'
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        limit:
+          type: integer
+          title: Limit
+        offset:
+          type: integer
+          title: Offset
+      type: object
+      required:
+      - total
+      - limit
+      - offset
+      title: AssetListResponse
+    AssetObservationResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        source:
+          anyOf:
+          - type: string
+            enum:
+            - beacon
+            - scan
+          - type: string
+          title: Source
+        observation_type:
+          type: string
+          title: Observation Type
+        payload:
+          additionalProperties: true
+          type: object
+          title: Payload
+        beacon_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Beacon Id
+        scan_job_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Scan Job Id
+        scan_result_chunk_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Scan Result Chunk Id
+        observed_at:
+          type: string
+          format: date-time
+          title: Observed At
+      type: object
+      required:
+      - id
+      - source
+      - observation_type
+      - observed_at
+      title: AssetObservationResponse
+    AssetRelationshipResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        asset_id:
+          type: string
+          title: Asset Id
+        direction:
+          type: string
+          enum:
+          - inbound
+          - outbound
+          title: Direction
+        related_asset_id:
+          type: string
+          title: Related Asset Id
+        related_asset_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Related Asset Name
+        relationship_type:
+          type: string
+          title: Relationship Type
+        source:
+          anyOf:
+          - type: string
+            enum:
+            - beacon
+            - scan
+          - type: string
+          title: Source
+        scan_job_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Scan Job Id
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+        first_seen:
+          type: string
+          format: date-time
+          title: First Seen
+        last_seen:
+          type: string
+          format: date-time
+          title: Last Seen
+      type: object
+      required:
+      - id
+      - asset_id
+      - direction
+      - related_asset_id
+      - relationship_type
+      - source
+      - first_seen
+      - last_seen
+      title: AssetRelationshipResponse
+    AssetResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        asset_type:
+          type: string
+          enum:
+          - beacon_host
+          - discovered_host
+          - service
+          title: Asset Type
+        source:
+          anyOf:
+          - type: string
+            enum:
+            - beacon
+            - scan
+          - type: string
+          title: Source
+        display_name:
+          type: string
+          title: Display Name
+        hostname:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Hostname
+        domain:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Domain
+        primary_ip:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Primary Ip
+        os:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Os
+        role:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Role
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+        first_seen:
+          type: string
+          format: date-time
+          title: First Seen
+        last_seen:
+          type: string
+          format: date-time
+          title: Last Seen
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+        identifiers:
+          items:
+            $ref: '#/components/schemas/AssetIdentifierResponse'
+          type: array
+          title: Identifiers
+        linked_beacons:
+          items:
+            $ref: '#/components/schemas/AssetBeaconLinkResponse'
+          type: array
+          title: Linked Beacons
+        relationships:
+          items:
+            $ref: '#/components/schemas/AssetRelationshipResponse'
+          type: array
+          title: Relationships
+        observations:
+          items:
+            $ref: '#/components/schemas/AssetObservationResponse'
+          type: array
+          title: Observations
+      type: object
+      required:
+      - id
+      - asset_type
+      - source
+      - display_name
+      - first_seen
+      - last_seen
+      - created_at
+      - updated_at
+      title: AssetResponse
     BeaconActivityItemResponse:
       properties:
         id:

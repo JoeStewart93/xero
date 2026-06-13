@@ -525,6 +525,90 @@ export interface ModuleListResponse {
   items: ModuleDefinition[];
 }
 
+export type AssetType = 'beacon_host' | 'discovered_host' | 'service';
+export type AssetSource = 'beacon' | 'scan';
+
+export interface AssetIdentifier {
+  first_seen: string;
+  id: string;
+  kind: string;
+  last_seen: string;
+  normalized_value: string;
+  source: AssetSource | string;
+  value: string;
+}
+
+export interface AssetBeaconLink {
+  beacon_id: string;
+  first_seen: string;
+  hostname: string | null;
+  id: string;
+  last_seen: string;
+  machine_fingerprint_hash: string;
+  status: string | null;
+}
+
+export interface AssetRelationship {
+  asset_id: string;
+  direction: 'inbound' | 'outbound';
+  first_seen: string;
+  id: string;
+  last_seen: string;
+  metadata: Record<string, unknown>;
+  related_asset_id: string;
+  related_asset_name: string | null;
+  relationship_type: string;
+  scan_job_id: string | null;
+  source: AssetSource | string;
+}
+
+export interface AssetObservation {
+  beacon_id: string | null;
+  id: string;
+  observation_type: string;
+  observed_at: string;
+  payload: Record<string, unknown>;
+  scan_job_id: string | null;
+  scan_result_chunk_id: string | null;
+  source: AssetSource | string;
+}
+
+export interface Asset {
+  asset_type: AssetType;
+  created_at: string;
+  display_name: string;
+  domain: string | null;
+  first_seen: string;
+  hostname: string | null;
+  id: string;
+  identifiers?: AssetIdentifier[];
+  last_seen: string;
+  linked_beacons?: AssetBeaconLink[];
+  metadata: Record<string, unknown>;
+  observations?: AssetObservation[];
+  os: string | null;
+  primary_ip: string | null;
+  relationships?: AssetRelationship[];
+  role: string | null;
+  source: AssetSource | string;
+  updated_at: string;
+}
+
+export interface AssetListResponse {
+  items: Asset[];
+  limit: number;
+  offset: number;
+  total: number;
+}
+
+export interface AssetListOptions {
+  limit?: number;
+  offset?: number;
+  q?: string;
+  source?: AssetSource | 'all';
+  type?: AssetType | 'all';
+}
+
 export type ScanJobStatus = 'completed' | 'failed' | 'queued' | 'running';
 export type ScanModuleId = 'builtin.portscan' | 'builtin.serviceenum';
 export type ScanResultState = 'closed' | 'filtered' | 'open';
@@ -1082,6 +1166,35 @@ export async function getTaskResultChunks(
 
 export async function getModules(baseUrl: string, accessToken: string): Promise<ModuleListResponse> {
   return c2Fetch<ModuleListResponse>(baseUrl, accessToken, '/api/v1/modules');
+}
+
+export async function getAssets(
+  baseUrl: string,
+  accessToken: string,
+  options: AssetListOptions = {},
+): Promise<AssetListResponse> {
+  const params = new URLSearchParams();
+  if (options.type && options.type !== 'all') {
+    params.set('type', options.type);
+  }
+  if (options.source && options.source !== 'all') {
+    params.set('source', options.source);
+  }
+  if (options.q) {
+    params.set('q', options.q);
+  }
+  if (typeof options.limit === 'number') {
+    params.set('limit', String(options.limit));
+  }
+  if (typeof options.offset === 'number') {
+    params.set('offset', String(options.offset));
+  }
+  const query = params.toString();
+  return c2Fetch<AssetListResponse>(baseUrl, accessToken, `/api/v1/assets${query ? `?${query}` : ''}`);
+}
+
+export async function getAsset(baseUrl: string, accessToken: string, assetId: string): Promise<Asset> {
+  return c2Fetch<Asset>(baseUrl, accessToken, `/api/v1/assets/${assetId}`);
 }
 
 export async function createScanJob(baseUrl: string, accessToken: string, args: PortScanArgs): Promise<ScanJob>;

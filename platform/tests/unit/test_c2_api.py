@@ -27,6 +27,11 @@ from xero_c2.file_transfers import create_download_transfer
 from xero_c2.infrastructure_workers import mark_stale_workers
 from xero_c2.models import (
     Artifact,
+    Asset,
+    AssetBeaconLink,
+    AssetIdentifier,
+    AssetObservation,
+    AssetRelationship,
     Base,
     Beacon,
     BeaconBuild,
@@ -416,6 +421,138 @@ def test_module_registry_exposes_builtin_portscan(c2_client):
     assert "scan-job" in modules["builtin.portscan"]["tags"]
 
 
+def test_beacon_registration_creates_and_updates_asset(c2_client):
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    registered = register_beacon(
+        c2_client,
+        hostname="ALPHA.CORP.LOCAL",
+        internal_ip="10.20.0.5",
+        machine_fingerprint_hash="asset-fingerprint-one",
+        os="Windows 11",
+    )
+
+    listed = c2_client.get("/api/v1/assets?type=beacon_host&q=alpha", headers=headers)
+    assert listed.status_code == 200
+    payload = listed.json()
+    assert payload["total"] == 1
+    asset = payload["items"][0]
+    assert asset["asset_type"] == "beacon_host"
+    assert asset["display_name"] == "alpha.corp.local"
+    assert asset["hostname"] == "alpha.corp.local"
+    assert asset["domain"] == "corp.local"
+    assert asset["primary_ip"] == "10.20.0.5"
+
+    detail = c2_client.get(f"/api/v1/assets/{asset['id']}", headers=headers)
+    assert detail.status_code == 200
+    detail_payload = detail.json()
+    identifiers = {(item["kind"], item["normalized_value"]) for item in detail_payload["identifiers"]}
+    assert ("beacon_fingerprint", "asset-fingerprint-one") in identifiers
+    assert ("hostname", "alpha.corp.local") in identifiers
+    assert ("ip", "10.20.0.5") in identifiers
+    assert detail_payload["linked_beacons"][0]["beacon_id"] == registered["beacon_id"]
+
+    register_beacon(
+        c2_client,
+        hostname="alpha-renamed.corp.local",
+        internal_ip="10.20.0.6",
+        machine_fingerprint_hash="asset-fingerprint-one",
+        os="Windows 11",
+    )
+    updated = c2_client.get("/api/v1/assets?type=beacon_host", headers=headers).json()
+    assert updated["total"] == 1
+    assert updated["items"][0]["id"] == asset["id"]
+    assert updated["items"][0]["display_name"] == "alpha-renamed.corp.local"
+    assert updated["items"][0]["primary_ip"] == "10.20.0.6"
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        assert session.execute(select(Asset)).scalars().one().asset_type == "beacon_host"
+        assert session.execute(select(AssetBeaconLink)).scalars().one().beacon_id == uuid.UUID(registered["beacon_id"])
+        assert session.execute(select(AssetIdentifier)).scalars().all()
+        assert len(session.execute(select(AssetObservation)).scalars().all()) == 2
+
+
+def test_asset_api_filters_pages_and_searches_seeded_inventory(c2_client):
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    now = utc_now()
+    with SessionFactory() as session:
+        session.add_all(
+            [
+                Asset(
+                    asset_type="discovered_host",
+                    source="scan",
+                    dedup_key="host:ip:10.40.0.10",
+                    display_name="web-01.corp.local",
+                    hostname="web-01.corp.local",
+                    domain="corp.local",
+                    primary_ip="10.40.0.10",
+                    first_seen=now,
+                    last_seen=now,
+                    asset_metadata={},
+                ),
+                Asset(
+                    asset_type="service",
+                    source="scan",
+                    dedup_key="service:tcp://10.40.0.10:443",
+                    display_name="https on 10.40.0.10:443",
+                    primary_ip="10.40.0.10",
+                    role="https",
+                    first_seen=now,
+                    last_seen=now,
+                    asset_metadata={"port": 443},
+                ),
+            ]
+        )
+        session.commit()
+
+    unauthenticated = c2_client.get("/api/v1/assets")
+    filtered = c2_client.get("/api/v1/assets?type=service&q=https&limit=1&offset=0", headers=headers)
+    missing = c2_client.get(f"/api/v1/assets/{uuid.uuid4()}", headers=headers)
+
+    assert unauthenticated.status_code == 401
+    assert filtered.status_code == 200
+    assert filtered.json()["total"] == 1
+    assert filtered.json()["items"][0]["role"] == "https"
+    assert missing.status_code == 404
+
+
+def test_asset_search_handles_1000_assets_under_budget(c2_client):
+    token = connect_c2(c2_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    now = utc_now()
+    with SessionFactory() as session:
+        session.add_all(
+            Asset(
+                asset_type="discovered_host",
+                source="scan",
+                dedup_key=f"host:ip:10.50.{index // 250}.{index % 250}",
+                display_name=f"seed-host-{index:04d}",
+                primary_ip=f"10.50.{index // 250}.{index % 250}",
+                first_seen=now,
+                last_seen=now,
+                asset_metadata={},
+            )
+            for index in range(1000)
+        )
+        session.commit()
+
+    started = time.perf_counter()
+    response = c2_client.get("/api/v1/assets?q=seed-host-0999&limit=10", headers=headers)
+    elapsed = time.perf_counter() - started
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["display_name"] == "seed-host-0999"
+    assert elapsed < 0.2
+
+
 def test_portscan_args_validation_rejects_public_and_non_auto_targets(c2_client):
     token = connect_c2(c2_client)
     headers = {"Authorization": f"Bearer {token}"}
@@ -516,6 +653,20 @@ def test_portscan_job_scans_loopback_and_records_chunks(c2_client, monkeypatch):
         assert [chunk["kind"] for chunk in payload] == ["progress", "summary"]
         assert payload[0]["probes_completed"] == 2
 
+        asset_response = c2_client.get("/api/v1/assets?type=discovered_host&q=127.0.0.1", headers=headers)
+        assert asset_response.status_code == 200
+        asset_payload = asset_response.json()
+        assert asset_payload["total"] == 1
+        discovered_asset = asset_payload["items"][0]
+        assert discovered_asset["asset_type"] == "discovered_host"
+        assert discovered_asset["primary_ip"] == "127.0.0.1"
+        assert open_port in discovered_asset["metadata"]["open_ports"]
+
+        asset_detail = c2_client.get(f"/api/v1/assets/{discovered_asset['id']}", headers=headers)
+        assert asset_detail.status_code == 200
+        observations = asset_detail.json()["observations"]
+        assert {item["observation_type"] for item in observations} == {"scan.portscan"}
+
         SessionFactory = get_session_factory(settings.database_url)
         with SessionFactory() as session:
             stored_job = session.get(ScanJob, uuid.UUID(job["id"]))
@@ -528,6 +679,7 @@ def test_portscan_job_scans_loopback_and_records_chunks(c2_client, monkeypatch):
                 .all()
             )
             assert len(stored_chunks) == 2
+            assert session.execute(select(Asset)).scalars().one().primary_ip == "127.0.0.1"
     finally:
         stop_accepting.set()
         listener.close()
@@ -807,6 +959,26 @@ def test_serviceenum_job_records_results_and_chunks(c2_client, monkeypatch):
     chunks = c2_client.get(f"/api/v1/scan-jobs/{job['id']}/chunks", headers=headers)
     assert chunks.status_code == 200
     assert [chunk["kind"] for chunk in chunks.json()["items"]] == ["progress", "summary"]
+
+    hosts = c2_client.get("/api/v1/assets?type=discovered_host&q=127.0.0.1", headers=headers)
+    services = c2_client.get("/api/v1/assets?type=service&q=ssh", headers=headers)
+    assert hosts.status_code == 200
+    assert services.status_code == 200
+    assert hosts.json()["total"] == 1
+    assert services.json()["total"] == 2
+    service_asset = services.json()["items"][0]
+    detail = c2_client.get(f"/api/v1/assets/{service_asset['id']}", headers=headers)
+    assert detail.status_code == 200
+    detail_payload = detail.json()
+    assert detail_payload["metadata"]["service_guess"] == "ssh"
+    assert detail_payload["relationships"][0]["relationship_type"] == "exposes_service"
+    assert detail_payload["relationships"][0]["direction"] == "inbound"
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        assert len(session.execute(select(Asset)).scalars().all()) == 3
+        assert len(session.execute(select(AssetRelationship)).scalars().all()) == 2
 
 
 def test_serviceenum_twenty_ports_complete_within_budget(c2_client, monkeypatch):

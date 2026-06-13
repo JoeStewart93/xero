@@ -293,6 +293,83 @@ class DashboardHealthResponse(BaseModel):
     checks: dict[str, DashboardHealthCheckResponse] = Field(default_factory=dict)
 
 
+AssetType = Literal["beacon_host", "discovered_host", "service"]
+AssetSource = Literal["beacon", "scan"]
+
+
+class AssetIdentifierResponse(BaseModel):
+    id: str
+    kind: str
+    value: str
+    normalized_value: str
+    source: AssetSource | str
+    first_seen: datetime
+    last_seen: datetime
+
+
+class AssetBeaconLinkResponse(BaseModel):
+    id: str
+    beacon_id: str
+    hostname: str | None = None
+    machine_fingerprint_hash: str
+    status: str | None = None
+    first_seen: datetime
+    last_seen: datetime
+
+
+class AssetRelationshipResponse(BaseModel):
+    id: str
+    asset_id: str
+    direction: Literal["inbound", "outbound"]
+    related_asset_id: str
+    related_asset_name: str | None = None
+    relationship_type: str
+    source: AssetSource | str
+    scan_job_id: str | None = None
+    metadata: dict = Field(default_factory=dict)
+    first_seen: datetime
+    last_seen: datetime
+
+
+class AssetObservationResponse(BaseModel):
+    id: str
+    source: AssetSource | str
+    observation_type: str
+    payload: dict = Field(default_factory=dict)
+    beacon_id: str | None = None
+    scan_job_id: str | None = None
+    scan_result_chunk_id: str | None = None
+    observed_at: datetime
+
+
+class AssetResponse(BaseModel):
+    id: str
+    asset_type: AssetType
+    source: AssetSource | str
+    display_name: str
+    hostname: str | None = None
+    domain: str | None = None
+    primary_ip: str | None = None
+    os: str | None = None
+    role: str | None = None
+    metadata: dict = Field(default_factory=dict)
+    first_seen: datetime
+    last_seen: datetime
+    created_at: datetime
+    updated_at: datetime
+    identifiers: list[AssetIdentifierResponse] = Field(default_factory=list)
+    linked_beacons: list[AssetBeaconLinkResponse] = Field(default_factory=list)
+    relationships: list[AssetRelationshipResponse] = Field(default_factory=list)
+    observations: list[AssetObservationResponse] = Field(default_factory=list)
+
+
+class AssetListResponse(BaseModel):
+    items: list[AssetResponse] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+
+
 TaskPriority = Literal["high", "low", "normal", "urgent"]
 TaskStatus = Literal["cancelled", "completed", "dispatched", "failed", "queued", "running"]
 ScanJobStatus = Literal["completed", "failed", "queued", "running"]

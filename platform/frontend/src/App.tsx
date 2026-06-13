@@ -8,6 +8,7 @@ import { C2SettingsPage } from './pages/C2SettingsPage';
 import { HomePage } from './pages/HomePage';
 import { InventoryPage } from './pages/InventoryPage';
 import { LoginPage } from './pages/LoginPage';
+import { ModulesPage } from './pages/ModulesPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ReconPage } from './pages/ReconPage';
@@ -31,6 +32,7 @@ export function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/dashboard" element={<Navigate to="/home" replace />} />
       <Route path="/inventory" element={<Navigate to="/assets" replace />} />
+      <Route path="/module-catalog" element={<Navigate to="/modules" replace />} />
       <Route path="/reporting" element={<Navigate to="/reports" replace />} />
       <Route
         path="/home"
@@ -237,6 +239,14 @@ export function App() {
         element={
           <ProtectedRoute>
             <InventoryPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/modules"
+        element={
+          <ProtectedRoute>
+            <ModulesPage />
           </ProtectedRoute>
         }
       />

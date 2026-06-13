@@ -121,6 +121,11 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert "scan_result_chunks" in inspector.get_table_names()
     assert "file_transfers" in inspector.get_table_names()
     assert "file_transfer_chunks" in inspector.get_table_names()
+    assert "assets" in inspector.get_table_names()
+    assert "asset_identifiers" in inspector.get_table_names()
+    assert "asset_beacon_links" in inspector.get_table_names()
+    assert "asset_relationships" in inspector.get_table_names()
+    assert "asset_observations" in inspector.get_table_names()
     assert "protocol_version" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "protocol_peer_public_key_b64" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "transport_mode" in {column["name"] for column in inspector.get_columns("beacons")}
@@ -278,6 +283,46 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert {"transfer_id", "sequence", "size_bytes", "chunk_sha256", "object_key", "acked_at"}.issubset(
         file_transfer_chunk_columns
     )
+    asset_columns = {column["name"] for column in inspector.get_columns("assets")}
+    assert {
+        "asset_type",
+        "source",
+        "dedup_key",
+        "display_name",
+        "hostname",
+        "domain",
+        "primary_ip",
+        "metadata",
+        "first_seen",
+        "last_seen",
+    }.issubset(asset_columns)
+    asset_identifier_columns = {column["name"] for column in inspector.get_columns("asset_identifiers")}
+    assert {"asset_id", "kind", "value", "normalized_value", "source", "last_seen"}.issubset(
+        asset_identifier_columns
+    )
+    asset_beacon_link_columns = {column["name"] for column in inspector.get_columns("asset_beacon_links")}
+    assert {"asset_id", "beacon_id", "machine_fingerprint_hash", "last_seen"}.issubset(asset_beacon_link_columns)
+    asset_relationship_columns = {column["name"] for column in inspector.get_columns("asset_relationships")}
+    assert {
+        "source_asset_id",
+        "target_asset_id",
+        "relationship_type",
+        "source",
+        "scan_job_id",
+        "metadata",
+        "last_seen",
+    }.issubset(asset_relationship_columns)
+    asset_observation_columns = {column["name"] for column in inspector.get_columns("asset_observations")}
+    assert {
+        "asset_id",
+        "source",
+        "observation_type",
+        "payload",
+        "scan_job_id",
+        "scan_result_chunk_id",
+        "beacon_id",
+        "observed_at",
+    }.issubset(asset_observation_columns)
     beacon_columns = {column["name"] for column in inspector.get_columns("beacons")}
     assert {
         "profile_id",
@@ -289,7 +334,7 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     }.issubset(beacon_columns)
     with engine.connect() as connection:
         context = MigrationContext.configure(connection, opts={"version_table": "c2_alembic_version"})
-        assert context.get_current_heads() == ("c2_0017_file_transfers",)
+        assert context.get_current_heads() == ("c2_0018_asset_inventory",)
 
 
 def test_generic_crud_helpers_work_with_service_models(tmp_path):

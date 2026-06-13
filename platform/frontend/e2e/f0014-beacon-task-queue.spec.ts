@@ -56,6 +56,8 @@ test('F0014 command queue dispatches and cancels shell tasks', async ({ page }) 
   await page.getByLabel('Search beacons').fill(hostname);
   const row = page.getByTestId(`beacon-row-${registered.beacon_id}`);
   await expect(row).toBeVisible({ timeout: 10_000 });
+  await row.click();
+  await page.getByRole('button', { name: 'Tasking' }).click();
   const taskPanel = page.getByTestId('task-execution-panel');
   await expect(taskPanel.getByTestId('beacon-task-list')).toContainText('No tasks queued for this beacon.');
 

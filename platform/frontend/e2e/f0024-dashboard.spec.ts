@@ -55,8 +55,8 @@ test('dashboard shows summary cards and updates for live beacon registration', a
 
   await expect(page.getByText(`${hostname} online`)).toBeVisible({ timeout: 10_000 });
   await expect.poll(async () => numericText(total), { timeout: 10_000 }).toBeGreaterThanOrEqual(beforeTotal + 1);
-  await expect(page.getByRole('link', { name: 'New task' })).toHaveAttribute('href', '/beacons');
-  await expect(page.getByRole('link', { name: 'Offline beacons' })).toHaveAttribute('href', '/beacons?status=offline');
+  await page.getByRole('button', { name: 'Create resource' }).click();
+  await expect(page.getByRole('menu', { name: 'Create resource' }).getByRole('menuitem', { name: /Task/ })).toHaveAttribute('href', '/beacons?module=shell');
 });
 
 test('dashboard recent tasks shows a completed C2 task', async ({ page }) => {

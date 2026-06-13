@@ -1,10 +1,17 @@
 import {
+  Bell,
+  Boxes,
   Check,
   ChevronDown,
+  Crosshair,
+  FolderPlus,
   LogIn,
   LogOut,
   Plug,
+  Plus,
+  Settings,
   ShieldCheck,
+  TerminalSquare,
   Unplug,
 } from 'lucide-react';
 import { ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -66,12 +73,45 @@ function c2HostLabel(baseUrl: string): string {
   }
 }
 
+const createResourceActions = [
+  {
+    description: 'Define an engagement container.',
+    icon: FolderPlus,
+    label: 'Project',
+    to: '/projects',
+  },
+  {
+    description: 'Open beacon tasking.',
+    icon: TerminalSquare,
+    label: 'Task',
+    to: '/beacons?module=shell',
+  },
+  {
+    description: 'Add target scope.',
+    icon: Crosshair,
+    label: 'Target',
+    to: '/projects/scope',
+  },
+  {
+    description: 'Open inventory resources.',
+    icon: Boxes,
+    label: 'Resource',
+    to: '/assets',
+  },
+];
+
 export function AppShell({ children, description, section, title, toolbar, wide = false }: AppShellProps) {
   const { logout, session } = useAuth();
   const { connection } = useC2Connection();
   const [projectScope, setProjectScope] = useState(() => readProjectScopeSnapshot());
+  const [isCreateMenuOpen, setCreateMenuOpen] = useState(false);
+  const [isNotificationMenuOpen, setNotificationMenuOpen] = useState(false);
   const [isProjectScopeOpen, setProjectScopeOpen] = useState(false);
+  const createMenuRef = useRef<HTMLDivElement | null>(null);
+  const notificationMenuRef = useRef<HTMLDivElement | null>(null);
   const projectScopeSelectorRef = useRef<HTMLDivElement | null>(null);
+  const createMenuId = useId();
+  const notificationMenuId = useId();
   const projectScopeMenuId = useId();
   const subNav = getSectionDefinition(section).tabs;
   const hasC2Connection = Boolean(connection);
@@ -87,6 +127,36 @@ export function AppShell({ children, description, section, title, toolbar, wide 
   const c2Title = hasC2Connection ? `C2 Connected: ${c2Host}` : 'C2 Disconnected';
 
   useEffect(() => subscribeProjectScopeChanged(() => setProjectScope(readProjectScopeSnapshot())), []);
+
+  useEffect(() => {
+    if (!isCreateMenuOpen && !isNotificationMenuOpen) {
+      return undefined;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (isCreateMenuOpen && !createMenuRef.current?.contains(target)) {
+        setCreateMenuOpen(false);
+      }
+      if (isNotificationMenuOpen && !notificationMenuRef.current?.contains(target)) {
+        setNotificationMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setCreateMenuOpen(false);
+        setNotificationMenuOpen(false);
+      }
+    };
+
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isCreateMenuOpen, isNotificationMenuOpen]);
 
   useEffect(() => {
     if (!isProjectScopeOpen) {
@@ -176,6 +246,53 @@ export function AppShell({ children, description, section, title, toolbar, wide 
 
             {session ? (
               <>
+                <div className={`shell-create-menu ${isCreateMenuOpen ? 'is-open' : ''}`} ref={createMenuRef}>
+                  <button
+                    aria-controls={isCreateMenuOpen ? createMenuId : undefined}
+                    aria-expanded={isCreateMenuOpen}
+                    aria-haspopup="menu"
+                    aria-label="Create resource"
+                    className="shell-action-button shell-action-button--icon"
+                    onClick={() => {
+                      setCreateMenuOpen((current) => !current);
+                      setNotificationMenuOpen(false);
+                      setProjectScopeOpen(false);
+                    }}
+                    title="Create resource"
+                    type="button"
+                  >
+                    <Plus aria-hidden="true" size={15} strokeWidth={2.2} />
+                    <span>New</span>
+                  </button>
+                  {isCreateMenuOpen ? (
+                    <div aria-label="Create resource" className="shell-dropdown-menu shell-create-menu-panel" id={createMenuId} role="menu">
+                      <div className="shell-dropdown-head">
+                        <strong>Create</strong>
+                        <span>{scopeLabel}</span>
+                      </div>
+                      <div className="shell-dropdown-list">
+                        {createResourceActions.map((action) => {
+                          const Icon = action.icon;
+                          return (
+                            <Link
+                              className="shell-dropdown-option"
+                              key={action.label}
+                              onClick={() => setCreateMenuOpen(false)}
+                              role="menuitem"
+                              to={action.to}
+                            >
+                              <Icon aria-hidden="true" size={15} strokeWidth={2.1} />
+                              <span>
+                                <strong>{action.label}</strong>
+                                <small>{action.description}</small>
+                              </span>
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
                 <div
                   className={`project-scope-selector project-scope-selector--active ${isProjectScopeOpen ? 'is-open' : ''}`}
                   ref={projectScopeSelectorRef}
@@ -188,7 +305,11 @@ export function AppShell({ children, description, section, title, toolbar, wide 
                     aria-haspopup="listbox"
                     aria-label="Active project scope"
                     className="project-scope-trigger"
-                    onClick={() => setProjectScopeOpen((current) => !current)}
+                    onClick={() => {
+                      setProjectScopeOpen((current) => !current);
+                      setCreateMenuOpen(false);
+                      setNotificationMenuOpen(false);
+                    }}
                     title={scopeTitle}
                     type="button"
                   >
@@ -243,6 +364,43 @@ export function AppShell({ children, description, section, title, toolbar, wide 
                     {hasC2Connection && <span>{c2Host}</span>}
                   </span>
                 </Link>
+                <div className={`shell-notification-menu ${isNotificationMenuOpen ? 'is-open' : ''}`} ref={notificationMenuRef}>
+                  <button
+                    aria-controls={isNotificationMenuOpen ? notificationMenuId : undefined}
+                    aria-expanded={isNotificationMenuOpen}
+                    aria-haspopup="menu"
+                    aria-label="Notifications"
+                    className="shell-action-button shell-action-button--icon"
+                    onClick={() => {
+                      setNotificationMenuOpen((current) => !current);
+                      setCreateMenuOpen(false);
+                      setProjectScopeOpen(false);
+                    }}
+                    title="Notifications"
+                    type="button"
+                  >
+                    <Bell aria-hidden="true" size={15} strokeWidth={2.1} />
+                    <span>Notifications</span>
+                  </button>
+                  {isNotificationMenuOpen ? (
+                    <aside aria-label="Notifications" className="shell-dropdown-menu shell-notification-panel" id={notificationMenuId} role="menu">
+                      <div className="shell-dropdown-head">
+                        <strong>Notifications</strong>
+                        <Link onClick={() => setNotificationMenuOpen(false)} role="menuitem" to="/settings/notifications">
+                          Manage
+                        </Link>
+                      </div>
+                      <div className="shell-notification-empty">
+                        <Bell aria-hidden="true" size={16} strokeWidth={2.1} />
+                        <span>No notifications</span>
+                      </div>
+                      <Link className="shell-dropdown-footer" onClick={() => setNotificationMenuOpen(false)} role="menuitem" to="/settings/notifications">
+                        <Settings aria-hidden="true" size={14} strokeWidth={2.1} />
+                        <span>Manage notifications</span>
+                      </Link>
+                    </aside>
+                  ) : null}
+                </div>
                 <button aria-label="Log out" className="shell-action-button" onClick={logout} title="Log out" type="button">
                   <LogOut aria-hidden="true" size={15} strokeWidth={2} />
                   <span>Log out</span>

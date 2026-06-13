@@ -12,7 +12,6 @@ const mocks = vi.hoisted(() => ({
 
 const apiMocks = vi.hoisted(() => ({
   getDashboardSummary: vi.fn(),
-  getReadiness: vi.fn(),
 }));
 
 vi.mock('../useC2Connection', () => ({
@@ -30,7 +29,6 @@ vi.mock('../useRealtime', () => ({
 vi.mock('../api', async (importOriginal) => ({
   ...((await importOriginal()) as object),
   getDashboardSummary: apiMocks.getDashboardSummary,
-  getReadiness: apiMocks.getReadiness,
 }));
 
 const now = '2026-06-13T06:00:00.000Z';
@@ -80,18 +78,6 @@ function dashboardSummary(overrides = {}) {
   };
 }
 
-function readiness(overrides = {}) {
-  return {
-    checks: {
-      postgres: { status: 'healthy' },
-      redis: { status: 'healthy' },
-    },
-    service: 'xero-bff',
-    status: 'ready',
-    ...overrides,
-  };
-}
-
 function realtime(overrides = {}) {
   return {
     activeBeaconCount: 0,
@@ -116,7 +102,6 @@ function renderPage() {
 describe('HomePage', () => {
   beforeEach(() => {
     apiMocks.getDashboardSummary.mockResolvedValue(dashboardSummary());
-    apiMocks.getReadiness.mockResolvedValue(readiness());
     mocks.useAuth.mockReturnValue({
       logout: vi.fn(),
       session: {
@@ -255,39 +240,13 @@ describe('HomePage', () => {
     expect(screen.getByText('restored-host online')).toBeTruthy();
   });
 
-  it('maps health panel statuses from BFF readiness, C2 health, and realtime', async () => {
-    apiMocks.getReadiness.mockResolvedValue(readiness({
-      checks: {
-        postgres: { status: 'healthy' },
-        redis: { error: 'redis down', status: 'unhealthy' },
-      },
-      status: 'degraded',
-    }));
-    apiMocks.getDashboardSummary.mockResolvedValue(dashboardSummary({
-      c2_health: {
-        checks: { postgres: { status: 'healthy' }, redis: { status: 'unhealthy' } },
-        status: 'degraded',
-      },
-    }));
-    mocks.useRealtime.mockReturnValue(realtime({ status: 'reconnecting' }));
-
+  it('keeps the overview focused by omitting health and quick-action panels', async () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByTestId('dashboard-health-local-bff').dataset.status).toBe('unhealthy');
+      expect(screen.getByTestId('dashboard-total-beacons').textContent).toBe('3');
     });
-    expect(screen.getByTestId('dashboard-health-redis').dataset.status).toBe('unhealthy');
-    expect(screen.getByTestId('dashboard-health-c2-api').dataset.status).toBe('unhealthy');
-    expect(screen.getByTestId('dashboard-health-realtime').dataset.status).toBe('unknown');
-  });
-
-  it('links quick actions to tasking, offline beacons, and settings routes', async () => {
-    renderPage();
-
-    await waitFor(() => {
-      expect(screen.getByRole('link', { name: 'New task' }).getAttribute('href')).toBe('/beacons');
-    });
-    expect(screen.getByRole('link', { name: 'Offline beacons' }).getAttribute('href')).toBe('/beacons?status=offline');
-    expect(screen.getAllByRole('link', { name: 'Settings' }).some((link) => link.getAttribute('href') === '/settings')).toBe(true);
+    expect(screen.queryByRole('region', { name: 'System health' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Quick actions' })).toBeNull();
   });
 });

@@ -363,6 +363,11 @@ function renderBeaconsPage(initialEntries = ['/beacons']) {
   );
 }
 
+async function openTaskingPanel() {
+  fireEvent.click(screen.getByRole('button', { name: 'Tasking' }));
+  return screen.findByTestId('task-execution-panel');
+}
+
 function makeDataTransfer(): DataTransfer {
   const store = new Map<string, string>();
   return {
@@ -1356,6 +1361,7 @@ describe('BeaconsPage', () => {
     });
 
     renderBeaconsPage();
+    await openTaskingPanel();
 
     expect(await screen.findByText('No tasks queued for this beacon.')).toBeTruthy();
     expect(await screen.findByRole('option', { name: 'Shell Command' })).toBeTruthy();
@@ -1414,6 +1420,7 @@ describe('BeaconsPage', () => {
     });
 
     renderBeaconsPage();
+    await openTaskingPanel();
 
     expect(await screen.findByRole('option', { name: 'Shell Command' })).toBeTruthy();
     const dataTransfer = makeDataTransfer();
@@ -1460,6 +1467,7 @@ describe('BeaconsPage', () => {
     });
 
     renderBeaconsPage();
+    await openTaskingPanel();
 
     expect(await screen.findByTestId('task-row-55555555-5555-5555-5555-555555555555')).toBeTruthy();
 
@@ -1531,6 +1539,7 @@ describe('BeaconsPage', () => {
     });
 
     renderBeaconsPage();
+    await openTaskingPanel();
 
     expect(await screen.findByTestId('task-row-66666666-6666-6666-6666-666666666666')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Filter task status'), { target: { value: 'failed' } });
@@ -1577,6 +1586,7 @@ describe('BeaconsPage', () => {
     });
 
     renderBeaconsPage();
+    await openTaskingPanel();
 
     expect(await screen.findByTestId('task-row-55555555-5555-5555-5555-555555555555')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'View result for hostname' }));
@@ -1678,6 +1688,7 @@ describe('BeaconsPage', () => {
     mocks.useRealtime.mockImplementation(() => ({ ...realtimeState, latestEvent }));
 
     const rendered = renderBeaconsPage();
+    await openTaskingPanel();
 
     expect(await screen.findByTestId('task-row-55555555-5555-5555-5555-555555555555')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'View result for hostname' }));
@@ -1722,6 +1733,7 @@ describe('BeaconsPage', () => {
     mocks.useRealtime.mockImplementation(() => ({ ...realtimeState, latestEvent }));
 
     const rendered = renderBeaconsPage();
+    await openTaskingPanel();
 
     const taskRow = await screen.findByTestId(`task-row-${runningTask.id}`);
     fireEvent.click(taskRow);
@@ -1762,6 +1774,7 @@ describe('BeaconsPage', () => {
     });
 
     renderBeaconsPage();
+    await openTaskingPanel();
 
     expect(await screen.findByText('whoami')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Cancel task whoami/ }));

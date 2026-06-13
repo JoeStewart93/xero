@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, MouseEvent, useEffect, useState } from 'react';
 import { Copy, Plus, Radar, RadioTower, Rocket, ServerCog, Square, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
@@ -197,9 +197,26 @@ export function WorkerActionModal({
   const profile = workerProfiles[action.kind];
   const title = action.mode === 'launch' ? `Launch ${profile.singular}` : `Pair external ${profile.singular}`;
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     onSubmit(name, hostPort);
+  }
+
+  function handleBackdropMouseDown(event: MouseEvent<HTMLDivElement>): void {
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
   }
 
   async function copyCommand(): Promise<void> {
@@ -210,7 +227,7 @@ export function WorkerActionModal({
   }
 
   return createPortal(
-    <div className="infrastructure-modal-backdrop" role="presentation">
+    <div className="infrastructure-modal-backdrop" onMouseDown={handleBackdropMouseDown} role="presentation">
       <section aria-label={title} aria-modal="true" className="infrastructure-modal" role="dialog">
         <div className="infrastructure-modal-head">
           <div>

@@ -1,4 +1,4 @@
-import { ReactNode, useEffect } from 'react';
+import { MouseEvent, ReactNode, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
@@ -23,8 +23,14 @@ export function ModalShell({ ariaLabel, children, onClose, subtitle, title, vari
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
+  function handleBackdropMouseDown(event: MouseEvent<HTMLDivElement>): void {
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
+  }
+
   return createPortal(
-    <div className={`modal-backdrop modal-backdrop--${variant}`} role="presentation">
+    <div className={`modal-backdrop modal-backdrop--${variant}`} onMouseDown={handleBackdropMouseDown} role="presentation">
       <section aria-label={ariaLabel} aria-modal="true" className={`modal-shell modal-shell--${variant}`} role="dialog">
         <div className="modal-shell-header">
           <div>

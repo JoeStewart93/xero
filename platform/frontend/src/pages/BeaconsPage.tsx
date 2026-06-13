@@ -1,6 +1,6 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
-import { ChangeEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, KeyboardEvent, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownUp,
   Boxes,
@@ -1273,6 +1273,9 @@ function BeaconOperationsModal({
   beacon,
   beacons,
   connection,
+  initialArgs,
+  initialModuleId,
+  initialTaskId,
   latestEvent,
   onClose,
   realtimeStatus,
@@ -1280,6 +1283,9 @@ function BeaconOperationsModal({
   beacon: Beacon;
   beacons: Beacon[];
   connection: C2Connection;
+  initialArgs?: Record<string, unknown>;
+  initialModuleId?: string;
+  initialTaskId?: string;
   latestEvent: OperatorRealtimeEvent | null;
   onClose: () => void;
   realtimeStatus: ReturnType<typeof useRealtime>['status'];
@@ -1288,8 +1294,25 @@ function BeaconOperationsModal({
   const activeOperation = hostOperations.find((operation) => operation.key === selectedOperation) ?? hostOperations[0];
   const ActiveIcon = activeOperation.icon;
 
+  useEffect(() => {
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  function handleBackdropMouseDown(event: MouseEvent<HTMLDivElement>): void {
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
+  }
+
   return createPortal(
-    <div className="beacon-operations-backdrop" role="presentation">
+    <div className="beacon-operations-backdrop" onMouseDown={handleBackdropMouseDown} role="presentation">
       <section aria-label={`Host operations for ${beacon.hostname}`} aria-modal="true" className="beacon-operations-modal" role="dialog">
         <div className="beacon-operations-header">
           <div>
@@ -1342,11 +1365,12 @@ function BeaconOperationsModal({
               <TaskExecutionPanel
                 beacons={beacons}
                 connection={connection}
+                initialArgs={initialArgs}
                 initialBeaconId={beacon.id}
-                labelPrefix="Host operation"
+                initialModuleId={initialModuleId}
+                initialTaskId={initialTaskId}
                 latestEvent={latestEvent}
                 realtimeStatus={realtimeStatus}
-                testIdPrefix="modal-"
                 title="Command queue"
               />
             ) : activeOperation.key === 'session' ? (
@@ -1391,6 +1415,7 @@ export function BeaconsPage() {
   const routeModuleId = useMemo(() => new URLSearchParams(location.search).get('module') ?? '', [location.search]);
   const routeModuleArgs = useMemo(() => decodeLaunchArgs(new URLSearchParams(location.search).get('args')), [location.search]);
   const routeTaskId = useMemo(() => new URLSearchParams(location.search).get('task_id') ?? '', [location.search]);
+  const routeTaskingRequested = routeModuleId || routeTaskId || Object.keys(routeModuleArgs).length > 0;
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBeaconId, setSelectedBeaconId] = useState('');
   const [operationBeaconId, setOperationBeaconId] = useState('');
@@ -1410,6 +1435,7 @@ export function BeaconsPage() {
   const [isKillingBeacon, setIsKillingBeacon] = useState(false);
   const [sortKey, setSortKey] = useState<BeaconSortKey>(DEFAULT_BEACON_SORT_KEY);
   const [sortDirection, setSortDirection] = useState<BeaconSortDirection>(DEFAULT_BEACON_SORT_DIRECTION);
+  const openedRouteTaskingRef = useRef('');
 
   const visibleBeacons = useMemo(
     () => realtime.beacons
@@ -1485,6 +1511,21 @@ export function BeaconsPage() {
     }
     return undefined;
   }, [routeBeaconId, visibleBeacons]);
+
+  useEffect(() => {
+    if (!routeTaskingRequested || !selectedBeacon) {
+      return undefined;
+    }
+    if (openedRouteTaskingRef.current === location.search) {
+      return undefined;
+    }
+    const targetBeaconId = routeBeaconId && visibleBeacons.some((beacon) => beacon.id === routeBeaconId)
+      ? routeBeaconId
+      : selectedBeacon.id;
+    openedRouteTaskingRef.current = location.search;
+    const handle = window.setTimeout(() => setOperationBeaconId(targetBeaconId), 0);
+    return () => window.clearTimeout(handle);
+  }, [location.search, routeBeaconId, routeTaskingRequested, selectedBeacon, visibleBeacons]);
 
   useEffect(() => {
     const eventBeaconId = realtime.latestEvent?.scope?.beacon_id ?? (realtime.latestEvent?.data.beacon as Beacon | undefined)?.id;
@@ -1849,6 +1890,10 @@ export function BeaconsPage() {
                 </div>
 
                 <div className="beacon-detail-actions">
+                  <button className="primary-button" onClick={() => openBeaconOperations(selectedBeacon)} type="button">
+                    <TerminalSquare aria-hidden="true" size={15} strokeWidth={2.1} />
+                    <span>Tasking</span>
+                  </button>
                   <button
                     className="danger-button"
                     onClick={() => {
@@ -1860,19 +1905,6 @@ export function BeaconsPage() {
                     <Trash2 aria-hidden="true" size={15} strokeWidth={2.1} />
                     <span>Kill beacon</span>
                   </button>
-                </div>
-
-                <div className="beacon-tasking-panel">
-                  <TaskExecutionPanel
-                    beacons={visibleBeacons}
-                    connection={connection}
-                    initialArgs={routeModuleArgs}
-                    initialBeaconId={selectedBeacon.id}
-                    initialModuleId={routeModuleId || undefined}
-                    initialTaskId={selectedBeacon.id === routeBeaconId ? routeTaskId : undefined}
-                    latestEvent={realtime.latestEvent}
-                    realtimeStatus={realtime.status}
-                  />
                 </div>
 
                 <div className="beacon-detail-grid">
@@ -1964,6 +1996,9 @@ export function BeaconsPage() {
               beacon={operationBeacon}
               beacons={visibleBeacons}
               connection={connection}
+              initialArgs={routeModuleArgs}
+              initialModuleId={routeModuleId || undefined}
+              initialTaskId={operationBeacon.id === routeBeaconId ? routeTaskId : undefined}
               latestEvent={realtime.latestEvent}
               onClose={() => setOperationBeaconId('')}
               realtimeStatus={realtime.status}

@@ -1,40 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Cable, ListChecks, RadioTower, RefreshCw, Settings, TerminalSquare } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Activity, Cable, ListChecks, RadioTower, Settings } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import {
   DashboardActivityItem,
   DashboardBeaconCounts,
   DashboardSummary,
-  DependencyStatus,
-  ReadinessResponse,
   Task,
   getDashboardSummary,
-  getReadiness,
 } from '../api';
 import { AppShell } from '../components/AppShell';
 import { applyDashboardRealtimeEvent } from '../dashboardEvents';
-import { formatRealtimeStatus, normalizeDependencyStatus, realtimeReadinessStatus } from '../healthStatus';
-import { useAuth } from '../useAuth';
 import { useC2Connection } from '../useC2Connection';
 import { useRealtime } from '../useRealtime';
-
-type ReadinessState =
-  | { kind: 'loading' }
-  | { data: ReadinessResponse; kind: 'loaded' }
-  | { kind: 'error'; message: string };
 
 type DashboardState =
   | { kind: 'idle' }
   | { kind: 'loading' }
   | { data: DashboardSummary; kind: 'loaded' }
   | { kind: 'error'; message: string };
-
-interface HealthRow {
-  description: string;
-  label: string;
-  status: DependencyStatus;
-}
 
 const EMPTY_COUNTS: DashboardBeaconCounts = { offline: 0, online: 0, total: 0 };
 
@@ -52,30 +36,6 @@ function taskTime(task: Task): string {
 function taskCommand(task: Task): string {
   const command = task.args.command;
   return typeof command === 'string' && command.trim() ? command.trim() : task.module;
-}
-
-function statusFromReadiness(state: ReadinessState): DependencyStatus {
-  if (state.kind !== 'loaded') {
-    return state.kind === 'error' ? 'unhealthy' : 'unknown';
-  }
-  return state.data.status === 'ready' ? 'healthy' : 'unhealthy';
-}
-
-function dependencyFromReadiness(state: ReadinessState, key: 'postgres' | 'redis'): DependencyStatus {
-  if (state.kind !== 'loaded') {
-    return state.kind === 'error' ? 'unhealthy' : 'unknown';
-  }
-  return normalizeDependencyStatus(state.data.checks[key]?.status);
-}
-
-function c2StatusFromDashboard(state: DashboardState, hasConnection: boolean): DependencyStatus {
-  if (!hasConnection) {
-    return 'unhealthy';
-  }
-  if (state.kind !== 'loaded') {
-    return state.kind === 'error' ? 'unhealthy' : 'unknown';
-  }
-  return state.data.c2_health.status === 'ready' ? 'healthy' : 'unhealthy';
 }
 
 function SummaryCard({
@@ -99,19 +59,6 @@ function SummaryCard({
         <em>{support}</em>
       </div>
       <Icon aria-hidden="true" size={18} strokeWidth={2} />
-    </div>
-  );
-}
-
-function HealthStatusRow({ row }: { row: HealthRow }) {
-  return (
-    <div className="status-row dashboard-health-row" data-status={row.status} data-testid={`dashboard-health-${row.label.toLowerCase().replace(/\s+/g, '-')}`}>
-      <div>
-        <strong>{row.label}</strong>
-        <span>{row.description}</span>
-      </div>
-      <span>Current</span>
-      <strong className={`status-label status-label--${row.status}`}>{row.status}</strong>
     </div>
   );
 }
@@ -195,34 +142,10 @@ function RecentActivity({ items, state }: { items: DashboardActivityItem[]; stat
 }
 
 export function HomePage() {
-  const { session } = useAuth();
   const { connection } = useC2Connection();
   const realtime = useRealtime();
-  const [readiness, setReadiness] = useState<ReadinessState>({ kind: 'loading' });
   const [dashboard, setDashboard] = useState<DashboardState>({ kind: connection ? 'loading' : 'idle' });
   const appliedRealtimeEventId = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!session) {
-      return;
-    }
-    let active = true;
-    getReadiness(session.accessToken)
-      .then((data) => {
-        if (active) {
-          setReadiness({ data, kind: 'loaded' });
-        }
-      })
-      .catch((error: Error) => {
-        if (active) {
-          setReadiness({ kind: 'error', message: error.message });
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [session]);
 
   useEffect(() => {
     if (!connection) {
@@ -265,37 +188,6 @@ export function HomePage() {
     : summaryCounts;
   const activityItems = dashboard.kind === 'loaded' ? dashboard.data.recent_activity : [];
   const hasNoBeacons = dashboard.kind === 'loaded' && counts.total === 0;
-
-  const healthRows = useMemo<HealthRow[]>(
-    () => [
-      {
-        description: readiness.kind === 'loaded' ? readiness.data.service : 'Local API service',
-        label: 'Local BFF',
-        status: statusFromReadiness(readiness),
-      },
-      {
-        description: 'Primary database',
-        label: 'PostgreSQL',
-        status: dependencyFromReadiness(readiness, 'postgres'),
-      },
-      {
-        description: 'Cache and message bus',
-        label: 'Redis',
-        status: dependencyFromReadiness(readiness, 'redis'),
-      },
-      {
-        description: connection?.baseUrl ?? 'No C2 connection',
-        label: 'C2 API',
-        status: c2StatusFromDashboard(dashboard, Boolean(connection)),
-      },
-      {
-        description: `${formatRealtimeStatus(realtime.status)} stream`,
-        label: 'Realtime',
-        status: realtimeReadinessStatus(realtime.status),
-      },
-    ],
-    [connection, dashboard, readiness, realtime.status],
-  );
 
   return (
     <AppShell description="C2 dashboard overview" section="home" title="Home" wide>
@@ -360,22 +252,6 @@ export function HomePage() {
           </Link>
         </section>
 
-        <section className="workspace-panel dashboard-health-panel" aria-label="System health">
-          <div className="panel-header">
-            <div>
-              <h2>System health</h2>
-              <p className="muted-text">Readiness across local services and C2 connectivity.</p>
-            </div>
-            <div className="panel-icon" aria-hidden="true">
-              <RefreshCw size={18} strokeWidth={2} />
-            </div>
-          </div>
-          <div className="status-list">
-            {healthRows.map((row) => <HealthStatusRow key={row.label} row={row} />)}
-          </div>
-          {readiness.kind === 'error' ? <p className="error-text">{readiness.message}</p> : null}
-        </section>
-
         <section className="workspace-panel dashboard-tasks-panel" aria-label="Recent tasks">
           <div className="panel-header">
             <div>
@@ -386,7 +262,9 @@ export function HomePage() {
               <ListChecks size={18} strokeWidth={2} />
             </div>
           </div>
-          <RecentTasks state={dashboard} />
+          <div className="dashboard-panel-scroll">
+            <RecentTasks state={dashboard} />
+          </div>
         </section>
 
         <section className="workspace-panel dashboard-activity-panel" aria-label="Recent activity">
@@ -399,32 +277,8 @@ export function HomePage() {
               <Activity size={18} strokeWidth={2} />
             </div>
           </div>
-          <RecentActivity items={activityItems} state={dashboard} />
-        </section>
-
-        <section className="workspace-panel dashboard-actions-panel" aria-label="Quick actions">
-          <div className="panel-header">
-            <div>
-              <h2>Quick actions</h2>
-              <p className="muted-text">Common operator routes from the Home overview.</p>
-            </div>
-            <div className="panel-icon" aria-hidden="true">
-              <TerminalSquare size={18} strokeWidth={2} />
-            </div>
-          </div>
-          <div className="dashboard-action-grid">
-            <Link className="primary-button" to="/beacons">
-              <TerminalSquare aria-hidden="true" size={15} strokeWidth={2} />
-              <span>New task</span>
-            </Link>
-            <Link className="secondary-button" to="/beacons?status=offline">
-              <RadioTower aria-hidden="true" size={15} strokeWidth={2} />
-              <span>Offline beacons</span>
-            </Link>
-            <Link className="secondary-button" to="/settings">
-              <Settings aria-hidden="true" size={15} strokeWidth={2} />
-              <span>Settings</span>
-            </Link>
+          <div className="dashboard-panel-scroll">
+            <RecentActivity items={activityItems} state={dashboard} />
           </div>
         </section>
       </div>

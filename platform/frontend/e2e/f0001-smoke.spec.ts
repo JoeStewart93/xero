@@ -35,7 +35,10 @@ test('valid operator login redirects to home when C2 is disconnected', async ({ 
 
   await expect(page).toHaveURL(/\/home$/);
   await expect(page.getByRole('heading', { level: 1, name: 'Home' })).toBeVisible();
-  await expect(page.getByLabel('Architecture status')).toBeVisible();
+  await expect(page.getByLabel('Active project scope')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create resource' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Notifications' })).toBeVisible();
+  await expect(page.getByLabel('C2 Disconnected')).toBeVisible();
 
   const homeSubNav = page.getByRole('navigation', { name: 'Home sections' });
   await expect(homeSubNav.getByText('Overview', { exact: true })).toBeVisible();

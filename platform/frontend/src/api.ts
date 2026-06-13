@@ -1079,11 +1079,12 @@ export async function downloadTaskResultArtifact(
   return response.blob();
 }
 
-export async function createShellTask(
+export async function createTask(
   baseUrl: string,
   accessToken: string,
   beaconId: string,
-  args: ShellTaskArgs,
+  module: string,
+  args: Record<string, unknown>,
   priority: TaskPriority = 'normal',
 ): Promise<Task> {
   return c2Fetch<Task>(baseUrl, accessToken, '/api/v1/tasks', {
@@ -1091,10 +1092,20 @@ export async function createShellTask(
     body: JSON.stringify({
       args,
       beacon_id: beaconId,
-      module: 'shell',
+      module,
       priority,
     }),
   });
+}
+
+export async function createShellTask(
+  baseUrl: string,
+  accessToken: string,
+  beaconId: string,
+  args: ShellTaskArgs,
+  priority: TaskPriority = 'normal',
+): Promise<Task> {
+  return createTask(baseUrl, accessToken, beaconId, 'shell', { ...args }, priority);
 }
 
 export async function createShellSession(

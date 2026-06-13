@@ -395,6 +395,11 @@ def test_module_registry_exposes_builtin_portscan(c2_client):
     assert unauthenticated.status_code == 401
     assert response.status_code == 200
     modules = {item["id"]: item for item in response.json()["items"]}
+    assert "shell" in modules
+    assert modules["shell"]["execution_kind"] == "beacon-task"
+    assert modules["shell"]["supported_execution_targets"] == ["beacon"]
+    assert modules["shell"]["args_schema"]["required"] == ["command"]
+    assert modules["shell"]["args_schema"]["properties"]["command"]["type"] == "string"
     assert "builtin.portscan" in modules
     assert modules["builtin.portscan"]["execution_kind"] == "scan-job"
     assert modules["builtin.portscan"]["supported_execution_targets"] == ["auto"]
@@ -1263,6 +1268,35 @@ def test_task_api_filters_history_by_command(c2_client):
 
     assert listed.status_code == 200
     assert [item["id"] for item in listed.json()["items"]] == [matching["id"]]
+
+
+def test_task_api_filters_history_by_failed_status(c2_client):
+    registered = register_beacon(c2_client)
+    token = connect_c2(c2_client)
+    failed = create_shell_task(c2_client, token, registered["beacon_id"], command="bad-command")
+    completed = create_shell_task(c2_client, token, registered["beacon_id"], command="hostname")
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    now = utc_now()
+    with SessionFactory() as session:
+        failed_task = session.get(Task, uuid.UUID(failed["id"]))
+        completed_task = session.get(Task, uuid.UUID(completed["id"]))
+        assert failed_task is not None
+        assert completed_task is not None
+        failed_task.status = "failed"
+        failed_task.completed_at = now
+        completed_task.status = "completed"
+        completed_task.completed_at = now
+        session.commit()
+
+    listed = c2_client.get(
+        f"/api/v1/tasks?beacon_id={registered['beacon_id']}&status=failed",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()["items"]] == [failed["id"]]
 
 
 def test_task_api_rejects_invalid_task_requests(c2_client):

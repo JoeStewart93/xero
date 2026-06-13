@@ -22,9 +22,10 @@ const apiMocks = vi.hoisted(() => ({
   createFileBrowserSession: vi.fn(),
   createRegistrySession: vi.fn(),
   createShellSession: vi.fn(),
-  createShellTask: vi.fn(),
+  createTask: vi.fn(),
   downloadTaskResultText: vi.fn(),
   getBeaconActivity: vi.fn(),
+  getModules: vi.fn(),
   getTaskResult: vi.fn(),
   getTasks: vi.fn(),
   getTrafficProfiles: vi.fn(),
@@ -47,9 +48,10 @@ vi.mock('../api', async (importOriginal) => ({
   createFileBrowserSession: apiMocks.createFileBrowserSession,
   createRegistrySession: apiMocks.createRegistrySession,
   createShellSession: apiMocks.createShellSession,
-  createShellTask: apiMocks.createShellTask,
+  createTask: apiMocks.createTask,
   downloadTaskResultText: apiMocks.downloadTaskResultText,
   getBeaconActivity: apiMocks.getBeaconActivity,
+  getModules: apiMocks.getModules,
   getTaskResult: apiMocks.getTaskResult,
   getTasks: apiMocks.getTasks,
   getTrafficProfiles: apiMocks.getTrafficProfiles,
@@ -178,6 +180,47 @@ const cloudfrontProfile = {
   updated_at: '2026-06-08T14:00:00Z',
 };
 
+const moduleCatalog = {
+  items: [
+    {
+      args_schema: {
+        properties: {
+          command: { minLength: 1, type: 'string' },
+          shell_type: { default: 'auto', enum: ['auto', 'bash', 'cmd', 'powershell'], type: 'string' },
+          timeout_seconds: { minimum: 1, type: 'integer' },
+        },
+        required: ['command'],
+        type: 'object',
+      },
+      category: 'utility',
+      description: 'Queue a shell command for an active beacon.',
+      example: { args: { command: 'whoami', shell_type: 'auto' }, module: 'shell' },
+      execution_kind: 'beacon-task',
+      id: 'shell',
+      name: 'Shell Command',
+      required_capabilities: [],
+      result_schema: {},
+      source: 'builtin',
+      supported_execution_targets: ['beacon'],
+      version: '1.0.0',
+    },
+    {
+      args_schema: { properties: {}, type: 'object' },
+      category: 'scanning',
+      description: 'Scan ports.',
+      example: {},
+      execution_kind: 'scan-job',
+      id: 'builtin.portscan',
+      name: 'Port Scan',
+      required_capabilities: ['tcp-connect'],
+      result_schema: {},
+      source: 'builtin',
+      supported_execution_targets: ['auto'],
+      version: '1.0.0',
+    },
+  ],
+};
+
 class FakeWebSocket {
   static CONNECTING = 0;
   static OPEN = 1;
@@ -290,6 +333,18 @@ function renderBeaconsPage(initialEntries = ['/beacons']) {
   );
 }
 
+function makeDataTransfer(): DataTransfer {
+  const store = new Map<string, string>();
+  return {
+    dropEffect: 'copy',
+    effectAllowed: 'copy',
+    getData: (format: string) => store.get(format) ?? '',
+    setData: (format: string, value: string) => {
+      store.set(format, value);
+    },
+  } as DataTransfer;
+}
+
 describe('BeaconsPage', () => {
   beforeEach(() => {
     vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-06-08T14:10:00Z').getTime());
@@ -332,13 +387,14 @@ describe('BeaconsPage', () => {
       status: 'connected',
     });
     apiMocks.getTasks.mockResolvedValue({ items: [] });
+    apiMocks.getModules.mockResolvedValue(moduleCatalog);
     apiMocks.createFileBrowserSession.mockResolvedValue(fileBrowserSession);
     apiMocks.closeFileBrowserSession.mockResolvedValue({ ...fileBrowserSession, close_reason: 'operator', closed_at: '2026-06-08T14:13:00Z', status: 'closed' });
     apiMocks.createRegistrySession.mockResolvedValue(registrySession);
     apiMocks.closeRegistrySession.mockResolvedValue({ ...registrySession, close_reason: 'operator', closed_at: '2026-06-08T14:15:00Z', status: 'closed' });
     apiMocks.createShellSession.mockResolvedValue(shellSession);
     apiMocks.closeShellSession.mockResolvedValue({ ...shellSession, close_reason: 'operator', closed_at: '2026-06-08T14:11:00Z', status: 'closed' });
-    apiMocks.createShellTask.mockResolvedValue(queuedTask);
+    apiMocks.createTask.mockResolvedValue(queuedTask);
     apiMocks.cancelTask.mockResolvedValue({ ...queuedTask, cancelled_at: '2026-06-08T14:09:00Z', status: 'cancelled' });
     apiMocks.getTaskResult.mockResolvedValue({
       artifacts: [],
@@ -978,7 +1034,7 @@ describe('BeaconsPage', () => {
     expect(screen.getByText('Windows registry sessions require a Windows beacon.')).toBeTruthy();
   });
 
-  it('queues a shell task from the command queue modal', async () => {
+  it('renders module args and queues a shell task from the task execution panel', async () => {
     apiMocks.getTasks.mockResolvedValueOnce({ items: [] }).mockResolvedValueOnce({ items: [queuedTask] });
     mocks.useRealtime.mockReturnValue({
       activeBeaconCount: 1,
@@ -992,18 +1048,21 @@ describe('BeaconsPage', () => {
 
     renderBeaconsPage();
 
-    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
     expect(await screen.findByText('No tasks queued for this beacon.')).toBeTruthy();
+    expect(await screen.findByRole('option', { name: 'Shell Command' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'Port Scan' })).toBeNull();
+    expect((screen.getByRole('button', { name: /^Queue$/ }) as HTMLButtonElement).disabled).toBe(true);
 
-    fireEvent.change(screen.getByLabelText('Shell command'), { target: { value: 'whoami' } });
+    fireEvent.change(await screen.findByLabelText('Shell command'), { target: { value: 'whoami' } });
     fireEvent.change(screen.getByLabelText('Task priority'), { target: { value: 'urgent' } });
     fireEvent.click(screen.getByRole('button', { name: /Queue/ }));
 
     await waitFor(() => {
-      expect(apiMocks.createShellTask).toHaveBeenCalledWith(
+      expect(apiMocks.createTask).toHaveBeenCalledWith(
         'http://localhost:18001',
         'c2-token',
         beaconOne.id,
+        'shell',
         { command: 'whoami', shell_type: 'auto', timeout_seconds: 60 },
         'urgent',
       );
@@ -1012,7 +1071,46 @@ describe('BeaconsPage', () => {
     expect(screen.getByText('urgent')).toBeTruthy();
   });
 
-  it('filters command history from the command queue modal', async () => {
+  it('sets the task target by dragging a beacon row onto the form', async () => {
+    apiMocks.getTasks.mockResolvedValueOnce({ items: [] }).mockResolvedValueOnce({ items: [queuedTask] });
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 2,
+      beacons: [beaconOne, beaconTwo],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 1,
+      status: 'connected',
+    });
+
+    renderBeaconsPage();
+
+    expect(await screen.findByRole('option', { name: 'Shell Command' })).toBeTruthy();
+    const dataTransfer = makeDataTransfer();
+    fireEvent.dragStart(screen.getByTestId(`beacon-row-${beaconTwo.id}`), { dataTransfer });
+    fireEvent.drop(screen.getByTestId('beacon-task-drop-target'), { dataTransfer });
+
+    expect(screen.getByTestId('beacon-task-target-chip').textContent).toContain('beacon-bravo');
+    fireEvent.change(await screen.findByLabelText('Shell command'), { target: { value: 'hostname' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Queue$/ }));
+
+    await waitFor(() => {
+      expect(apiMocks.createTask).toHaveBeenCalledWith(
+        'http://localhost:18001',
+        'c2-token',
+        beaconTwo.id,
+        'shell',
+        { command: 'hostname', shell_type: 'auto', timeout_seconds: 60 },
+        'normal',
+      );
+    });
+
+    const invalidTransfer = makeDataTransfer();
+    fireEvent.drop(screen.getByTestId('beacon-task-drop-target'), { dataTransfer: invalidTransfer });
+    expect(await screen.findByText('Drop a known beacon row onto the target field.')).toBeTruthy();
+  });
+
+  it('filters command history from the task execution panel', async () => {
     const completedTask = {
       ...queuedTask,
       args: { command: 'hostname', shell_type: 'auto', timeout_seconds: 60 },
@@ -1033,8 +1131,7 @@ describe('BeaconsPage', () => {
 
     renderBeaconsPage();
 
-    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
-    expect(await screen.findByText('hostname')).toBeTruthy();
+    expect(await screen.findByTestId('task-row-55555555-5555-5555-5555-555555555555')).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Search command history'), { target: { value: 'host' } });
     fireEvent.change(screen.getByLabelText('Filter task status'), { target: { value: 'completed' } });
@@ -1049,6 +1146,80 @@ describe('BeaconsPage', () => {
     });
     expect(screen.getAllByText('completed').length).toBeGreaterThan(0);
     expect(screen.getByText('completed 1m ago')).toBeTruthy();
+  });
+
+  it('filters failed tasks and shows the failed result reason', async () => {
+    const completedTask = {
+      ...queuedTask,
+      args: { command: 'hostname', shell_type: 'auto', timeout_seconds: 60 },
+      completed_at: '2026-06-08T14:09:00Z',
+      id: '55555555-5555-5555-5555-555555555555',
+      status: 'completed',
+    };
+    const failedTask = {
+      ...queuedTask,
+      args: { command: 'bad-command', shell_type: 'auto', timeout_seconds: 60 },
+      completed_at: '2026-06-08T14:09:30Z',
+      id: '66666666-6666-6666-6666-666666666666',
+      status: 'failed',
+    };
+    apiMocks.getTasks
+      .mockResolvedValueOnce({ items: [completedTask, failedTask] })
+      .mockResolvedValueOnce({ items: [failedTask] });
+    apiMocks.getTaskResult.mockResolvedValue({
+      artifacts: [],
+      beacon_id: beaconOne.id,
+      completed_at: '2026-06-08T14:09:30Z',
+      created_at: '2026-06-08T14:08:00Z',
+      error_message: 'Process exited with status 1.',
+      exit_code: 1,
+      expires_at: '2026-06-15T14:09:30Z',
+      id: '88888888-8888-8888-8888-888888888888',
+      metadata: {},
+      output_sha256: 'failed-sha',
+      output_size_bytes: 6,
+      status: 'failed',
+      stderr: 'denied',
+      stderr_sha256: 'stderr-sha',
+      stderr_size_bytes: 6,
+      stdout: '',
+      stdout_sha256: 'stdout-sha',
+      stdout_size_bytes: 0,
+      task_id: failedTask.id,
+      timed_out: false,
+      truncated: false,
+      updated_at: '2026-06-08T14:09:30Z',
+    });
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 1,
+      beacons: [beaconOne],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 0,
+      status: 'connected',
+    });
+
+    renderBeaconsPage();
+
+    expect(await screen.findByTestId('task-row-66666666-6666-6666-6666-666666666666')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Filter task status'), { target: { value: 'failed' } });
+
+    await waitFor(() => {
+      expect(apiMocks.getTasks).toHaveBeenLastCalledWith('http://localhost:18001', 'c2-token', {
+        beaconId: beaconOne.id,
+        command: undefined,
+        limit: 20,
+        status: 'failed',
+      });
+    });
+    expect(await screen.findByTestId('task-row-66666666-6666-6666-6666-666666666666')).toBeTruthy();
+    expect(screen.queryByText('hostname')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'View result for bad-command' }));
+    expect(await screen.findByTestId('task-failure-reason')).toBeTruthy();
+    expect(screen.getByText('Process exited with status 1.')).toBeTruthy();
+    expect(screen.getByText('denied')).toBeTruthy();
   });
 
   it('loads and downloads durable task results from command history', async () => {
@@ -1077,8 +1248,7 @@ describe('BeaconsPage', () => {
 
     renderBeaconsPage();
 
-    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
-    expect(await screen.findByText('hostname')).toBeTruthy();
+    expect(await screen.findByTestId('task-row-55555555-5555-5555-5555-555555555555')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'View result for hostname' }));
 
     expect(await screen.findByTestId('task-result-panel')).toBeTruthy();
@@ -1179,8 +1349,7 @@ describe('BeaconsPage', () => {
 
     const rendered = renderBeaconsPage();
 
-    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
-    expect(await screen.findByText('hostname')).toBeTruthy();
+    expect(await screen.findByTestId('task-row-55555555-5555-5555-5555-555555555555')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'View result for hostname' }));
     expect(await screen.findByText('initial output')).toBeTruthy();
 
@@ -1203,7 +1372,7 @@ describe('BeaconsPage', () => {
     expect(apiMocks.getTaskResult.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('cancels a queued task from the command queue modal', async () => {
+  it('cancels a queued task from the task execution panel', async () => {
     apiMocks.getTasks.mockResolvedValueOnce({ items: [queuedTask] }).mockResolvedValueOnce({
       items: [{ ...queuedTask, cancelled_at: '2026-06-08T14:09:00Z', status: 'cancelled' }],
     });
@@ -1219,7 +1388,6 @@ describe('BeaconsPage', () => {
 
     renderBeaconsPage();
 
-    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
     expect(await screen.findByText('whoami')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Cancel task whoami/ }));
 

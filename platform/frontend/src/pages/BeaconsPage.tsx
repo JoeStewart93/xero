@@ -1,6 +1,6 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
-import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownUp,
   Boxes,
@@ -19,7 +19,6 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
-  Send,
   Server,
   ShieldCheck,
   TerminalSquare,
@@ -31,17 +30,12 @@ import { useLocation } from 'react-router-dom';
 
 import {
   assignBeaconTrafficProfile,
-  cancelTask,
   clearBeaconTrafficProfile,
   closeFileBrowserSession,
   closeShellSession,
   createFileBrowserSession,
   createShellSession,
-  createShellTask,
-  downloadTaskResultText,
   getBeaconActivity,
-  getTaskResult,
-  getTasks,
   getTrafficProfiles,
   killBeacon,
 } from '../api';
@@ -51,10 +45,6 @@ import type {
   FileBrowserSession,
   ShellSession,
   ShellType,
-  Task,
-  TaskPriority,
-  TaskResult,
-  TaskStatus,
   TrafficProfile,
 } from '../api';
 import { AppShell } from '../components/AppShell';
@@ -67,6 +57,8 @@ import { useRealtime } from '../useRealtime';
 import { ShellSessionClient } from '../shellSessionClient';
 import type { FileBrowserEntry, ShellSessionConnectionStatus, ShellSessionMessage } from '../shellSessionClient';
 import { RegistrySessionPanel } from './RegistrySessionPanel';
+import { TaskExecutionPanel } from './TaskExecutionPanel';
+import { writeBeaconDragData } from './taskDrag';
 import {
   DEFAULT_BEACON_SORT_DIRECTION,
   DEFAULT_BEACON_SORT_KEY,
@@ -213,9 +205,7 @@ const hostOperations = [
 type HostOperationKey = (typeof hostOperations)[number]['key'];
 type BeaconStatusFilter = 'all' | 'offline' | 'online';
 
-const taskPriorities: TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
 const shellTypes: ShellType[] = ['auto', 'cmd', 'powershell', 'bash'];
-const taskStatusFilters: Array<TaskStatus | 'all'> = ['all', 'queued', 'dispatched', 'running', 'completed', 'failed', 'cancelled'];
 const beaconStatusFilters: BeaconStatusFilter[] = ['all', 'online', 'offline'];
 
 function initialBeaconStatusFilter(search: string): BeaconStatusFilter {
@@ -225,28 +215,6 @@ function initialBeaconStatusFilter(search: string): BeaconStatusFilter {
 
 function statusFilterLabel(statusFilter: BeaconStatusFilter): string {
   return statusFilter === 'all' ? 'All' : statusFilter[0].toUpperCase() + statusFilter.slice(1);
-}
-
-function taskStatusLabel(status: string): string {
-  return status.replace(/-/g, ' ');
-}
-
-function taskCommand(task: Task): string {
-  const command = task.args.command;
-  return typeof command === 'string' ? command : task.module;
-}
-
-function taskMeta(task: Task): string {
-  const timeout = task.args.timeout_seconds;
-  const shellType = task.args.shell_type;
-  const shell = typeof shellType === 'string' ? shellType : 'auto';
-  const timeoutLabel = typeof timeout === 'number' ? `${timeout}s` : 'default';
-  return `${shell} / ${task.priority} / ${timeoutLabel}`;
-}
-
-function taskLifecycleTime(task: Task): string {
-  const timestamp = task.completed_at ?? task.cancelled_at ?? task.running_at ?? task.dispatched_at ?? task.queued_at;
-  return `${taskStatusLabel(task.status)} ${formatRelativeTime(timestamp)}`;
 }
 
 function formatBytes(value: number): string {
@@ -321,11 +289,6 @@ function fileErrorMessage(message: ShellSessionMessage): string {
     return message.error_code.replace(/_/g, ' ');
   }
   return 'File browser operation failed.';
-}
-
-function resultOutput(result: TaskResult, stream: 'stderr' | 'stdout'): string {
-  const value = result[stream];
-  return typeof value === 'string' && value.length > 0 ? value : '(empty)';
 }
 
 function isTerminalSessionActive(session: ShellSession | null): boolean {
@@ -869,171 +832,20 @@ function FileBrowserPanel({
 
 function BeaconOperationsModal({
   beacon,
+  beacons,
   connection,
   latestEvent,
   onClose,
 }: {
   beacon: Beacon;
+  beacons: Beacon[];
   connection: C2Connection;
   latestEvent: OperatorRealtimeEvent | null;
   onClose: () => void;
 }) {
   const [selectedOperation, setSelectedOperation] = useState<HostOperationKey>('commands');
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [command, setCommand] = useState('');
-  const [shellType, setShellType] = useState<ShellType>('auto');
-  const [priority, setPriority] = useState<TaskPriority>('normal');
-  const [timeoutSeconds, setTimeoutSeconds] = useState('60');
-  const [taskSearchQuery, setTaskSearchQuery] = useState('');
-  const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatus | 'all'>('all');
-  const [taskError, setTaskError] = useState('');
-  const [isLoadingTasks, setIsLoadingTasks] = useState(false);
-  const [isSubmittingTask, setIsSubmittingTask] = useState(false);
-  const [cancellingTaskId, setCancellingTaskId] = useState('');
-  const [selectedResultTaskId, setSelectedResultTaskId] = useState('');
-  const [taskResult, setTaskResult] = useState<TaskResult | null>(null);
-  const [taskResultStream, setTaskResultStream] = useState<'stderr' | 'stdout'>('stdout');
-  const [taskResultError, setTaskResultError] = useState('');
-  const [isLoadingTaskResult, setIsLoadingTaskResult] = useState(false);
-  const [downloadingResultStream, setDownloadingResultStream] = useState('');
   const activeOperation = hostOperations.find((operation) => operation.key === selectedOperation) ?? hostOperations[0];
   const ActiveIcon = activeOperation.icon;
-  const queuedTaskCount = tasks.filter((task) => task.status === 'queued').length;
-
-  const loadTasks = useCallback(async () => {
-    setIsLoadingTasks(true);
-    try {
-      const commandFilter = taskSearchQuery.trim();
-      const response = await getTasks(connection.baseUrl, connection.accessToken, {
-        beaconId: beacon.id,
-        command: commandFilter || undefined,
-        limit: 20,
-        status: taskStatusFilter === 'all' ? undefined : taskStatusFilter,
-      });
-      setTasks(response.items);
-      setTaskError('');
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : 'Unable to load task history.';
-      setTaskError(message);
-    } finally {
-      setIsLoadingTasks(false);
-    }
-  }, [beacon.id, connection.accessToken, connection.baseUrl, taskSearchQuery, taskStatusFilter]);
-
-  const loadTaskResult = useCallback(async (taskId: string) => {
-    setSelectedResultTaskId(taskId);
-    setIsLoadingTaskResult(true);
-    try {
-      const result = await getTaskResult(connection.baseUrl, connection.accessToken, taskId);
-      setTaskResult(result);
-      setTaskResultError('');
-      setTaskResultStream(result.stdout_size_bytes > 0 || result.stderr_size_bytes === 0 ? 'stdout' : 'stderr');
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : 'Unable to load task result.';
-      setTaskResult(null);
-      setTaskResultError(message);
-    } finally {
-      setIsLoadingTaskResult(false);
-    }
-  }, [connection.accessToken, connection.baseUrl]);
-
-  useEffect(() => {
-    const handle = window.setTimeout(() => void loadTasks(), 0);
-    return () => window.clearTimeout(handle);
-  }, [loadTasks]);
-
-  useEffect(() => {
-    if (!latestEvent?.type.startsWith('task.')) {
-      return;
-    }
-    if (latestEvent.scope.beacon_id && latestEvent.scope.beacon_id !== beacon.id) {
-      return;
-    }
-    const handle = window.setTimeout(() => void loadTasks(), 0);
-    return () => window.clearTimeout(handle);
-  }, [beacon.id, latestEvent?.id, latestEvent?.scope.beacon_id, latestEvent?.type, loadTasks]);
-
-  useEffect(() => {
-    if (latestEvent?.type !== 'task.result.completed' || !selectedResultTaskId) {
-      return;
-    }
-    if (latestEvent.scope.task_id && latestEvent.scope.task_id !== selectedResultTaskId) {
-      return;
-    }
-    const handle = window.setTimeout(() => void loadTaskResult(selectedResultTaskId), 0);
-    return () => window.clearTimeout(handle);
-  }, [latestEvent?.id, latestEvent?.scope.task_id, latestEvent?.type, loadTaskResult, selectedResultTaskId]);
-
-  async function handleSubmitTask(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmedCommand = command.trim();
-    const parsedTimeout = Number(timeoutSeconds);
-    if (!trimmedCommand) {
-      setTaskError('Command is required.');
-      return;
-    }
-    if (!Number.isInteger(parsedTimeout) || parsedTimeout < 1) {
-      setTaskError('Timeout must be a positive whole number.');
-      return;
-    }
-    setIsSubmittingTask(true);
-    try {
-      await createShellTask(
-        connection.baseUrl,
-        connection.accessToken,
-        beacon.id,
-        { command: trimmedCommand, shell_type: shellType, timeout_seconds: parsedTimeout },
-        priority,
-      );
-      setCommand('');
-      setTaskError('');
-      await loadTasks();
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : 'Unable to queue task.';
-      setTaskError(message);
-    } finally {
-      setIsSubmittingTask(false);
-    }
-  }
-
-  async function handleCancelTask(task: Task) {
-    setCancellingTaskId(task.id);
-    try {
-      const cancelled = await cancelTask(connection.baseUrl, connection.accessToken, task.id);
-      setTasks((current) => current.map((item) => (item.id === cancelled.id ? cancelled : item)));
-      setTaskError('');
-      await loadTasks();
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : 'Unable to cancel task.';
-      setTaskError(message);
-    } finally {
-      setCancellingTaskId('');
-    }
-  }
-
-  async function handleDownloadResult(stream: 'combined' | 'stderr' | 'stdout') {
-    if (!selectedResultTaskId) {
-      return;
-    }
-    setDownloadingResultStream(stream);
-    try {
-      const blob = await downloadTaskResultText(connection.baseUrl, connection.accessToken, selectedResultTaskId, stream);
-      const href = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = href;
-      anchor.download = `${selectedResultTaskId}-${stream}.txt`;
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(href);
-      setTaskResultError('');
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : 'Unable to download task result.';
-      setTaskResultError(message);
-    } finally {
-      setDownloadingResultStream('');
-    }
-  }
 
   return createPortal(
     <div className="beacon-operations-backdrop" role="presentation">
@@ -1086,192 +898,15 @@ function BeaconOperationsModal({
             </div>
 
             {activeOperation.key === 'commands' ? (
-              <div className="task-queue-panel">
-                <form className="task-command-form" onSubmit={handleSubmitTask}>
-                  <label>
-                    <span>Command</span>
-                    <input
-                      aria-label="Shell command"
-                      onChange={(event) => setCommand(event.target.value)}
-                      placeholder="whoami"
-                      value={command}
-                    />
-                  </label>
-                  <div className="task-command-grid">
-                    <label>
-                      <span>Shell</span>
-                      <select
-                        aria-label="Shell type"
-                        onChange={(event) => setShellType(event.target.value as ShellType)}
-                        value={shellType}
-                      >
-                        {shellTypes.map((item) => (
-                          <option key={item} value={item}>
-                            {item}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      <span>Priority</span>
-                      <select
-                        aria-label="Task priority"
-                        onChange={(event) => setPriority(event.target.value as TaskPriority)}
-                        value={priority}
-                      >
-                        {taskPriorities.map((item) => (
-                          <option key={item} value={item}>
-                            {item}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      <span>Timeout</span>
-                      <input
-                        aria-label="Timeout seconds"
-                        min={1}
-                        onChange={(event) => setTimeoutSeconds(event.target.value)}
-                        type="number"
-                        value={timeoutSeconds}
-                      />
-                    </label>
-                    <button className="primary-button task-submit-button" disabled={isSubmittingTask} type="submit">
-                      <Send aria-hidden="true" size={15} strokeWidth={2.2} />
-                      <span>{isSubmittingTask ? 'Queueing' : 'Queue'}</span>
-                    </button>
-                  </div>
-                </form>
-
-                <div className="task-queue-toolbar">
-                  <div className="task-history-count">
-                    <strong>{queuedTaskCount}</strong>
-                    <span>queued</span>
-                  </div>
-                  <label className="task-history-search">
-                    <Search aria-hidden="true" size={14} strokeWidth={2} />
-                    <input
-                      aria-label="Search command history"
-                      onChange={(event) => setTaskSearchQuery(event.target.value)}
-                      placeholder="Search commands"
-                      value={taskSearchQuery}
-                    />
-                  </label>
-                  <select
-                    aria-label="Filter task status"
-                    className="task-status-filter"
-                    onChange={(event) => setTaskStatusFilter(event.target.value as TaskStatus | 'all')}
-                    value={taskStatusFilter}
-                  >
-                    {taskStatusFilters.map((item) => (
-                      <option key={item} value={item}>
-                        {item === 'all' ? 'All statuses' : taskStatusLabel(item)}
-                      </option>
-                    ))}
-                  </select>
-                  <button className="secondary-button" onClick={() => void loadTasks()} type="button">
-                    <RefreshCw aria-hidden="true" size={15} strokeWidth={2.1} />
-                    <span>Refresh</span>
-                  </button>
-                </div>
-
-                {taskError ? <p className="task-queue-error" role="alert">{taskError}</p> : null}
-
-                <div className="task-list" data-testid="beacon-task-list">
-                  {isLoadingTasks ? (
-                    <div className="task-empty-state">Loading task history.</div>
-                  ) : tasks.length === 0 ? (
-                    <div className="task-empty-state">No tasks queued for this beacon.</div>
-                  ) : (
-                    tasks.map((task) => (
-                      <div className="task-row" key={task.id}>
-                        <div>
-                          <strong>{taskCommand(task)}</strong>
-                          <span>{taskMeta(task)}</span>
-                          <span>{taskLifecycleTime(task)}</span>
-                        </div>
-                        <div>
-                          <span className={`task-status task-status--${task.status}`}>{taskStatusLabel(task.status)}</span>
-                          {task.status === 'completed' || task.status === 'failed' ? (
-                            <button
-                              aria-label={`View result for ${taskCommand(task)}`}
-                              className="task-result-button"
-                              onClick={() => void loadTaskResult(task.id)}
-                              type="button"
-                            >
-                              <FileText aria-hidden="true" size={14} strokeWidth={2.1} />
-                            </button>
-                          ) : null}
-                          {task.status === 'queued' ? (
-                            <button
-                              aria-label={`Cancel task ${taskCommand(task)}`}
-                              className="task-cancel-button"
-                              disabled={cancellingTaskId === task.id}
-                              onClick={() => void handleCancelTask(task)}
-                              type="button"
-                            >
-                              <Trash2 aria-hidden="true" size={14} strokeWidth={2.1} />
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-
-                {selectedResultTaskId ? (
-                  <div className="task-result-panel" data-testid="task-result-panel">
-                    <div className="task-result-panel-head">
-                      <div>
-                        <strong>Task result</strong>
-                        <span>{selectedResultTaskId}</span>
-                      </div>
-                      <button
-                        aria-label="Download combined result"
-                        className="secondary-button task-result-download"
-                        disabled={!taskResult || downloadingResultStream === 'combined'}
-                        onClick={() => void handleDownloadResult('combined')}
-                        type="button"
-                      >
-                        <Download aria-hidden="true" size={14} strokeWidth={2.1} />
-                        <span>{downloadingResultStream === 'combined' ? 'Downloading' : 'Download'}</span>
-                      </button>
-                    </div>
-
-                    {isLoadingTaskResult ? (
-                      <div className="task-empty-state">Loading task result.</div>
-                    ) : taskResult ? (
-                      <>
-                        <div className="task-result-meta">
-                          <span>Status {taskResult.status}</span>
-                          <span>Exit {taskResult.exit_code ?? '-'}</span>
-                          <span>{formatBytes(taskResult.output_size_bytes)}</span>
-                          <span>Retained {formatRelativeTime(taskResult.expires_at)}</span>
-                        </div>
-                        <div className="task-result-tabs" role="tablist" aria-label="Task result streams">
-                          {(['stdout', 'stderr'] as const).map((stream) => (
-                            <button
-                              aria-selected={taskResultStream === stream}
-                              className={taskResultStream === stream ? 'is-selected' : ''}
-                              key={stream}
-                              onClick={() => setTaskResultStream(stream)}
-                              role="tab"
-                              type="button"
-                            >
-                              {stream}
-                              <span>{formatBytes(stream === 'stdout' ? taskResult.stdout_size_bytes : taskResult.stderr_size_bytes)}</span>
-                            </button>
-                          ))}
-                        </div>
-                        <pre className="task-result-output">{resultOutput(taskResult, taskResultStream)}</pre>
-                      </>
-                    ) : (
-                      <div className="task-empty-state">No durable result is available for this task.</div>
-                    )}
-                    {taskResultError ? <p className="task-queue-error" role="alert">{taskResultError}</p> : null}
-                  </div>
-                ) : null}
-              </div>
+              <TaskExecutionPanel
+                beacons={beacons}
+                connection={connection}
+                initialBeaconId={beacon.id}
+                labelPrefix="Host operation"
+                latestEvent={latestEvent}
+                testIdPrefix="modal-"
+                title="Command queue"
+              />
             ) : activeOperation.key === 'session' ? (
               <ShellSessionPanel beacon={beacon} connection={connection} />
             ) : activeOperation.key === 'files' ? (
@@ -1653,9 +1288,11 @@ export function BeaconsPage() {
                               aria-label={`Host ${beacon.hostname}`}
                               className={selected ? 'is-selected' : ''}
                               data-testid={`beacon-row-${beacon.id}`}
+                              draggable
                               key={beacon.id}
                               onClick={() => setSelectedBeaconId(beacon.id)}
                               onDoubleClick={() => openBeaconOperations(beacon)}
+                              onDragStart={(event) => writeBeaconDragData(event, beacon)}
                               onKeyDown={(event) => handleRowKeyDown(event, beacon)}
                               tabIndex={0}
                             >
@@ -1771,6 +1408,15 @@ export function BeaconsPage() {
                   </button>
                 </div>
 
+                <div className="beacon-tasking-panel">
+                  <TaskExecutionPanel
+                    beacons={visibleBeacons}
+                    connection={connection}
+                    initialBeaconId={selectedBeacon.id}
+                    latestEvent={realtime.latestEvent}
+                  />
+                </div>
+
                 <div className="beacon-detail-grid">
                   <DetailRow label="Hostname" value={selectedBeacon.hostname} />
                   <DetailRow label="Operating system" value={selectedBeacon.os} />
@@ -1858,6 +1504,7 @@ export function BeaconsPage() {
           {operationBeacon ? (
             <BeaconOperationsModal
               beacon={operationBeacon}
+              beacons={visibleBeacons}
               connection={connection}
               latestEvent={realtime.latestEvent}
               onClose={() => setOperationBeaconId('')}

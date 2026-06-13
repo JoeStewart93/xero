@@ -6,7 +6,8 @@ import {
   c2Token,
   getProtocolInfo,
   loginAndConnectC2,
-  postProtocolFrameBody,
+  pollLongPollFrameBody,
+  postLongPollFrame,
   registerBeacon,
 } from './support/c2';
 import { createProtocolFixture } from './support/protocolFrame';
@@ -44,31 +45,31 @@ test('F0014 command queue dispatches and cancels shell tasks', async ({ page }) 
   const protocol = await getProtocolInfo(accessToken);
   const fixture = await createProtocolFixture(protocol);
   const registered = await registerBeacon(hostname);
+  const heartbeat = await postLongPollFrame(
+    registered.beacon_id,
+    registered.beacon_token,
+    await fixture.encode('HEARTBEAT', { beacon_id: registered.beacon_id, hostname }),
+  );
+  expect(heartbeat.ok()).toBeTruthy();
 
   await page.goto(`${baseURL}/beacons`);
   await page.getByLabel('Search beacons').fill(hostname);
   const row = page.getByTestId(`beacon-row-${registered.beacon_id}`);
   await expect(row).toBeVisible({ timeout: 10_000 });
-  await row.dblclick();
-  await expect(page.getByRole('dialog', { name: `Host operations for ${hostname}` })).toBeVisible();
-  await expect(page.getByTestId('beacon-task-list')).toContainText('No tasks queued for this beacon.');
+  const taskPanel = page.getByTestId('task-execution-panel');
+  await expect(taskPanel.getByTestId('beacon-task-list')).toContainText('No tasks queued for this beacon.');
 
-  await page.getByLabel('Shell command').fill(firstCommand);
-  await page.getByLabel('Shell type').selectOption('powershell');
-  await page.getByLabel('Task priority').selectOption('urgent');
-  await page.getByLabel('Timeout seconds').fill('45');
-  await page.getByRole('button', { name: /^Queue$/ }).click();
-  await expect(page.getByTestId('beacon-task-list')).toContainText(firstCommand, { timeout: 10_000 });
-  await expect(page.getByTestId('beacon-task-list')).toContainText('queued');
+  await taskPanel.getByLabel('Shell command').fill(firstCommand);
+  await taskPanel.getByLabel('Shell type').selectOption('powershell');
+  await taskPanel.getByLabel('Task priority').selectOption('urgent');
+  await taskPanel.getByLabel('Timeout seconds').fill('45');
+  await taskPanel.getByRole('button', { name: /^Queue$/ }).click();
+  await expect(taskPanel.getByTestId('beacon-task-list')).toContainText(firstCommand, { timeout: 10_000 });
+  await expect(taskPanel.getByTestId('beacon-task-list')).toContainText('queued');
 
-  const pollResponse = await postProtocolFrameBody(
-    accessToken,
-    await fixture.encode('TASK_POLL', {
-      beacon_id: registered.beacon_id,
-    }),
-  );
-  expect(pollResponse.ok).toBeTruthy();
-  const pollAck = await fixture.decode(pollResponse.body);
+  const taskPollResponse = await pollLongPollFrameBody(registered.beacon_id, registered.beacon_token, 2);
+  expect(taskPollResponse.status).toBe(200);
+  const pollAck = await fixture.decode(taskPollResponse.body);
   expect(pollAck.messageType).toBe('ACK');
   const deliveredTask = asDeliveredTask(pollAck.payload.task);
   expect(deliveredTask.beacon_id).toBe(registered.beacon_id);
@@ -79,26 +80,18 @@ test('F0014 command queue dispatches and cancels shell tasks', async ({ page }) 
   expect(deliveredTask.args.shell_type).toBe('powershell');
   expect(deliveredTask.args.timeout_seconds).toBe(45);
 
-  await page.getByRole('button', { name: /Refresh/ }).click();
-  await expect(page.getByTestId('beacon-task-list')).toContainText('dispatched', { timeout: 10_000 });
+  await taskPanel.getByRole('button', { name: /Refresh/ }).click();
+  await expect(taskPanel.getByTestId('beacon-task-list')).toContainText('dispatched', { timeout: 10_000 });
 
-  await page.getByLabel('Shell command').fill(secondCommand);
-  await page.getByLabel('Shell type').selectOption('cmd');
-  await page.getByLabel('Task priority').selectOption('high');
-  await page.getByLabel('Timeout seconds').fill('30');
-  await page.getByRole('button', { name: /^Queue$/ }).click();
-  await expect(page.getByTestId('beacon-task-list')).toContainText(secondCommand, { timeout: 10_000 });
-  await page.getByRole('button', { name: `Cancel task ${secondCommand}` }).click();
-  await expect(page.getByTestId('beacon-task-list')).toContainText('cancelled', { timeout: 10_000 });
+  await taskPanel.getByLabel('Shell command').fill(secondCommand);
+  await taskPanel.getByLabel('Shell type').selectOption('cmd');
+  await taskPanel.getByLabel('Task priority').selectOption('high');
+  await taskPanel.getByLabel('Timeout seconds').fill('30');
+  await taskPanel.getByRole('button', { name: /^Queue$/ }).click();
+  await expect(taskPanel.getByTestId('beacon-task-list')).toContainText(secondCommand, { timeout: 10_000 });
+  await taskPanel.getByLabel(`Cancel task ${secondCommand}`).click();
+  await expect(taskPanel.getByTestId('beacon-task-list')).toContainText('cancelled', { timeout: 10_000 });
 
-  const emptyPollResponse = await postProtocolFrameBody(
-    accessToken,
-    await fixture.encode('TASK_POLL', {
-      beacon_id: registered.beacon_id,
-    }),
-  );
-  expect(emptyPollResponse.ok).toBeTruthy();
-  const emptyPollAck = await fixture.decode(emptyPollResponse.body);
-  expect(emptyPollAck.messageType).toBe('ACK');
-  expect(emptyPollAck.payload.task).toBeNull();
+  const emptyPollResponse = await pollLongPollFrameBody(registered.beacon_id, registered.beacon_token, 1);
+  expect(emptyPollResponse.status).toBe(204);
 });

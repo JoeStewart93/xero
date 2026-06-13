@@ -46,6 +46,7 @@ export interface BeaconRegistrationResponse {
   beacon_id: string;
   beacon_token: string;
   jitter: number;
+  profile?: TrafficProfilePayload | null;
   sleep: number;
   status: string;
 }
@@ -61,7 +62,15 @@ export interface Beacon {
   machine_fingerprint_hash: string;
   os: string;
   pid: number;
+  applied_profile_version?: number | null;
+  jitter?: number;
+  profile_applied_at?: string | null;
+  profile_id?: string | null;
+  profile_name?: string | null;
+  profile_template?: string | null;
+  profile_version?: number | null;
   protocol_version: number | null;
+  sleep_seconds?: number;
   status: string;
   transport_connected: boolean;
   transport_last_seen: string | null;
@@ -162,6 +171,65 @@ export type BeaconBuildStatus = 'building' | 'failed' | 'queued' | 'succeeded';
 export type BeaconBuildTargetOS = 'linux' | 'windows';
 export type BeaconBuildTargetArch = 'amd64';
 export type BeaconBuildConfigMode = 'all' | 'env' | 'file' | 'ldflags';
+
+export interface TrafficProfileConfig {
+  headers: Record<string, string>;
+  jitter: number;
+  padding: {
+    enabled: boolean;
+    max_bytes: number;
+    min_bytes: number;
+  };
+  paths: {
+    frame: string;
+    poll: string;
+    register: string;
+    websocket: string;
+  };
+  sleep_seconds: number;
+  user_agent: string;
+}
+
+export interface TrafficProfilePayload {
+  config: TrafficProfileConfig;
+  current_version: number;
+  id: string | null;
+  is_template: boolean;
+  name: string;
+  template: string;
+}
+
+export interface TrafficProfile extends TrafficProfilePayload {
+  created_at: string;
+  description: string | null;
+  id: string;
+  is_archived: boolean;
+  updated_at: string;
+}
+
+export interface TrafficProfileListResponse {
+  items: TrafficProfile[];
+}
+
+export interface TrafficProfileVersion {
+  config: TrafficProfileConfig;
+  created_at: string;
+  created_by: string;
+  id: string;
+  profile_id: string;
+  version: number;
+}
+
+export interface TrafficProfileVersionListResponse {
+  items: TrafficProfileVersion[];
+}
+
+export interface TrafficProfileSaveRequest {
+  config: TrafficProfileConfig;
+  description?: string | null;
+  name: string;
+  template?: string;
+}
 
 export interface ShellTaskArgs {
   command: string;
@@ -532,6 +600,102 @@ export async function getProtocolSecurityEvents(
 
 export async function getTransportStatus(baseUrl: string, accessToken: string): Promise<TransportStatus> {
   return c2Fetch<TransportStatus>(baseUrl, accessToken, '/api/v1/transport');
+}
+
+export async function getTrafficProfiles(
+  baseUrl: string,
+  accessToken: string,
+  includeArchived = false,
+): Promise<TrafficProfileListResponse> {
+  const query = includeArchived ? '?include_archived=true' : '';
+  return c2Fetch<TrafficProfileListResponse>(baseUrl, accessToken, `/api/v1/traffic-profiles${query}`);
+}
+
+export async function createTrafficProfile(
+  baseUrl: string,
+  accessToken: string,
+  payload: TrafficProfileSaveRequest,
+): Promise<TrafficProfile> {
+  return c2Fetch<TrafficProfile>(baseUrl, accessToken, '/api/v1/traffic-profiles', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateTrafficProfile(
+  baseUrl: string,
+  accessToken: string,
+  profileId: string,
+  payload: TrafficProfileSaveRequest,
+): Promise<TrafficProfile> {
+  return c2Fetch<TrafficProfile>(baseUrl, accessToken, `/api/v1/traffic-profiles/${profileId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function archiveTrafficProfile(
+  baseUrl: string,
+  accessToken: string,
+  profileId: string,
+): Promise<TrafficProfile> {
+  return c2Fetch<TrafficProfile>(baseUrl, accessToken, `/api/v1/traffic-profiles/${profileId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function cloneTrafficProfile(
+  baseUrl: string,
+  accessToken: string,
+  profileId: string,
+  name?: string,
+): Promise<TrafficProfile> {
+  return c2Fetch<TrafficProfile>(baseUrl, accessToken, `/api/v1/traffic-profiles/${profileId}/clone`, {
+    method: 'POST',
+    body: JSON.stringify({ name: name || null }),
+  });
+}
+
+export async function getTrafficProfileVersions(
+  baseUrl: string,
+  accessToken: string,
+  profileId: string,
+): Promise<TrafficProfileVersionListResponse> {
+  return c2Fetch<TrafficProfileVersionListResponse>(
+    baseUrl,
+    accessToken,
+    `/api/v1/traffic-profiles/${profileId}/versions`,
+  );
+}
+
+export async function rollbackTrafficProfile(
+  baseUrl: string,
+  accessToken: string,
+  profileId: string,
+  version: number,
+): Promise<TrafficProfile> {
+  return c2Fetch<TrafficProfile>(baseUrl, accessToken, `/api/v1/traffic-profiles/${profileId}/rollback`, {
+    method: 'POST',
+    body: JSON.stringify({ version }),
+  });
+}
+
+export async function assignBeaconTrafficProfile(
+  baseUrl: string,
+  accessToken: string,
+  beaconId: string,
+  profileId: string | null,
+): Promise<Beacon> {
+  return c2Fetch<Beacon>(baseUrl, accessToken, `/api/v1/beacons/${beaconId}/profile`, {
+    method: 'PUT',
+    body: JSON.stringify({ profile_id: profileId }),
+  });
+}
+
+export async function clearBeaconTrafficProfile(baseUrl: string, accessToken: string, beaconId: string): Promise<Beacon> {
+  return c2Fetch<Beacon>(baseUrl, accessToken, `/api/v1/beacons/${beaconId}/profile`, {
+    method: 'DELETE',
+  });
 }
 
 export async function getTasks(

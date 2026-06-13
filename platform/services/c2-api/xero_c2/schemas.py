@@ -17,6 +17,14 @@ class BeaconResponse(BaseModel):
     external_ip: str | None = None
     pid: int
     status: str
+    profile_id: str | None = None
+    profile_name: str | None = None
+    profile_template: str | None = None
+    profile_version: int | None = None
+    applied_profile_version: int | None = None
+    profile_applied_at: datetime | None = None
+    sleep_seconds: int = 30
+    jitter: float = 0.1
     protocol_version: int | None = None
     transport_mode: Literal["long-poll", "rest", "websocket"] = "rest"
     transport_connected: bool = False
@@ -65,6 +73,7 @@ class BeaconRegistrationResponse(BaseModel):
     status: str
     sleep: int = 30
     jitter: float = 0.1
+    profile: dict | None = None
     beacon: BeaconResponse
 
 
@@ -103,7 +112,72 @@ class BeaconHeartbeatResponse(BaseModel):
     status: str
     sleep: int
     jitter: float
+    profile: dict | None = None
     beacon: BeaconResponse
+
+
+class TrafficProfileConfig(BaseModel):
+    headers: dict[str, str] = Field(default_factory=dict)
+    jitter: float = Field(default=0.1, ge=0, le=1)
+    padding: dict = Field(default_factory=dict)
+    paths: dict[str, str] = Field(default_factory=dict)
+    sleep_seconds: int = Field(default=30, ge=1, le=86400)
+    user_agent: str = Field(default="xero-go-beacon/0.1", min_length=1, max_length=255)
+
+
+class TrafficProfileCreateRequest(BaseModel):
+    config: dict
+    description: str | None = Field(default=None, max_length=512)
+    name: str = Field(min_length=1, max_length=128)
+    template: str = Field(default="custom", min_length=1, max_length=64)
+
+
+class TrafficProfileUpdateRequest(BaseModel):
+    config: dict
+    description: str | None = Field(default=None, max_length=512)
+    name: str = Field(min_length=1, max_length=128)
+
+
+class TrafficProfileCloneRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class TrafficProfileRollbackRequest(BaseModel):
+    version: int = Field(ge=1)
+
+
+class TrafficProfileAssignRequest(BaseModel):
+    profile_id: str | None = None
+
+
+class TrafficProfileResponse(BaseModel):
+    id: str
+    name: str
+    template: str
+    description: str | None = None
+    current_version: int
+    is_template: bool
+    is_archived: bool
+    config: dict
+    created_at: datetime
+    updated_at: datetime
+
+
+class TrafficProfileListResponse(BaseModel):
+    items: list[TrafficProfileResponse] = Field(default_factory=list)
+
+
+class TrafficProfileVersionResponse(BaseModel):
+    id: str
+    profile_id: str
+    version: int
+    config: dict
+    created_by: str
+    created_at: datetime
+
+
+class TrafficProfileVersionListResponse(BaseModel):
+    items: list[TrafficProfileVersionResponse] = Field(default_factory=list)
 
 
 class C2ConnectRequest(BaseModel):

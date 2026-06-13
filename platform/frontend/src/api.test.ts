@@ -6,7 +6,11 @@ import {
   writeStoredAuthSession,
 } from './authStorage';
 import {
+  archiveTrafficProfile,
+  assignBeaconTrafficProfile,
   cancelTask,
+  clearBeaconTrafficProfile,
+  cloneTrafficProfile,
   closeRegistrySession,
   closeShellSession,
   createBeaconBuild,
@@ -14,6 +18,7 @@ import {
   createRegistrySession,
   createShellSession,
   createShellTask,
+  createTrafficProfile,
   createWorkerPairingToken,
   downloadBeaconBuildArtifact,
   downloadTaskResultArtifact,
@@ -28,10 +33,14 @@ import {
   getTaskResult,
   getTaskResults,
   getTasks,
+  getTrafficProfiles,
+  getTrafficProfileVersions,
   getTransportStatus,
   launchInfrastructureWorker,
   loginOperator,
+  rollbackTrafficProfile,
   shellSessionWebSocketUrl,
+  updateTrafficProfile,
 } from './api';
 import type {
   AuthSession,
@@ -253,6 +262,103 @@ describe('api client', () => {
     const [url] = firstFetchCall(fetchMock);
     expect(url).toBe('http://c2.local:8001/api/v1/transport');
     expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
+  });
+
+  it('calls C2 traffic profile endpoints with bearer auth', async () => {
+    const profilePayload = {
+      config: {
+        headers: { 'X-Profile': 'enabled' },
+        jitter: 0.2,
+        padding: { enabled: true, max_bytes: 24, min_bytes: 8 },
+        paths: {
+          frame: '/cdn-cgi/xero/{beacon_id}/frame',
+          poll: '/cdn-cgi/xero/{beacon_id}/collect',
+          register: '/cdn-cgi/xero/register',
+          websocket: '/cdn-cgi/xero/ws',
+        },
+        sleep_seconds: 30,
+        user_agent: 'Profile UA',
+      },
+      created_at: new Date().toISOString(),
+      current_version: 1,
+      description: 'Profile',
+      id: 'profile-one',
+      is_archived: false,
+      is_template: false,
+      name: 'Profile one',
+      template: 'custom',
+      updated_at: new Date().toISOString(),
+    };
+    const beaconPayload = {
+      architecture: 'amd64',
+      external_ip: null,
+      first_seen: new Date().toISOString(),
+      hostname: 'host-one',
+      id: 'beacon-one',
+      internal_ip: '10.0.0.10',
+      jitter: 0.2,
+      last_seen: new Date().toISOString(),
+      machine_fingerprint_hash: 'fingerprint-one',
+      os: 'Windows',
+      pid: 1234,
+      profile_id: 'profile-one',
+      profile_name: 'Profile one',
+      profile_template: 'custom',
+      profile_version: 1,
+      protocol_version: 1,
+      sleep_seconds: 30,
+      status: 'online',
+      transport_connected: false,
+      transport_last_seen: null,
+      transport_mode: 'rest',
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [profilePayload] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(profilePayload), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...profilePayload, current_version: 2 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ ...profilePayload, version: 1, profile_id: 'profile-one', created_by: 'operator' }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...profilePayload, name: 'Clone' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...profilePayload, current_version: 3 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...profilePayload, is_archived: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(beaconPayload), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...beaconPayload, profile_id: null, profile_name: null }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getTrafficProfiles('http://c2.local:8001/', 'c2-token');
+    await createTrafficProfile('http://c2.local:8001/', 'c2-token', {
+      config: profilePayload.config,
+      description: 'Profile',
+      name: 'Profile one',
+      template: 'custom',
+    });
+    await updateTrafficProfile('http://c2.local:8001/', 'c2-token', 'profile-one', {
+      config: profilePayload.config,
+      description: 'Updated',
+      name: 'Profile one',
+    });
+    await getTrafficProfileVersions('http://c2.local:8001/', 'c2-token', 'profile-one');
+    await cloneTrafficProfile('http://c2.local:8001/', 'c2-token', 'profile-one', 'Clone');
+    await rollbackTrafficProfile('http://c2.local:8001/', 'c2-token', 'profile-one', 1);
+    await archiveTrafficProfile('http://c2.local:8001/', 'c2-token', 'profile-one');
+    await assignBeaconTrafficProfile('http://c2.local:8001/', 'c2-token', 'beacon-one', 'profile-one');
+    await clearBeaconTrafficProfile('http://c2.local:8001/', 'c2-token', 'beacon-one');
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://c2.local:8001/api/v1/traffic-profiles');
+    expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
+    expect(fetchMock.mock.calls[1][0]).toBe('http://c2.local:8001/api/v1/traffic-profiles');
+    expect((fetchMock.mock.calls[1][1] as RequestInit).method).toBe('POST');
+    expect(fetchMock.mock.calls[2][0]).toBe('http://c2.local:8001/api/v1/traffic-profiles/profile-one');
+    expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe('PATCH');
+    expect(fetchMock.mock.calls[3][0]).toBe('http://c2.local:8001/api/v1/traffic-profiles/profile-one/versions');
+    expect(fetchMock.mock.calls[4][0]).toBe('http://c2.local:8001/api/v1/traffic-profiles/profile-one/clone');
+    expect(fetchMock.mock.calls[5][0]).toBe('http://c2.local:8001/api/v1/traffic-profiles/profile-one/rollback');
+    expect(fetchMock.mock.calls[6][0]).toBe('http://c2.local:8001/api/v1/traffic-profiles/profile-one');
+    expect((fetchMock.mock.calls[6][1] as RequestInit).method).toBe('DELETE');
+    expect(fetchMock.mock.calls[7][0]).toBe('http://c2.local:8001/api/v1/beacons/beacon-one/profile');
+    expect(JSON.parse((fetchMock.mock.calls[7][1] as RequestInit).body as string)).toEqual({ profile_id: 'profile-one' });
+    expect(fetchMock.mock.calls[8][0]).toBe('http://c2.local:8001/api/v1/beacons/beacon-one/profile');
+    expect((fetchMock.mock.calls[8][1] as RequestInit).method).toBe('DELETE');
   });
 
   it('calls C2 task endpoints with bearer auth', async () => {

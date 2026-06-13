@@ -115,6 +115,8 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert "sessions" in inspector.get_table_names()
     assert "registry_confirmations" in inspector.get_table_names()
     assert "registry_audit_events" in inspector.get_table_names()
+    assert "traffic_profiles" in inspector.get_table_names()
+    assert "traffic_profile_versions" in inspector.get_table_names()
     assert "protocol_version" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "protocol_peer_public_key_b64" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "transport_mode" in {column["name"] for column in inspector.get_columns("beacons")}
@@ -218,9 +220,22 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
         "result",
         "occurred_at",
     }.issubset(registry_audit_columns)
+    traffic_profile_columns = {column["name"] for column in inspector.get_columns("traffic_profiles")}
+    assert {
+        "name",
+        "template",
+        "description",
+        "current_version",
+        "is_template",
+        "is_archived",
+    }.issubset(traffic_profile_columns)
+    traffic_profile_version_columns = {column["name"] for column in inspector.get_columns("traffic_profile_versions")}
+    assert {"profile_id", "version", "config", "created_by"}.issubset(traffic_profile_version_columns)
+    beacon_columns = {column["name"] for column in inspector.get_columns("beacons")}
+    assert {"profile_id", "applied_profile_version", "profile_applied_at"}.issubset(beacon_columns)
     with engine.connect() as connection:
         context = MigrationContext.configure(connection, opts={"version_table": "c2_alembic_version"})
-        assert context.get_current_heads() == ("c2_0013_registry_sessions",)
+        assert context.get_current_heads() == ("c2_0014_traffic_profiles",)
 
 
 def test_generic_crud_helpers_work_with_service_models(tmp_path):

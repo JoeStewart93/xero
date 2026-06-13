@@ -28,6 +28,14 @@ class Beacon(BaseModel):
     external_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     pid: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="online", nullable=False)
+    profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("traffic_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    applied_profile_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    profile_applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     sleep_seconds: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
     jitter: Mapped[float] = mapped_column(Float, default=0.1, nullable=False)
     beacon_token_hash: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -41,6 +49,35 @@ class Beacon(BaseModel):
     transport_last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    profile: Mapped["TrafficProfile | None"] = relationship(foreign_keys=[profile_id])
+
+
+class TrafficProfile(BaseModel):
+    __tablename__ = "traffic_profiles"
+    __table_args__ = (UniqueConstraint("name", name="uq_traffic_profiles_name"),)
+
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    template: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    current_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    is_template: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+
+
+class TrafficProfileVersion(BaseModel):
+    __tablename__ = "traffic_profile_versions"
+    __table_args__ = (UniqueConstraint("profile_id", "version", name="uq_traffic_profile_versions_profile_version"),)
+
+    profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("traffic_profiles.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="system")
+    profile: Mapped[TrafficProfile] = relationship(foreign_keys=[profile_id])
 
 
 class BeaconEvent(BaseModel):

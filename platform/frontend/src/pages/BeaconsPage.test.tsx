@@ -13,7 +13,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 const apiMocks = vi.hoisted(() => ({
+  assignBeaconTrafficProfile: vi.fn(),
   cancelTask: vi.fn(),
+  clearBeaconTrafficProfile: vi.fn(),
   closeFileBrowserSession: vi.fn(),
   closeRegistrySession: vi.fn(),
   closeShellSession: vi.fn(),
@@ -24,6 +26,7 @@ const apiMocks = vi.hoisted(() => ({
   downloadTaskResultText: vi.fn(),
   getTaskResult: vi.fn(),
   getTasks: vi.fn(),
+  getTrafficProfiles: vi.fn(),
 }));
 
 const terminalMocks = vi.hoisted(() => ({
@@ -33,7 +36,9 @@ const terminalMocks = vi.hoisted(() => ({
 
 vi.mock('../api', async (importOriginal) => ({
   ...((await importOriginal()) as object),
+  assignBeaconTrafficProfile: apiMocks.assignBeaconTrafficProfile,
   cancelTask: apiMocks.cancelTask,
+  clearBeaconTrafficProfile: apiMocks.clearBeaconTrafficProfile,
   closeFileBrowserSession: apiMocks.closeFileBrowserSession,
   closeRegistrySession: apiMocks.closeRegistrySession,
   closeShellSession: apiMocks.closeShellSession,
@@ -44,6 +49,7 @@ vi.mock('../api', async (importOriginal) => ({
   downloadTaskResultText: apiMocks.downloadTaskResultText,
   getTaskResult: apiMocks.getTaskResult,
   getTasks: apiMocks.getTasks,
+  getTrafficProfiles: apiMocks.getTrafficProfiles,
 }));
 
 vi.mock('@xterm/xterm', () => ({
@@ -141,6 +147,31 @@ const beaconThree: Beacon = {
   transport_connected: false,
   transport_last_seen: '2026-06-08T14:04:30Z',
   transport_mode: 'long-poll',
+};
+
+const cloudfrontProfile = {
+  config: {
+    headers: { 'X-Profile': 'enabled' },
+    jitter: 0.25,
+    padding: { enabled: true, max_bytes: 96, min_bytes: 16 },
+    paths: {
+      frame: '/cdn-cgi/xero/{beacon_id}/frame',
+      poll: '/cdn-cgi/xero/{beacon_id}/collect',
+      register: '/cdn-cgi/xero/register',
+      websocket: '/cdn-cgi/xero/ws',
+    },
+    sleep_seconds: 30,
+    user_agent: 'Amazon CloudFront',
+  },
+  created_at: '2026-06-08T14:00:00Z',
+  current_version: 1,
+  description: 'CloudFront-like lab profile',
+  id: 'profile-cloudfront',
+  is_archived: false,
+  is_template: true,
+  name: 'CloudFront CDN',
+  template: 'cloudfront',
+  updated_at: '2026-06-08T14:00:00Z',
 };
 
 class FakeWebSocket {
@@ -330,6 +361,19 @@ describe('BeaconsPage', () => {
       updated_at: '2026-06-08T14:09:00Z',
     });
     apiMocks.downloadTaskResultText.mockResolvedValue(new Blob(['output line\n'], { type: 'text/plain' }));
+    apiMocks.getTrafficProfiles.mockResolvedValue({ items: [cloudfrontProfile] });
+    apiMocks.assignBeaconTrafficProfile.mockResolvedValue({
+      ...beaconOne,
+      applied_profile_version: 1,
+      jitter: 0.25,
+      profile_applied_at: null,
+      profile_id: cloudfrontProfile.id,
+      profile_name: cloudfrontProfile.name,
+      profile_template: cloudfrontProfile.template,
+      profile_version: 1,
+      sleep_seconds: 30,
+    });
+    apiMocks.clearBeaconTrafficProfile.mockResolvedValue({ ...beaconOne, profile_id: null, profile_name: null });
   });
 
   afterEach(() => {
@@ -401,6 +445,37 @@ describe('BeaconsPage', () => {
     expect(screen.getByTestId('beacon-detail-hostname').textContent).toBe('beacon-charlie');
     expect(screen.getByTestId('beacon-detail-transport-mode').textContent).toBe('Long-poll');
     expect(screen.getByTestId('beacon-detail-transport-state').textContent).toBe('Disconnected');
+  });
+
+  it('assigns a traffic profile from the beacon detail panel', async () => {
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 1,
+      beacons: [beaconOne],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 0,
+      status: 'connected',
+    });
+
+    renderBeaconsPage();
+
+    await waitFor(() => {
+      expect(apiMocks.getTrafficProfiles).toHaveBeenCalledWith('http://localhost:18001', 'c2-token');
+    });
+
+    fireEvent.change(screen.getByLabelText('Beacon traffic profile'), { target: { value: cloudfrontProfile.id } });
+
+    await waitFor(() => {
+      expect(apiMocks.assignBeaconTrafficProfile).toHaveBeenCalledWith(
+        'http://localhost:18001',
+        'c2-token',
+        beaconOne.id,
+        cloudfrontProfile.id,
+      );
+    });
+    expect(screen.getByText('Assigned CloudFront CDN.')).toBeTruthy();
+    expect(screen.getAllByText('CloudFront CDN / v1').length).toBeGreaterThan(0);
   });
 
   it('filters and sorts beacon rows', () => {

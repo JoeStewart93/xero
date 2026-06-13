@@ -12,6 +12,7 @@ import { ProjectsPage } from './pages/ProjectsPage';
 import { ReconPage } from './pages/ReconPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { StubSectionPage } from './pages/StubSectionPage';
+import { TrafficProfilesPage } from './pages/TrafficProfilesPage';
 import { useAuth } from './useAuth';
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -395,7 +396,7 @@ export function App() {
         path="/settings/profiles"
         element={
           <ProtectedRoute>
-            <StubSectionPage section="settings" tabId="profiles" />
+            <TrafficProfilesPage />
           </ProtectedRoute>
         }
       />

@@ -177,6 +177,300 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/traffic-profiles:
+    get:
+      tags:
+      - traffic-profiles
+      summary: List Traffic Profiles
+      operationId: list_traffic_profiles_api_v1_traffic_profiles_get
+      parameters:
+      - name: include_archived
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+          title: Include Archived
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrafficProfileListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - traffic-profiles
+      summary: Create Traffic Profile
+      operationId: create_traffic_profile_api_v1_traffic_profiles_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrafficProfileCreateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrafficProfileResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/traffic-profiles/{profile_id}:
+    get:
+      tags:
+      - traffic-profiles
+      summary: Get Traffic Profile
+      operationId: get_traffic_profile_api_v1_traffic_profiles__profile_id__get
+      parameters:
+      - name: profile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Profile Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrafficProfileResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - traffic-profiles
+      summary: Update Traffic Profile
+      operationId: update_traffic_profile_api_v1_traffic_profiles__profile_id__patch
+      parameters:
+      - name: profile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Profile Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrafficProfileUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrafficProfileResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - traffic-profiles
+      summary: Archive Traffic Profile
+      operationId: archive_traffic_profile_api_v1_traffic_profiles__profile_id__delete
+      parameters:
+      - name: profile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Profile Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrafficProfileResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/traffic-profiles/{profile_id}/clone:
+    post:
+      tags:
+      - traffic-profiles
+      summary: Clone Traffic Profile
+      operationId: clone_traffic_profile_api_v1_traffic_profiles__profile_id__clone_post
+      parameters:
+      - name: profile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Profile Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrafficProfileCloneRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrafficProfileResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/traffic-profiles/{profile_id}/versions:
+    get:
+      tags:
+      - traffic-profiles
+      summary: List Traffic Profile Versions
+      operationId: list_traffic_profile_versions_api_v1_traffic_profiles__profile_id__versions_get
+      parameters:
+      - name: profile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Profile Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrafficProfileVersionListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/traffic-profiles/{profile_id}/rollback:
+    post:
+      tags:
+      - traffic-profiles
+      summary: Rollback Traffic Profile
+      operationId: rollback_traffic_profile_api_v1_traffic_profiles__profile_id__rollback_post
+      parameters:
+      - name: profile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Profile Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrafficProfileRollbackRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrafficProfileResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/beacon-builds/targets:
     get:
       tags:
@@ -1204,6 +1498,81 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/beacons/{beacon_id}/profile:
+    put:
+      tags:
+      - beacons
+      summary: Assign Beacon Profile
+      operationId: assign_beacon_profile_api_v1_beacons__beacon_id__profile_put
+      parameters:
+      - name: beacon_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Beacon Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrafficProfileAssignRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeaconResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - beacons
+      summary: Clear Beacon Profile
+      operationId: clear_beacon_profile_api_v1_beacons__beacon_id__profile_delete
+      parameters:
+      - name: beacon_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Beacon Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeaconResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/beacons/{beacon_id}/poll:
     get:
       tags:
@@ -1616,6 +1985,12 @@ components:
         jitter:
           type: number
           title: Jitter
+        profile:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Profile
         beacon:
           $ref: '#/components/schemas/BeaconResponse'
       type: object
@@ -1700,6 +2075,12 @@ components:
           type: number
           title: Jitter
           default: 0.1
+        profile:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Profile
         beacon:
           $ref: '#/components/schemas/BeaconResponse'
       type: object
@@ -1740,6 +2121,45 @@ components:
         status:
           type: string
           title: Status
+        profile_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Profile Id
+        profile_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Profile Name
+        profile_template:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Profile Template
+        profile_version:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Profile Version
+        applied_profile_version:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Applied Profile Version
+        profile_applied_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Profile Applied At
+        sleep_seconds:
+          type: integer
+          title: Sleep Seconds
+          default: 30
+        jitter:
+          type: number
+          title: Jitter
+          default: 0.1
         protocol_version:
           anyOf:
           - type: integer
@@ -2836,6 +3256,184 @@ components:
       - created_at
       - updated_at
       title: TaskResultResponse
+    TrafficProfileAssignRequest:
+      properties:
+        profile_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Profile Id
+      type: object
+      title: TrafficProfileAssignRequest
+    TrafficProfileCloneRequest:
+      properties:
+        name:
+          anyOf:
+          - type: string
+            maxLength: 128
+            minLength: 1
+          - type: 'null'
+          title: Name
+      type: object
+      title: TrafficProfileCloneRequest
+    TrafficProfileCreateRequest:
+      properties:
+        config:
+          additionalProperties: true
+          type: object
+          title: Config
+        description:
+          anyOf:
+          - type: string
+            maxLength: 512
+          - type: 'null'
+          title: Description
+        name:
+          type: string
+          maxLength: 128
+          minLength: 1
+          title: Name
+        template:
+          type: string
+          maxLength: 64
+          minLength: 1
+          title: Template
+          default: custom
+      type: object
+      required:
+      - config
+      - name
+      title: TrafficProfileCreateRequest
+    TrafficProfileListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/TrafficProfileResponse'
+          type: array
+          title: Items
+      type: object
+      title: TrafficProfileListResponse
+    TrafficProfileResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        template:
+          type: string
+          title: Template
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        current_version:
+          type: integer
+          title: Current Version
+        is_template:
+          type: boolean
+          title: Is Template
+        is_archived:
+          type: boolean
+          title: Is Archived
+        config:
+          additionalProperties: true
+          type: object
+          title: Config
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - name
+      - template
+      - current_version
+      - is_template
+      - is_archived
+      - config
+      - created_at
+      - updated_at
+      title: TrafficProfileResponse
+    TrafficProfileRollbackRequest:
+      properties:
+        version:
+          type: integer
+          minimum: 1.0
+          title: Version
+      type: object
+      required:
+      - version
+      title: TrafficProfileRollbackRequest
+    TrafficProfileUpdateRequest:
+      properties:
+        config:
+          additionalProperties: true
+          type: object
+          title: Config
+        description:
+          anyOf:
+          - type: string
+            maxLength: 512
+          - type: 'null'
+          title: Description
+        name:
+          type: string
+          maxLength: 128
+          minLength: 1
+          title: Name
+      type: object
+      required:
+      - config
+      - name
+      title: TrafficProfileUpdateRequest
+    TrafficProfileVersionListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/TrafficProfileVersionResponse'
+          type: array
+          title: Items
+      type: object
+      title: TrafficProfileVersionListResponse
+    TrafficProfileVersionResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        profile_id:
+          type: string
+          title: Profile Id
+        version:
+          type: integer
+          title: Version
+        config:
+          additionalProperties: true
+          type: object
+          title: Config
+        created_by:
+          type: string
+          title: Created By
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - profile_id
+      - version
+      - config
+      - created_by
+      - created_at
+      title: TrafficProfileVersionResponse
     TransportStatusResponse:
       properties:
         active_websocket_connections:

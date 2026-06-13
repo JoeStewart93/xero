@@ -467,6 +467,103 @@ func TestRunOnceColdStartLongPollCanRestRegister(t *testing.T) {
 	}
 }
 
+func TestRunOnceAppliesTrafficProfileFromRestRegister(t *testing.T) {
+	serverPrivate, serverPublic := testProtocolKeys(t)
+	registered := make(chan bool, 1)
+	heartbeatPayloads := make(chan map[string]any, 1)
+	pollSeen := make(chan bool, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/beacons/register":
+			registered <- true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"beacon_id": "beacon-profile",
+				"beacon_token": "token-profile",
+				"profile": {
+					"id": "profile-one",
+					"name": "CloudFront CDN",
+					"template": "cloudfront",
+					"current_version": 2,
+					"config": {
+						"sleep_seconds": 7,
+						"jitter": 0.25,
+						"user_agent": "Profile UA",
+						"headers": {"X-Profile": "enabled"},
+						"paths": {
+							"frame": "/cdn-cgi/xero/{beacon_id}/frame",
+							"poll": "/cdn-cgi/xero/{beacon_id}/collect",
+							"register": "/cdn-cgi/xero/register",
+							"websocket": "/cdn-cgi/xero/ws"
+						},
+						"padding": {"enabled": true, "min_bytes": 8, "max_bytes": 8}
+					}
+				}
+			}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/cdn-cgi/xero/beacon-profile/frame":
+			if r.Header.Get("User-Agent") != "Profile UA" {
+				t.Errorf("unexpected frame user-agent %q", r.Header.Get("User-Agent"))
+			}
+			if r.Header.Get("X-Profile") != "enabled" {
+				t.Errorf("missing profile header %q", r.Header.Get("X-Profile"))
+			}
+			raw, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read body failed: %v", err)
+				return
+			}
+			decoded, err := xeroprotocol.Decode(raw, serverPrivate)
+			if err != nil {
+				t.Errorf("decode frame failed: %v", err)
+				return
+			}
+			heartbeatPayloads <- decoded.Payload
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/cdn-cgi/xero/beacon-profile/collect":
+			if r.Header.Get("User-Agent") != "Profile UA" {
+				t.Errorf("unexpected poll user-agent %q", r.Header.Get("User-Agent"))
+			}
+			if r.Header.Get("X-Profile") != "enabled" {
+				t.Errorf("missing poll profile header %q", r.Header.Get("X-Profile"))
+			}
+			pollSeen <- true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := testAgentConfig(t, server.URL, serverPublic)
+	cfg.Transport = "long-poll"
+	cfg.ColdStartRestFallback = true
+	agent, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !<-registered {
+		t.Fatal("expected REST registration")
+	}
+	payload := <-heartbeatPayloads
+	padding, err := base64.StdEncoding.DecodeString(stringValue(payload["traffic_padding_b64"]))
+	if err != nil {
+		t.Fatalf("expected encrypted payload padding: %v", err)
+	}
+	if len(padding) != 8 {
+		t.Fatalf("expected 8 bytes of profile padding, got %d", len(padding))
+	}
+	if !<-pollSeen {
+		t.Fatal("expected shaped long-poll request")
+	}
+	profile := agent.currentProfile()
+	if profile.SleepSeconds != 7 || profile.Jitter != 0.25 || profile.Version != 2 {
+		t.Fatalf("unexpected applied profile: %#v", profile)
+	}
+}
+
 func TestRunOnceRequiresSavedIdentityForLongPollFallback(t *testing.T) {
 	_, serverPublic := testProtocolKeys(t)
 	cfg := testAgentConfig(t, "http://127.0.0.1:1", serverPublic)

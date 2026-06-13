@@ -183,6 +183,31 @@ def register_beacon(client, **overrides) -> dict:
     return response.json()
 
 
+def traffic_profile_config(
+    *,
+    sleep_seconds: int = 11,
+    jitter: float = 0.15,
+    user_agent: str = "xero-profile-test",
+    frame_path: str = "/cdn-cgi/xero/{beacon_id}/frame",
+    poll_path: str = "/cdn-cgi/xero/{beacon_id}/collect",
+    register_path: str = "/cdn-cgi/xero/register",
+    websocket_path: str = "/cdn-cgi/xero/ws",
+) -> dict:
+    return {
+        "headers": {"X-Profile": "enabled"},
+        "jitter": jitter,
+        "padding": {"enabled": True, "max_bytes": 24, "min_bytes": 8},
+        "paths": {
+            "frame": frame_path,
+            "poll": poll_path,
+            "register": register_path,
+            "websocket": websocket_path,
+        },
+        "sleep_seconds": sleep_seconds,
+        "user_agent": user_agent,
+    }
+
+
 def create_shell_task(client, token: str, beacon_id: str, *, command: str = "whoami", priority: str = "normal") -> dict:
     response = client.post(
         "/api/v1/tasks",
@@ -251,6 +276,141 @@ def test_protocol_frame_harness_is_disabled_by_default(c2_client):
     )
 
     assert response.status_code == 403
+
+
+def test_traffic_profiles_can_version_assign_and_ack_effective_profile(c2_client):
+    token = connect_c2(c2_client)
+    auth = {"Authorization": f"Bearer {token}"}
+
+    templates = c2_client.get("/api/v1/traffic-profiles", headers=auth)
+    assert templates.status_code == 200
+    template_names = {item["name"] for item in templates.json()["items"]}
+    assert {"CloudFront CDN", "Google Analytics"}.issubset(template_names)
+
+    created = c2_client.post(
+        "/api/v1/traffic-profiles",
+        headers=auth,
+        json={
+            "config": traffic_profile_config(sleep_seconds=13, jitter=0.2, user_agent="First UA"),
+            "description": "Operator managed test profile.",
+            "name": "Operator CDN",
+            "template": "custom-cdn",
+        },
+    )
+    assert created.status_code == 200
+    profile = created.json()
+    assert profile["current_version"] == 1
+
+    updated = c2_client.patch(
+        f"/api/v1/traffic-profiles/{profile['id']}",
+        headers=auth,
+        json={
+            "config": traffic_profile_config(sleep_seconds=17, jitter=0.35, user_agent="Second UA"),
+            "description": "Updated profile.",
+            "name": "Operator CDN tuned",
+        },
+    )
+    assert updated.status_code == 200
+    profile = updated.json()
+    assert profile["current_version"] == 2
+
+    versions = c2_client.get(f"/api/v1/traffic-profiles/{profile['id']}/versions", headers=auth)
+    assert versions.status_code == 200
+    assert [item["version"] for item in versions.json()["items"]] == [2, 1]
+
+    registered = register_beacon(c2_client)
+    assigned = c2_client.put(
+        f"/api/v1/beacons/{registered['beacon_id']}/profile",
+        headers=auth,
+        json={"profile_id": profile["id"]},
+    )
+    assert assigned.status_code == 200
+    assigned_beacon = assigned.json()
+    assert assigned_beacon["profile_id"] == profile["id"]
+    assert assigned_beacon["profile_version"] == 2
+    assert assigned_beacon["sleep_seconds"] == 17
+    assert assigned_beacon["jitter"] == 0.35
+
+    heartbeat = c2_client.post(
+        f"/api/v1/beacons/{registered['beacon_id']}/heartbeat",
+        headers={"Authorization": f"Bearer {registered['beacon_token']}"},
+        json=register_payload(beacon_id=registered["beacon_id"]),
+    )
+    assert heartbeat.status_code == 200
+    heartbeat_payload = heartbeat.json()
+    assert heartbeat_payload["sleep"] == 17
+    assert heartbeat_payload["jitter"] == 0.35
+    assert heartbeat_payload["profile"]["id"] == profile["id"]
+    assert heartbeat_payload["profile"]["current_version"] == 2
+    assert heartbeat_payload["profile"]["config"]["user_agent"] == "Second UA"
+
+    archive_assigned = c2_client.delete(f"/api/v1/traffic-profiles/{profile['id']}", headers=auth)
+    assert archive_assigned.status_code == 409
+
+    rollback = c2_client.post(
+        f"/api/v1/traffic-profiles/{profile['id']}/rollback",
+        headers=auth,
+        json={"version": 1},
+    )
+    assert rollback.status_code == 200
+    rolled_back = rollback.json()
+    assert rolled_back["current_version"] == 3
+    assert rolled_back["config"]["sleep_seconds"] == 13
+
+    followup = c2_client.post(
+        f"/api/v1/beacons/{registered['beacon_id']}/heartbeat",
+        headers={"Authorization": f"Bearer {registered['beacon_token']}"},
+        json=register_payload(beacon_id=registered["beacon_id"]),
+    )
+    assert followup.status_code == 200
+    assert followup.json()["profile"]["current_version"] == 3
+    assert followup.json()["sleep"] == 13
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        beacon = session.get(Beacon, uuid.UUID(registered["beacon_id"]))
+
+    assert beacon is not None
+    assert beacon.applied_profile_version == 3
+    assert beacon.profile_applied_at is not None
+
+
+def test_traffic_profile_protocol_ack_and_alias_routes(protocol_c2_client):
+    token = connect_c2(protocol_c2_client)
+    auth = {"Authorization": f"Bearer {token}"}
+    created = protocol_c2_client.post(
+        "/api/v1/traffic-profiles",
+        headers=auth,
+        json={
+            "config": traffic_profile_config(sleep_seconds=19, jitter=0.1, user_agent="Alias UA"),
+            "description": "Alias route profile.",
+            "name": "Alias profile",
+            "template": "alias",
+        },
+    )
+    assert created.status_code == 200
+    profile = created.json()
+    registered = register_beacon(protocol_c2_client)
+    assign = protocol_c2_client.put(
+        f"/api/v1/beacons/{registered['beacon_id']}/profile",
+        headers=auth,
+        json={"profile_id": profile["id"]},
+    )
+    assert assign.status_code == 200
+
+    response = protocol_c2_client.post(
+        f"/cdn-cgi/xero/{registered['beacon_id']}/frame",
+        content=encode_protocol_test_frame(HEARTBEAT, {"beacon_id": registered["beacon_id"]}),
+        headers={"Authorization": f"Bearer {registered['beacon_token']}", "Content-Type": "application/octet-stream"},
+    )
+    ack = decode_protocol_response(response.content)
+
+    assert response.status_code == 200
+    assert ack["acknowledged_message_type"] == HEARTBEAT
+    assert ack["sleep"] == 19
+    assert ack["profile"]["id"] == profile["id"]
+    assert ack["profile"]["config"]["paths"]["frame"] == "/cdn-cgi/xero/{beacon_id}/frame"
 
 
 def test_beacon_build_targets_require_auth_and_list_supported_targets(c2_client):

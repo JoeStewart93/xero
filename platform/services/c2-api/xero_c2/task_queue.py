@@ -284,7 +284,14 @@ def task_event_type(status_value: str) -> str:
     return f"task.{status_value}"
 
 
-def encode_task_ack_frame(settings, beacon: Beacon, task: Task | None, *, transport: str) -> bytes:
+def encode_task_ack_frame(
+    settings,
+    beacon: Beacon,
+    task: Task | None,
+    *,
+    profile_fields: dict[str, Any] | None = None,
+    transport: str,
+) -> bytes:
     if not beacon.protocol_session_id or not beacon.protocol_peer_public_key_b64:
         raise ProtocolError("PROTOCOL_METADATA_REQUIRED", "Beacon protocol metadata is required for task delivery")
     try:
@@ -299,6 +306,8 @@ def encode_task_ack_frame(settings, beacon: Beacon, task: Task | None, *, transp
         "transport": transport,
         "task": task_delivery_payload(task) if task is not None else None,
     }
+    if profile_fields is not None:
+        payload.update(profile_fields)
     private_key = load_private_key(settings.protocol_private_key_b64)
     return encode_frame(
         private_key=private_key,

@@ -39,6 +39,7 @@ from xero_c2.task_results import (
     task_for_result_payload,
     task_result_event_payload,
 )
+from xero_c2.traffic_profiles import profile_ack_fields
 
 
 def protocol_supported_versions(settings) -> list[int]:
@@ -246,14 +247,16 @@ def process_protocol_register(
     beacon.transport_last_seen = now
     session.add(beacon)
     session.flush()
+    profile_fields = profile_ack_fields(session, settings, beacon)
     return beacon.id, {
         "status": "ok",
         "acknowledged_message_type": decoded.message_type,
         "beacon_id": str(beacon.id),
         "beacon_token": beacon_token,
         "selected_protocol_version": selected_version,
-        "sleep": beacon.sleep_seconds,
-        "jitter": beacon.jitter,
+        "sleep": profile_fields["sleep"],
+        "jitter": profile_fields["jitter"],
+        "profile": profile_fields["profile"],
         "transport": transport_mode,
         "event_type": "beacon.registered" if created else "beacon.status.changed",
     }
@@ -277,6 +280,7 @@ def process_protocol_frame(
         )
 
     beacon_id: uuid.UUID | None = None
+    beacon: Beacon | None = None
     raw_beacon_id = decoded.payload.get("beacon_id")
     if isinstance(raw_beacon_id, str):
         try:
@@ -320,6 +324,8 @@ def process_protocol_frame(
         "session_id": str(decoded.session_id),
         "transport": transport_mode,
     }
+    if beacon is not None:
+        ack_payload.update(profile_ack_fields(session, settings, beacon))
     if decoded.message_type == TASK_POLL:
         ack_payload["task"] = None
     if decoded.message_type == TASK_RESULT:

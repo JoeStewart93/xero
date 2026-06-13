@@ -29,7 +29,9 @@ import {
 import { createPortal } from 'react-dom';
 
 import {
+  assignBeaconTrafficProfile,
   cancelTask,
+  clearBeaconTrafficProfile,
   closeFileBrowserSession,
   closeShellSession,
   createFileBrowserSession,
@@ -38,6 +40,7 @@ import {
   downloadTaskResultText,
   getTaskResult,
   getTasks,
+  getTrafficProfiles,
 } from '../api';
 import type {
   Beacon,
@@ -48,6 +51,7 @@ import type {
   TaskPriority,
   TaskResult,
   TaskStatus,
+  TrafficProfile,
 } from '../api';
 import { AppShell } from '../components/AppShell';
 import { C2RequiredPanel } from '../components/C2RequiredPanel';
@@ -1178,16 +1182,48 @@ export function BeaconsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBeaconId, setSelectedBeaconId] = useState('');
   const [operationBeaconId, setOperationBeaconId] = useState('');
+  const [profileOverrides, setProfileOverrides] = useState<Record<string, Beacon>>({});
+  const [trafficProfiles, setTrafficProfiles] = useState<TrafficProfile[]>([]);
+  const [profileError, setProfileError] = useState('');
+  const [profileMessage, setProfileMessage] = useState('');
+  const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
+  const [assigningProfile, setAssigningProfile] = useState(false);
   const [sortKey, setSortKey] = useState<BeaconSortKey>(DEFAULT_BEACON_SORT_KEY);
   const [sortDirection, setSortDirection] = useState<BeaconSortDirection>(DEFAULT_BEACON_SORT_DIRECTION);
+  const visibleBeacons = useMemo(
+    () => realtime.beacons.map((beacon) => profileOverrides[beacon.id] ?? beacon),
+    [profileOverrides, realtime.beacons],
+  );
   const beacons = useMemo(
-    () => sortBeacons(realtime.beacons.filter((beacon) => searchBeacon(beacon, searchQuery.trim())), sortKey, sortDirection),
-    [realtime.beacons, searchQuery, sortDirection, sortKey],
+    () => sortBeacons(visibleBeacons.filter((beacon) => searchBeacon(beacon, searchQuery.trim())), sortKey, sortDirection),
+    [searchQuery, sortDirection, sortKey, visibleBeacons],
   );
   const selectedBeacon = beacons.find((beacon) => beacon.id === selectedBeaconId) ?? beacons[0] ?? null;
   const operationBeacon = beacons.find((beacon) => beacon.id === operationBeaconId) ?? null;
   const activeBeaconCount = realtime.beacons.filter((beacon) => beacon.status.toLowerCase() === 'online').length;
   const offlineBeaconCount = realtime.beacons.filter((beacon) => beacon.status.toLowerCase() === 'offline').length;
+
+  const loadTrafficProfiles = useCallback(async () => {
+    if (!connection) {
+      setTrafficProfiles([]);
+      return;
+    }
+    setIsLoadingProfiles(true);
+    try {
+      const response = await getTrafficProfiles(connection.baseUrl, connection.accessToken);
+      setTrafficProfiles(response.items);
+      setProfileError('');
+    } catch (caught) {
+      setProfileError(caught instanceof Error ? caught.message : 'Unable to load traffic profiles.');
+    } finally {
+      setIsLoadingProfiles(false);
+    }
+  }, [connection]);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => void loadTrafficProfiles(), 0);
+    return () => window.clearTimeout(handle);
+  }, [loadTrafficProfiles]);
 
   function handleSort(nextSortKey: BeaconSortKey): void {
     if (nextSortKey === sortKey) {
@@ -1228,6 +1264,26 @@ export function BeaconsPage() {
   function openBeaconOperations(beacon: Beacon): void {
     setSelectedBeaconId(beacon.id);
     setOperationBeaconId(beacon.id);
+  }
+
+  async function handleAssignProfile(profileId: string): Promise<void> {
+    if (!connection || !selectedBeacon) {
+      return;
+    }
+    setAssigningProfile(true);
+    setProfileError('');
+    setProfileMessage('');
+    try {
+      const updated = profileId
+        ? await assignBeaconTrafficProfile(connection.baseUrl, connection.accessToken, selectedBeacon.id, profileId)
+        : await clearBeaconTrafficProfile(connection.baseUrl, connection.accessToken, selectedBeacon.id);
+      setProfileOverrides((current) => ({ ...current, [updated.id]: updated }));
+      setProfileMessage(profileId ? `Assigned ${updated.profile_name ?? 'traffic profile'}.` : 'Cleared traffic profile assignment.');
+    } catch (caught) {
+      setProfileError(caught instanceof Error ? caught.message : 'Unable to update beacon profile.');
+    } finally {
+      setAssigningProfile(false);
+    }
   }
 
   function handleRowKeyDown(event: KeyboardEvent<HTMLTableRowElement>, beacon: Beacon): void {
@@ -1430,6 +1486,39 @@ export function BeaconsPage() {
                   <strong>{selectedBeacon.id}</strong>
                 </div>
 
+                <div className="beacon-profile-panel">
+                  <div>
+                    <strong>Traffic profile</strong>
+                    <span>
+                      {selectedBeacon.profile_name
+                        ? `${selectedBeacon.profile_name} / v${selectedBeacon.profile_version ?? '-'}`
+                        : 'Default bootstrap'}
+                    </span>
+                  </div>
+                  <label>
+                    <span>Assignment</span>
+                    <select
+                      aria-label="Beacon traffic profile"
+                      disabled={assigningProfile || isLoadingProfiles}
+                      onChange={(event) => void handleAssignProfile(event.target.value)}
+                      value={selectedBeacon.profile_id ?? ''}
+                    >
+                      <option value="">Default bootstrap</option>
+                      {trafficProfiles.map((profile) => (
+                        <option key={profile.id} value={profile.id}>
+                          {profile.name} / v{profile.current_version}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button className="secondary-button" disabled={isLoadingProfiles} onClick={() => void loadTrafficProfiles()} type="button">
+                    <RefreshCw aria-hidden="true" size={15} strokeWidth={2.1} />
+                    <span>{isLoadingProfiles ? 'Loading' : 'Profiles'}</span>
+                  </button>
+                </div>
+                {profileError ? <p className="task-queue-error" role="alert">{profileError}</p> : null}
+                {profileMessage ? <p className="profile-status-message">{profileMessage}</p> : null}
+
                 <div className="beacon-detail-grid">
                   <DetailRow label="Hostname" value={selectedBeacon.hostname} />
                   <DetailRow label="Operating system" value={selectedBeacon.os} />
@@ -1449,6 +1538,15 @@ export function BeaconsPage() {
                     label="Transport state"
                     testId="beacon-detail-transport-state"
                     value={transportState(selectedBeacon)}
+                  />
+                  <DetailRow label="Traffic profile" value={selectedBeacon.profile_name ?? 'Default bootstrap'} />
+                  <DetailRow
+                    label="Profile applied"
+                    value={selectedBeacon.applied_profile_version ? `v${selectedBeacon.applied_profile_version}` : null}
+                  />
+                  <DetailRow
+                    label="Sleep / jitter"
+                    value={`${selectedBeacon.sleep_seconds ?? 30}s / ${Math.round((selectedBeacon.jitter ?? 0.1) * 100)}%`}
                   />
                   <DetailRow label="Internal IP" value={selectedBeacon.internal_ip} />
                   <DetailRow label="External IP" value={selectedBeacon.external_ip} />

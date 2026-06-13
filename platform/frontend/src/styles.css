@@ -720,6 +720,12 @@ h2 {
   margin: 14px 0 0;
 }
 
+.alert-message--success {
+  border-color: rgba(52, 232, 139, 0.28);
+  background: rgba(52, 232, 139, 0.1);
+  color: #9bf6c1;
+}
+
 .error-text {
   margin-top: 14px;
 }
@@ -1145,6 +1151,220 @@ h2 {
   grid-template-columns: repeat(2, minmax(360px, 1fr));
   align-items: start;
   gap: 12px;
+}
+
+.traffic-profile-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 380px) minmax(520px, 1fr);
+  align-items: start;
+  gap: 12px;
+}
+
+.traffic-profile-list-panel,
+.traffic-profile-editor {
+  min-height: 100%;
+}
+
+.traffic-profile-actions {
+  margin-bottom: 10px;
+}
+
+.traffic-profile-list {
+  display: grid;
+  gap: 8px;
+}
+
+.traffic-profile-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(0, 231, 255, 0.16);
+  border-radius: 5px;
+  padding: 9px;
+  background: rgba(1, 5, 9, 0.62);
+  color: var(--xero-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.traffic-profile-row:hover,
+.traffic-profile-row.is-selected {
+  border-color: rgba(0, 231, 255, 0.48);
+  background: rgba(0, 231, 255, 0.09);
+}
+
+.traffic-profile-row span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.traffic-profile-row strong {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traffic-profile-row em,
+.traffic-profile-row > span:last-of-type,
+.traffic-profile-row small {
+  color: var(--xero-muted);
+  font-size: 11.5px;
+  font-style: normal;
+  font-weight: 720;
+  line-height: 15px;
+}
+
+.traffic-profile-row small {
+  grid-column: 1 / -1;
+  color: var(--xero-primary);
+}
+
+.traffic-profile-form,
+.traffic-profile-fieldset {
+  display: grid;
+  gap: 10px;
+}
+
+.traffic-profile-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.traffic-profile-form label,
+.traffic-profile-fieldset,
+.traffic-profile-padding-row label {
+  display: grid;
+  gap: 5px;
+  color: var(--xero-muted);
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 16px;
+}
+
+.traffic-profile-form input,
+.traffic-profile-form select,
+.traffic-profile-form textarea,
+.beacon-profile-panel select {
+  width: 100%;
+  border: 1px solid var(--xero-border);
+  border-radius: 5px;
+  padding: 8px 9px;
+  background: rgba(1, 5, 9, 0.78);
+  color: var(--xero-text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.traffic-profile-form textarea {
+  resize: vertical;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.traffic-profile-form input:focus,
+.traffic-profile-form select:focus,
+.traffic-profile-form textarea:focus,
+.beacon-profile-panel select:focus {
+  border-color: var(--xero-primary);
+  box-shadow: 0 0 0 3px var(--xero-primary-ring);
+  outline: none;
+}
+
+.traffic-profile-wide-field {
+  grid-column: 1 / -1;
+}
+
+.traffic-profile-padding-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 130px 130px;
+  align-items: end;
+  gap: 10px;
+}
+
+.traffic-profile-checkbox {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.traffic-profile-checkbox input {
+  width: 16px;
+}
+
+.traffic-profile-editor-actions,
+.traffic-profile-versions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.traffic-profile-preview {
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(0, 231, 255, 0.18);
+  border-radius: 5px;
+  padding: 9px;
+  background: rgba(1, 5, 9, 0.62);
+}
+
+.traffic-profile-preview strong {
+  color: var(--xero-text);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.traffic-profile-preview code {
+  overflow-wrap: anywhere;
+  color: var(--xero-muted-strong);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.traffic-profile-preview span {
+  color: var(--xero-muted);
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 16px;
+}
+
+.traffic-profile-versions {
+  justify-content: space-between;
+  margin-top: 12px;
+  border-top: 1px solid rgba(0, 231, 255, 0.14);
+  padding-top: 12px;
+}
+
+.traffic-profile-versions div {
+  display: grid;
+  gap: 2px;
+  margin-right: auto;
+}
+
+.traffic-profile-versions strong {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.traffic-profile-versions span {
+  color: var(--xero-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.traffic-profile-versions select {
+  width: min(100%, 330px);
+  border: 1px solid var(--xero-border);
+  border-radius: 5px;
+  padding: 8px 9px;
+  background: rgba(1, 5, 9, 0.78);
+  color: var(--xero-text);
+  font-size: 12.5px;
 }
 
 .infrastructure-panel {
@@ -2313,6 +2533,49 @@ h2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 10px;
+}
+
+.beacon-profile-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 250px) auto;
+  align-items: end;
+  gap: 8px;
+  margin-bottom: 10px;
+  border: 1px solid rgba(0, 231, 255, 0.18);
+  border-radius: 5px;
+  padding: 8px 9px;
+  background: rgba(1, 5, 9, 0.62);
+}
+
+.beacon-profile-panel > div,
+.beacon-profile-panel label {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.beacon-profile-panel strong {
+  color: var(--xero-text);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.beacon-profile-panel span {
+  overflow: hidden;
+  color: var(--xero-muted);
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-status-message {
+  margin: -2px 0 10px;
+  color: #9bf6c1;
+  font-size: 12px;
+  font-weight: 740;
+  line-height: 16px;
 }
 
 .beacon-detail-row {
@@ -4196,6 +4459,13 @@ h2 {
     grid-template-columns: 1fr;
   }
 
+  .traffic-profile-layout,
+  .traffic-profile-form-grid,
+  .traffic-profile-padding-row,
+  .beacon-profile-panel {
+    grid-template-columns: 1fr;
+  }
+
   .registry-target-bar {
     grid-template-columns: 1fr;
   }
@@ -4217,6 +4487,7 @@ h2 {
   .home-grid,
   .settings-grid,
   .infrastructure-grid,
+  .traffic-profile-layout,
   .protocol-observability-grid,
   .stub-workspace-grid {
     grid-template-columns: 1fr;

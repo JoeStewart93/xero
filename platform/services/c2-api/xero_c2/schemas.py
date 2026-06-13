@@ -240,6 +240,33 @@ class TransportStatusResponse(BaseModel):
     longpoll_max_frame_bytes: int
 
 
+class DashboardBeaconCountsResponse(BaseModel):
+    total: int
+    online: int
+    offline: int
+
+
+class DashboardActivityItemResponse(BaseModel):
+    id: str
+    type: str
+    label: str
+    occurred_at: datetime
+    beacon_id: str | None = None
+    task_id: str | None = None
+    status: str | None = None
+    detail: str | None = None
+
+
+class DashboardHealthCheckResponse(BaseModel):
+    status: str
+    error: str | None = None
+
+
+class DashboardHealthResponse(BaseModel):
+    status: Literal["ready", "degraded"]
+    checks: dict[str, DashboardHealthCheckResponse] = Field(default_factory=dict)
+
+
 TaskPriority = Literal["high", "low", "normal", "urgent"]
 TaskStatus = Literal["cancelled", "completed", "dispatched", "failed", "queued", "running"]
 ScanJobStatus = Literal["completed", "failed", "queued", "running"]
@@ -298,6 +325,14 @@ class TaskResponse(BaseModel):
 
 class TaskListResponse(BaseModel):
     items: list[TaskResponse] = Field(default_factory=list)
+
+
+class DashboardSummaryResponse(BaseModel):
+    generated_at: datetime
+    beacons: DashboardBeaconCountsResponse
+    recent_tasks: list[TaskResponse] = Field(default_factory=list)
+    recent_activity: list[DashboardActivityItemResponse] = Field(default_factory=list)
+    c2_health: DashboardHealthResponse
 
 
 class TaskAuditEventResponse(BaseModel):

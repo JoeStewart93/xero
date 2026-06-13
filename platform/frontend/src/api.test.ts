@@ -27,6 +27,7 @@ import {
   getBeaconBuilds,
   getBeaconBuildTargets,
   getCurrentOperator,
+  getDashboardSummary,
   getModules,
   getProtocolInfo,
   getProtocolSecurityEvents,
@@ -267,6 +268,35 @@ describe('api client', () => {
     const [url] = firstFetchCall(fetchMock);
     expect(url).toBe('http://c2.local:8001/api/v1/transport');
     expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
+  });
+
+  it('calls C2 dashboard summary endpoint with bearer auth', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          beacons: { offline: 1, online: 2, total: 3 },
+          c2_health: {
+            checks: {
+              postgres: { status: 'healthy' },
+              redis: { status: 'healthy' },
+            },
+            status: 'ready',
+          },
+          generated_at: new Date().toISOString(),
+          recent_activity: [],
+          recent_tasks: [],
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const summary = await getDashboardSummary('http://c2.local:8001/', 'c2-token');
+
+    const [url] = firstFetchCall(fetchMock);
+    expect(url).toBe('http://c2.local:8001/api/v1/dashboard/summary');
+    expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
+    expect(summary.beacons.total).toBe(3);
   });
 
   it('calls C2 module and scan job endpoints with bearer auth', async () => {

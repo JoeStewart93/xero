@@ -6,6 +6,8 @@ import { RealtimeContext } from './realtimeContext';
 import { useAuth } from './useAuth';
 import { useC2Connection } from './useC2Connection';
 
+const MAX_SEEN_EVENT_IDS = 500;
+
 function beaconFromEvent(event: OperatorRealtimeEvent): Beacon | null {
   const beacon = event.data.beacon;
   if (!beacon || typeof beacon !== 'object') {
@@ -59,6 +61,12 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
           return;
         }
         seenEventIds.current.add(event.id);
+        if (seenEventIds.current.size > MAX_SEEN_EVENT_IDS) {
+          const oldest = seenEventIds.current.values().next().value;
+          if (oldest) {
+            seenEventIds.current.delete(oldest);
+          }
+        }
         setLatestEvent(event);
         const beacon = beaconFromEvent(event);
         if (beacon) {

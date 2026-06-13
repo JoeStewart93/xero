@@ -84,6 +84,34 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/dashboard/summary:
+    get:
+      tags:
+      - dashboard
+      summary: Dashboard Summary
+      operationId: dashboard_summary_api_v1_dashboard_summary_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardSummaryResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/transport:
     get:
       tags:
@@ -2443,6 +2471,122 @@ components:
       - service_role
       - status
       title: C2SessionResponse
+    DashboardActivityItemResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        type:
+          type: string
+          title: Type
+        label:
+          type: string
+          title: Label
+        occurred_at:
+          type: string
+          format: date-time
+          title: Occurred At
+        beacon_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Beacon Id
+        task_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Task Id
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+        detail:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Detail
+      type: object
+      required:
+      - id
+      - type
+      - label
+      - occurred_at
+      title: DashboardActivityItemResponse
+    DashboardBeaconCountsResponse:
+      properties:
+        total:
+          type: integer
+          title: Total
+        online:
+          type: integer
+          title: Online
+        offline:
+          type: integer
+          title: Offline
+      type: object
+      required:
+      - total
+      - online
+      - offline
+      title: DashboardBeaconCountsResponse
+    DashboardHealthCheckResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      type: object
+      required:
+      - status
+      title: DashboardHealthCheckResponse
+    DashboardHealthResponse:
+      properties:
+        status:
+          type: string
+          enum:
+          - ready
+          - degraded
+          title: Status
+        checks:
+          additionalProperties:
+            $ref: '#/components/schemas/DashboardHealthCheckResponse'
+          type: object
+          title: Checks
+      type: object
+      required:
+      - status
+      title: DashboardHealthResponse
+    DashboardSummaryResponse:
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+          title: Generated At
+        beacons:
+          $ref: '#/components/schemas/DashboardBeaconCountsResponse'
+        recent_tasks:
+          items:
+            $ref: '#/components/schemas/TaskResponse'
+          type: array
+          title: Recent Tasks
+        recent_activity:
+          items:
+            $ref: '#/components/schemas/DashboardActivityItemResponse'
+          type: array
+          title: Recent Activity
+        c2_health:
+          $ref: '#/components/schemas/DashboardHealthResponse'
+      type: object
+      required:
+      - generated_at
+      - beacons
+      - c2_health
+      title: DashboardSummaryResponse
     FileBrowserSessionCreateRequest:
       properties:
         beacon_id:

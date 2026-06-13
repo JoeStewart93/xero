@@ -54,6 +54,7 @@ from xero_c2.beacon_longpoll import (
 from xero_c2.beacon_transport import BeaconTransportManager
 from xero_c2.beacon_websocket import run_beacon_websocket
 from xero_c2.config import get_settings
+from xero_c2.dashboard import public_dashboard_summary
 from xero_c2.infrastructure_workers import (
     WORKER_ORIGIN_C2_MANAGED,
     WORKER_ORIGIN_EMBEDDED,
@@ -137,6 +138,7 @@ from xero_c2.schemas import (
     C2ConnectRequest,
     C2ConnectResponse,
     C2SessionResponse,
+    DashboardSummaryResponse,
     FileBrowserSessionCreateRequest,
     FileBrowserSessionResponse,
     InfrastructureWorkerListResponse,
@@ -691,6 +693,16 @@ def create_app() -> FastAPI:
     def c2_session(authorization: Annotated[str | None, Header()] = None) -> C2SessionResponse:
         authorize_c2_token(settings, authorization)
         return C2SessionResponse(service=settings.service_name, service_role=settings.service_role, status="connected")
+
+    @api_router.get("/dashboard/summary", response_model=DashboardSummaryResponse, tags=["dashboard"])
+    def dashboard_summary(
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> DashboardSummaryResponse:
+        authorize_c2_token(settings, authorization)
+        return DashboardSummaryResponse(
+            **public_dashboard_summary(session, c2_health=c2_readiness_report(settings))
+        )
 
     @api_router.get("/transport", response_model=TransportStatusResponse, tags=["transport"])
     def transport_status(

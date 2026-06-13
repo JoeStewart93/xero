@@ -7,9 +7,11 @@ import {
   getScanJob,
   getScanJobs,
   ModuleDefinition,
+  PortScanResultRecord,
   PortScanArgs,
   ScanJob,
-  ScanResultRecord,
+  ServiceEnumArgs,
+  ServiceEnumResultRecord,
 } from '../api';
 import { AppShell } from '../components/AppShell';
 import { C2RequiredPanel } from '../components/C2RequiredPanel';
@@ -79,6 +81,73 @@ function resultStateLabel(result: ScanResultRecord): string {
   return `${result.host}:${result.port}`;
 }
 
+type ScanResultRecord = PortScanResultRecord | ServiceEnumResultRecord;
+
+function isPortScanArgs(args: ScanJob['args']): args is PortScanArgs {
+  return 'targets' in args && 'port_range' in args;
+}
+
+function isServiceEnumArgs(args: ScanJob['args']): args is ServiceEnumArgs {
+  return 'host' in args && 'ports' in args;
+}
+
+function isPortScanResult(result: ScanResultRecord): result is PortScanResultRecord {
+  return 'state' in result;
+}
+
+function isServiceEnumResult(result: ScanResultRecord): result is ServiceEnumResultRecord {
+  return 'service_guess' in result;
+}
+
+function portScanResults(job: ScanJob | null): PortScanResultRecord[] {
+  if (!job || job.module !== 'builtin.portscan') {
+    return [];
+  }
+  return job.results.filter(isPortScanResult);
+}
+
+function serviceEnumResults(job: ScanJob | null): ServiceEnumResultRecord[] {
+  if (!job || job.module !== 'builtin.serviceenum') {
+    return [];
+  }
+  return job.results.filter(isServiceEnumResult);
+}
+
+function scanJobTitle(job: ScanJob): string {
+  if (isPortScanArgs(job.args)) {
+    return job.args.targets.join(', ');
+  }
+  if (isServiceEnumArgs(job.args)) {
+    return job.args.host;
+  }
+  return job.module;
+}
+
+function scanJobSubtitle(job: ScanJob): string {
+  if (isPortScanArgs(job.args)) {
+    return `${job.args.port_range} / ${formatDate(job.queued_at)}`;
+  }
+  if (isServiceEnumArgs(job.args)) {
+    return `${job.args.ports.join(', ')} / ${formatDate(job.queued_at)}`;
+  }
+  return formatDate(job.queued_at);
+}
+
+function tlsExpiryState(result: ServiceEnumResultRecord): 'critical' | 'warning' | '' {
+  if (!result.tls?.not_after) {
+    return '';
+  }
+  const expiresAt = Date.parse(result.tls.not_after);
+  if (!Number.isFinite(expiresAt)) {
+    return '';
+  }
+  const daysUntilExpiry = (expiresAt - Date.now()) / 86_400_000;
+  if (daysUntilExpiry < 0) {
+    return 'critical';
+  }
+  return daysUntilExpiry <= 30 ? 'warning' : '';
+}
+
 export function ReconPage() {
   const { connection } = useC2Connection();
   const realtime = useRealtime();
@@ -90,12 +159,16 @@ export function ReconPage() {
   const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [serviceEnumPending, setServiceEnumPending] = useState('');
   const selectedJob = useMemo(
     () => jobs.find((job) => job.id === selectedJobId) ?? jobs[0] ?? null,
     [jobs, selectedJobId],
   );
   const portscanModule = modules.find((module) => module.id === 'builtin.portscan');
-  const openResults = selectedJob?.results.filter((result) => result.state === 'open') ?? [];
+  const serviceenumModule = modules.find((module) => module.id === 'builtin.serviceenum');
+  const selectedPortScanResults = portScanResults(selectedJob);
+  const selectedServiceEnumResults = serviceEnumResults(selectedJob);
+  const openResults = selectedPortScanResults.filter((result) => result.state === 'open');
 
   const loadReconState = useCallback(async () => {
     if (!connection) {
@@ -184,6 +257,32 @@ export function ReconPage() {
       setError(caught instanceof Error ? caught.message : 'Unable to queue port scan.');
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleServiceEnum(result: PortScanResultRecord): Promise<void> {
+    if (!connection || !selectedJob) {
+      return;
+    }
+    const pendingKey = `${result.host}:${result.port}`;
+    setServiceEnumPending(pendingKey);
+    setError('');
+    setMessage('');
+    try {
+      const created = await createScanJob(connection.baseUrl, connection.accessToken, 'builtin.serviceenum', {
+        execution_target: 'auto',
+        host: result.host,
+        ports: [result.port],
+        probe_timeout_ms: 1000,
+        source_scan_job_id: selectedJob.id,
+      });
+      setJobs((current) => [created, ...current.filter((job) => job.id !== created.id)]);
+      setSelectedJobId(created.id);
+      setMessage('Service enumeration queued.');
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to queue service enumeration.');
+    } finally {
+      setServiceEnumPending('');
     }
   }
 
@@ -290,8 +389,8 @@ export function ReconPage() {
                     type="button"
                   >
                     <span>
-                      <strong>{job.args.targets.join(', ')}</strong>
-                      <em>{job.args.port_range} / {formatDate(job.queued_at)}</em>
+                      <strong>{scanJobTitle(job)}</strong>
+                      <em>{job.module === 'builtin.serviceenum' ? 'Service enum' : 'Port scan'} / {scanJobSubtitle(job)}</em>
                     </span>
                     <small className={`scan-status scan-status--${job.status}`}>{job.status}</small>
                   </button>
@@ -304,7 +403,7 @@ export function ReconPage() {
             <div className="panel-header">
               <div>
                 <h2>Result</h2>
-                <p className="muted-text">{selectedJob ? selectedJob.id : 'No job selected'}</p>
+                <p className="muted-text">{selectedJob ? `${selectedJob.module} / ${selectedJob.id}` : 'No job selected'}</p>
               </div>
             </div>
             {selectedJob ? (
@@ -320,12 +419,12 @@ export function ReconPage() {
                 </div>
                 <div className="scan-summary-grid">
                   <div>
-                    <span>Open</span>
-                    <strong>{selectedJob.summary.open_count ?? openResults.length}</strong>
+                    <span>{selectedJob.module === 'builtin.serviceenum' ? 'Identified' : 'Open'}</span>
+                    <strong>{selectedJob.module === 'builtin.serviceenum' ? selectedJob.summary.identified_count ?? selectedServiceEnumResults.length : selectedJob.summary.open_count ?? openResults.length}</strong>
                   </div>
                   <div>
                     <span>Ports</span>
-                    <strong>{selectedJob.summary.ports_scanned ?? selectedJob.progress_total}</strong>
+                    <strong>{selectedJob.summary.ports_scanned ?? selectedJob.summary.ports_enumerated ?? selectedJob.progress_total}</strong>
                   </div>
                   <div>
                     <span>Duration</span>
@@ -337,31 +436,94 @@ export function ReconPage() {
                   </div>
                 </div>
                 {selectedJob.error_message ? <p className="task-queue-error" role="alert">{selectedJob.error_message}</p> : null}
+                {selectedJob.module === 'builtin.portscan' && openResults.length > 0 ? (
+                  <div className="recon-followup-strip">
+                    <strong>{serviceenumModule?.name ?? 'Service Enumeration'}</strong>
+                    <span>Run banner, HTTP, and TLS probes against open ports.</span>
+                  </div>
+                ) : null}
                 <div className="scan-result-table-wrap">
-                  <table className="scan-result-table">
-                    <thead>
-                      <tr>
-                        <th>Endpoint</th>
-                        <th>State</th>
-                        <th>Latency</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedJob.results.length === 0 ? (
+                  {selectedJob.module === 'builtin.serviceenum' ? (
+                    <table className="scan-result-table service-enum-table">
+                      <thead>
                         <tr>
-                          <td colSpan={3}>No result rows yet.</td>
+                          <th>Endpoint</th>
+                          <th>Service</th>
+                          <th>Evidence</th>
+                          <th>TLS</th>
                         </tr>
-                      ) : (
-                        selectedJob.results.map((result) => (
-                          <tr className={result.state === 'open' ? 'is-open' : ''} key={`${result.host}-${result.port}`}>
-                            <td>{resultStateLabel(result)}</td>
-                            <td>{result.state}</td>
-                            <td>{result.latency_ms}ms</td>
+                      </thead>
+                      <tbody>
+                        {selectedServiceEnumResults.length === 0 ? (
+                          <tr>
+                            <td colSpan={4}>No service rows yet.</td>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                        ) : (
+                          selectedServiceEnumResults.map((result) => {
+                            const expiryState = tlsExpiryState(result);
+                            return (
+                              <tr className={result.status === 'identified' ? 'is-open' : ''} key={`${result.host}-${result.port}`}>
+                                <td>{resultStateLabel(result)}</td>
+                                <td>
+                                  <span className="service-guess">{result.service_guess}</span>
+                                  <small>{Math.round(result.confidence * 100)}% confidence</small>
+                                </td>
+                                <td>{result.banner || result.evidence[0]?.value || result.status}</td>
+                                <td>
+                                  {result.tls ? (
+                                    <span className={`tls-expiry-badge ${expiryState ? `tls-expiry-badge--${expiryState}` : ''}`}>
+                                      {result.tls.subject_cn ?? 'TLS'} / {formatDate(result.tls.not_after)}
+                                    </span>
+                                  ) : (
+                                    <span className="muted-text">-</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <table className="scan-result-table">
+                      <thead>
+                        <tr>
+                          <th>Endpoint</th>
+                          <th>State</th>
+                          <th>Latency</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedPortScanResults.length === 0 ? (
+                          <tr>
+                            <td colSpan={4}>No result rows yet.</td>
+                          </tr>
+                        ) : (
+                          selectedPortScanResults.map((result) => {
+                            const pendingKey = `${result.host}:${result.port}`;
+                            return (
+                              <tr className={result.state === 'open' ? 'is-open' : ''} key={`${result.host}-${result.port}`}>
+                                <td>{resultStateLabel(result)}</td>
+                                <td>{result.state}</td>
+                                <td>{result.latency_ms}ms</td>
+                                <td>
+                                  <button
+                                    className="inline-action-button"
+                                    disabled={result.state !== 'open' || Boolean(serviceEnumPending)}
+                                    onClick={() => void handleServiceEnum(result)}
+                                    type="button"
+                                  >
+                                    {serviceEnumPending === pendingKey ? 'Queueing' : 'Enum'}
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  )}
                 </div>
               </>
             ) : (

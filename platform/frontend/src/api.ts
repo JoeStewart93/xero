@@ -389,6 +389,7 @@ export interface ModuleDefinition {
   execution_kind: string;
   id: string;
   name: string;
+  required_capabilities: string[];
   result_schema: Record<string, unknown>;
   source: string;
   supported_execution_targets: string[];
@@ -400,7 +401,9 @@ export interface ModuleListResponse {
 }
 
 export type ScanJobStatus = 'completed' | 'failed' | 'queued' | 'running';
+export type ScanModuleId = 'builtin.portscan' | 'builtin.serviceenum';
 export type ScanResultState = 'closed' | 'filtered' | 'open';
+export type ServiceEnumStatus = 'error' | 'identified' | 'skipped' | 'timeout' | 'unknown';
 
 export interface PortScanArgs {
   execution_target?: 'auto';
@@ -410,36 +413,81 @@ export interface PortScanArgs {
   timeout_ms?: number;
 }
 
-export interface ScanResultRecord {
+export interface ServiceEnumArgs {
+  execution_target?: 'auto';
+  host: string;
+  max_threads?: number;
+  ports: number[];
+  probe_timeout_ms?: number;
+  source_scan_job_id?: string | null;
+}
+
+export type ScanJobArgs = PortScanArgs | ServiceEnumArgs;
+
+export interface PortScanResultRecord {
   host: string;
   latency_ms: number;
   port: number;
   state: ScanResultState;
 }
 
+export interface ServiceEnumTls {
+  issuer_cn: string | null;
+  not_after: string;
+  not_before: string;
+  sans: string[];
+  serial_number: string;
+  subject_cn: string | null;
+}
+
+export interface ServiceEnumEvidence {
+  type: string;
+  value: string;
+}
+
+export interface ServiceEnumResultRecord {
+  banner: string;
+  confidence: number;
+  error: string | null;
+  evidence: ServiceEnumEvidence[];
+  host: string;
+  latency_ms: number;
+  port: number;
+  service_guess: string;
+  status: ServiceEnumStatus;
+  tls: ServiceEnumTls | null;
+  transport: 'tcp';
+}
+
+export type ScanResultRecord = PortScanResultRecord | ServiceEnumResultRecord;
+
 export interface ScanJob {
   actor_subject: string;
-  args: PortScanArgs;
+  args: ScanJobArgs;
   completed_at: string | null;
   created_at: string;
   error_message: string | null;
   execution_target_requested: string;
   execution_target_resolved: string;
   id: string;
-  module: string;
+  module: ScanModuleId | string;
   progress_completed: number;
   progress_total: number;
   queued_at: string;
   results: ScanResultRecord[];
   started_at: string | null;
-  state_counts: Record<ScanResultState, number>;
+  state_counts: Record<string, number>;
   status: ScanJobStatus;
   summary: {
     duration_ms?: number;
+    host?: string;
     hosts_scanned?: number;
+    identified_count?: number;
     open_count?: number;
+    ports_enumerated?: number;
     ports_scanned?: number;
-    state_counts?: Record<ScanResultState, number>;
+    source_scan_job_id?: string | null;
+    state_counts?: Record<string, number>;
   };
   updated_at: string;
   worker_id: string | null;
@@ -456,7 +504,7 @@ export interface ScanResultChunk {
   kind: 'progress' | 'summary';
   payload: {
     results?: ScanResultRecord[];
-    state_counts?: Record<ScanResultState, number>;
+    state_counts?: Record<string, number>;
     summary?: ScanJob['summary'];
   };
   probes_completed: number;
@@ -847,12 +895,24 @@ export async function getModules(baseUrl: string, accessToken: string): Promise<
   return c2Fetch<ModuleListResponse>(baseUrl, accessToken, '/api/v1/modules');
 }
 
-export async function createScanJob(baseUrl: string, accessToken: string, args: PortScanArgs): Promise<ScanJob> {
+export async function createScanJob(baseUrl: string, accessToken: string, args: PortScanArgs): Promise<ScanJob>;
+export async function createScanJob(baseUrl: string, accessToken: string, module: ScanModuleId, args: ScanJobArgs): Promise<ScanJob>;
+export async function createScanJob(
+  baseUrl: string,
+  accessToken: string,
+  moduleOrArgs: ScanModuleId | PortScanArgs,
+  maybeArgs?: ScanJobArgs,
+): Promise<ScanJob> {
+  const module = typeof moduleOrArgs === 'string' ? moduleOrArgs : 'builtin.portscan';
+  const args = typeof moduleOrArgs === 'string' ? maybeArgs : moduleOrArgs;
+  if (!args) {
+    throw new Error('Scan job args are required.');
+  }
   return c2Fetch<ScanJob>(baseUrl, accessToken, '/api/v1/scan-jobs', {
     method: 'POST',
     body: JSON.stringify({
       args: { ...args, execution_target: args.execution_target ?? 'auto' },
-      module: 'builtin.portscan',
+      module,
     }),
   });
 }

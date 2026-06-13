@@ -79,7 +79,10 @@ function renderPage() {
 describe('ReconPage', () => {
   beforeEach(() => {
     apiMocks.getModules.mockResolvedValue({
-      items: [{ id: 'builtin.portscan', name: 'Port Scan', version: '0.1.0' }],
+      items: [
+        { id: 'builtin.portscan', name: 'Port Scan', version: '0.1.0' },
+        { id: 'builtin.serviceenum', name: 'Service Enumeration', version: '0.1.0' },
+      ],
     });
     apiMocks.getScanJobs.mockResolvedValue({ items: [completedScan] });
     apiMocks.getScanJob.mockResolvedValue(completedScan);
@@ -120,7 +123,7 @@ describe('ReconPage', () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText('scan-one')).toBeTruthy();
+      expect(screen.getByText(/scan-one/)).toBeTruthy();
     });
     expect(screen.getByText('127.0.0.1:80')).toBeTruthy();
     expect(within(screen.getByRole('table')).getByText('open')).toBeTruthy();
@@ -140,5 +143,95 @@ describe('ReconPage', () => {
         }),
       );
     });
+  });
+
+  it('queues service enumeration from an open port scan result', async () => {
+    apiMocks.createScanJob.mockResolvedValue({
+      ...completedScan,
+      args: {
+        execution_target: 'auto',
+        host: '127.0.0.1',
+        ports: [80],
+        probe_timeout_ms: 1000,
+        source_scan_job_id: 'scan-one',
+      },
+      id: 'service-enum-one',
+      module: 'builtin.serviceenum',
+      results: [],
+      status: 'queued',
+      summary: {},
+    });
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('127.0.0.1:80')).toBeTruthy();
+    });
+    const enumButton = screen.getAllByRole('button', { name: 'Enum' }).find((button) => !(button as HTMLButtonElement).disabled);
+    expect(enumButton).toBeTruthy();
+    fireEvent.click(enumButton as HTMLButtonElement);
+
+    await waitFor(() => {
+      expect(apiMocks.createScanJob).toHaveBeenCalledWith(
+        'http://localhost:18001',
+        'c2-token',
+        'builtin.serviceenum',
+        expect.objectContaining({
+          execution_target: 'auto',
+          host: '127.0.0.1',
+          ports: [80],
+          source_scan_job_id: 'scan-one',
+        }),
+      );
+    });
+  });
+
+  it('renders service enumeration details and TLS expiry warning', async () => {
+    apiMocks.getScanJobs.mockResolvedValue({
+      items: [
+        {
+          ...completedScan,
+          args: {
+            execution_target: 'auto',
+            host: '127.0.0.1',
+            ports: [443],
+            probe_timeout_ms: 1000,
+            source_scan_job_id: 'scan-one',
+          },
+          id: 'service-enum-one',
+          module: 'builtin.serviceenum',
+          results: [
+            {
+              banner: '',
+              confidence: 0.9,
+              error: null,
+              evidence: [{ type: 'http.response', value: 'HTTP/1.1 200 OK' }],
+              host: '127.0.0.1',
+              latency_ms: 4.2,
+              port: 443,
+              service_guess: 'https',
+              status: 'identified',
+              tls: {
+                issuer_cn: 'lab.local',
+                not_after: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+                not_before: '2026-06-13T00:00:00Z',
+                sans: ['lab.local'],
+                serial_number: '123',
+                subject_cn: 'lab.local',
+              },
+              transport: 'tcp',
+            },
+          ],
+          state_counts: { error: 0, identified: 1, skipped: 0, timeout: 0, unknown: 0 },
+          summary: { duration_ms: 8.4, host: '127.0.0.1', identified_count: 1, ports_enumerated: 1 },
+        },
+      ],
+    });
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('https')).toBeTruthy();
+    });
+    expect(screen.getByText('90% confidence')).toBeTruthy();
+    expect(screen.getByText(/lab.local/).className).toContain('tls-expiry-badge--warning');
   });
 });

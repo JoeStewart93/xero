@@ -172,8 +172,8 @@ paths:
     post:
       tags:
       - scan-jobs
-      summary: Create Port Scan Job
-      operationId: create_port_scan_job_api_v1_scan_jobs_post
+      summary: Create Scan Job Route
+      operationId: create_scan_job_route_api_v1_scan_jobs_post
       parameters:
       - name: authorization
         in: header
@@ -2672,6 +2672,11 @@ components:
             type: string
           type: array
           title: Supported Execution Targets
+        required_capabilities:
+          items:
+            type: string
+          type: array
+          title: Required Capabilities
         args_schema:
           additionalProperties: true
           type: object
@@ -2930,7 +2935,8 @@ components:
       properties:
         module:
           type: string
-          const: builtin.portscan
+          maxLength: 64
+          minLength: 1
           title: Module
         args:
           additionalProperties: true

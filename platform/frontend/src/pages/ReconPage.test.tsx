@@ -15,6 +15,7 @@ const apiMocks = vi.hoisted(() => ({
   getModules: vi.fn(),
   getScanJob: vi.fn(),
   getScanJobs: vi.fn(),
+  getScanResultChunks: vi.fn(),
 }));
 
 vi.mock('../useC2Connection', () => ({
@@ -35,6 +36,7 @@ vi.mock('../api', async (importOriginal) => ({
   getModules: apiMocks.getModules,
   getScanJob: apiMocks.getScanJob,
   getScanJobs: apiMocks.getScanJobs,
+  getScanResultChunks: apiMocks.getScanResultChunks,
 }));
 
 const completedScan = {
@@ -86,6 +88,7 @@ describe('ReconPage', () => {
     });
     apiMocks.getScanJobs.mockResolvedValue({ items: [completedScan] });
     apiMocks.getScanJob.mockResolvedValue(completedScan);
+    apiMocks.getScanResultChunks.mockResolvedValue({ items: [] });
     apiMocks.createScanJob.mockResolvedValue({ ...completedScan, id: 'scan-two', status: 'queued' });
     mocks.useC2Connection.mockReturnValue({
       connection: {
@@ -233,5 +236,41 @@ describe('ReconPage', () => {
     });
     expect(screen.getByText('90% confidence')).toBeTruthy();
     expect(screen.getByText(/lab.local/).className).toContain('tls-expiry-badge--warning');
+  });
+
+  it('renders line-by-line port scan progress chunks', async () => {
+    apiMocks.getScanResultChunks.mockResolvedValue({
+      items: [
+        {
+          created_at: '2026-06-13T05:00:01Z',
+          emitted_at: '2026-06-13T05:00:01Z',
+          id: 'chunk-one',
+          kind: 'progress',
+          payload: {
+            results: [
+              { host: '127.0.0.1', latency_ms: 2.5, port: 80, state: 'open' },
+              { host: '127.0.0.1', latency_ms: 1.1, port: 443, state: 'closed' },
+            ],
+            state_counts: { closed: 1, filtered: 0, open: 1 },
+          },
+          probes_completed: 2,
+          probes_total: 2,
+          scan_job_id: 'scan-one',
+          sequence: 1,
+        },
+      ],
+    });
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/scan-one/)).toBeTruthy();
+    });
+
+    await waitFor(() => {
+      const output = screen.getByTestId('stream-output-buffer').textContent;
+      expect(output).toContain('[1] 2/2 127.0.0.1:80 open 2.5ms');
+      expect(output).toContain('[1] 2/2 127.0.0.1:443 closed 1.1ms');
+    });
+    expect(screen.getByText('Live progress')).toBeTruthy();
   });
 });

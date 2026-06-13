@@ -33,10 +33,13 @@ from xero_c2.protocol.constants import FRAME_HEADER, FRAME_HMAC_LENGTH, PROTOCOL
 from xero_c2.schemas import BeaconHeartbeatRequest, BeaconRegistrationRequest
 from xero_c2.task_queue import apply_task_result, public_task, task_event_type
 from xero_c2.task_results import (
+    RESULT_EVENT_CHUNK,
     RESULT_EVENT_COMPLETED,
     ingest_task_result_payload,
     is_chunk_payload,
+    public_task_result_chunk,
     task_for_result_payload,
+    task_result_chunk_for_payload,
     task_result_event_payload,
 )
 from xero_c2.traffic_profiles import profile_ack_fields
@@ -345,6 +348,11 @@ def process_protocol_frame(
             task = task_for_result_payload(session, beacon_id=beacon_id, payload=decoded.payload)
             if task is not None:
                 result = ingest_task_result_payload(session, settings, task, decoded.payload)
+                if is_chunk_payload(decoded.payload):
+                    chunk = task_result_chunk_for_payload(session, task, decoded.payload)
+                    if chunk is not None:
+                        ack_payload["task_result_chunk"] = public_task_result_chunk(chunk)
+                        ack_payload["task_result_chunk_event_type"] = RESULT_EVENT_CHUNK
                 if is_chunk_payload(decoded.payload) and result is None:
                     ack_payload["receipt"] = "chunk_stored"
                     return beacon_id, ack_payload

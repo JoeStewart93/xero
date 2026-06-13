@@ -27,6 +27,7 @@ const apiMocks = vi.hoisted(() => ({
   getBeaconActivity: vi.fn(),
   getModules: vi.fn(),
   getTaskResult: vi.fn(),
+  getTaskResultChunks: vi.fn(),
   getTasks: vi.fn(),
   getTrafficProfiles: vi.fn(),
   killBeacon: vi.fn(),
@@ -53,6 +54,7 @@ vi.mock('../api', async (importOriginal) => ({
   getBeaconActivity: apiMocks.getBeaconActivity,
   getModules: apiMocks.getModules,
   getTaskResult: apiMocks.getTaskResult,
+  getTaskResultChunks: apiMocks.getTaskResultChunks,
   getTasks: apiMocks.getTasks,
   getTrafficProfiles: apiMocks.getTrafficProfiles,
   killBeacon: apiMocks.killBeacon,
@@ -277,6 +279,25 @@ const queuedTask = {
   updated_at: '2026-06-08T14:08:00Z',
 } as const;
 
+function taskResultChunk(taskId: string, value: string, sequence = 0) {
+  return {
+    beacon_id: beaconOne.id,
+    chunk: value,
+    chunk_sha256: `chunk-sha-${sequence}`,
+    created_at: '2026-06-08T14:09:00Z',
+    id: `chunk-${sequence}`,
+    received_at: '2026-06-08T14:09:00Z',
+    sequence,
+    stream: 'stdout',
+    stream_sha256: null,
+    stream_size_bytes: null,
+    task_id: taskId,
+    task_result_id: '77777777-7777-7777-7777-777777777777',
+    total_chunks: 2,
+    upload_id: 'upload-one',
+  };
+}
+
 const shellSession = {
   actor_subject: 'operator-1',
   beacon_id: beaconOne.id,
@@ -420,6 +441,7 @@ describe('BeaconsPage', () => {
       truncated: false,
       updated_at: '2026-06-08T14:09:00Z',
     });
+    apiMocks.getTaskResultChunks.mockResolvedValue({ items: [] });
     apiMocks.downloadTaskResultText.mockResolvedValue(new Blob(['output line\n'], { type: 'text/plain' }));
     apiMocks.getBeaconActivity.mockResolvedValue({
       items: [
@@ -1370,6 +1392,51 @@ describe('BeaconsPage', () => {
 
     expect(await screen.findByText('updated output')).toBeTruthy();
     expect(apiMocks.getTaskResult.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('renders realtime task result chunks for the selected running task and clears the buffer', async () => {
+    const runningTask = {
+      ...queuedTask,
+      dispatched_at: '2026-06-08T14:08:30Z',
+      running_at: '2026-06-08T14:08:45Z',
+      status: 'running',
+    };
+    let latestEvent: OperatorRealtimeEvent | null = null;
+    const realtimeState = {
+      activeBeaconCount: 1,
+      beaconCount: 1,
+      beacons: [beaconOne],
+      error: '',
+      offlineBeaconCount: 0,
+      status: 'connected',
+    };
+    apiMocks.getTasks.mockResolvedValue({ items: [runningTask] });
+    mocks.useRealtime.mockImplementation(() => ({ ...realtimeState, latestEvent }));
+
+    const rendered = renderBeaconsPage();
+
+    const taskRow = await screen.findByTestId(`task-row-${runningTask.id}`);
+    fireEvent.click(taskRow);
+    expect(await screen.findByTestId('stream-output-panel')).toBeTruthy();
+
+    latestEvent = {
+      data: { task_result_chunk: taskResultChunk(runningTask.id, 'line one\n') },
+      id: 'chunk-event-one',
+      occurred_at: '2026-06-08T14:09:00Z',
+      scope: { beacon_id: beaconOne.id, task_id: runningTask.id },
+      source: { role: 'c2', service: 'xero-c2-core' },
+      type: 'task.result.chunk',
+      version: 1,
+    };
+    rendered.rerender(
+      <MemoryRouter>
+        <BeaconsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('line one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear stream buffer' }));
+    expect(screen.getByTestId('stream-output-buffer').textContent).toContain('(waiting for streamed output)');
   });
 
   it('cancels a queued task from the task execution panel', async () => {

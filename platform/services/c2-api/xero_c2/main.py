@@ -80,6 +80,7 @@ from xero_c2.models import (
     InfrastructureWorker,
     InteractiveSession,
     ProtocolSecurityEvent,
+    ResultChunk,
     ScanJob,
     ScanResultChunk,
     Task,
@@ -89,6 +90,7 @@ from xero_c2.models import (
     TrafficProfile,
     TrafficProfileVersion,
 )
+from xero_c2.modules import list_modules
 from xero_c2.protocol import (
     ACK,
     CURRENT_PROTOCOL_VERSION,
@@ -125,6 +127,14 @@ from xero_c2.realtime import (
     run_operator_websocket,
     websocket_origin_allowed,
 )
+from xero_c2.scan_jobs import (
+    create_scan_job,
+    mark_abandoned_scan_jobs,
+    public_scan_chunk,
+    public_scan_job,
+    publish_scan_event,
+    run_scan_job,
+)
 from xero_c2.schemas import (
     BeaconActivityItemResponse,
     BeaconActivityListResponse,
@@ -148,6 +158,8 @@ from xero_c2.schemas import (
     FileBrowserSessionResponse,
     InfrastructureWorkerListResponse,
     InfrastructureWorkerResponse,
+    ModuleDefinitionResponse,
+    ModuleListResponse,
     PairingTokenCreateRequest,
     PairingTokenCreateResponse,
     ProtocolInfoResponse,
@@ -155,6 +167,12 @@ from xero_c2.schemas import (
     ProtocolSecurityEventResponse,
     RegistrySessionCreateRequest,
     RegistrySessionResponse,
+    ScanJobCreateRequest,
+    ScanJobListResponse,
+    ScanJobResponse,
+    ScanJobStatus,
+    ScanResultChunkListResponse,
+    ScanResultChunkResponse,
     SessionResponse,
     ShellSessionCreateRequest,
     ShellSessionResponse,
@@ -163,6 +181,8 @@ from xero_c2.schemas import (
     TaskCreateRequest,
     TaskListResponse,
     TaskResponse,
+    TaskResultChunkListResponse,
+    TaskResultChunkResponse,
     TaskResultListResponse,
     TaskResultResponse,
     TaskStatus,
@@ -183,23 +203,6 @@ from xero_c2.schemas import (
     WorkerRegistrationRequest,
     WorkerRegistrationResponse,
     WorkerStopResponse,
-    ModuleDefinitionResponse,
-    ModuleListResponse,
-    ScanJobCreateRequest,
-    ScanJobListResponse,
-    ScanJobResponse,
-    ScanJobStatus,
-    ScanResultChunkListResponse,
-    ScanResultChunkResponse,
-)
-from xero_c2.modules import list_modules
-from xero_c2.scan_jobs import (
-    create_scan_job,
-    mark_abandoned_scan_jobs,
-    public_scan_chunk,
-    public_scan_job,
-    publish_scan_event,
-    run_scan_job,
 )
 from xero_c2.sessions import (
     ACTIVE_SESSION_STATUSES,
@@ -242,6 +245,7 @@ from xero_c2.task_queue import (
 from xero_c2.task_results import (
     download_text_for_result,
     public_task_result,
+    public_task_result_chunk,
     purge_expired_task_results,
     run_task_result_retention_monitor,
 )
@@ -383,6 +387,19 @@ async def publish_task_result_event(app: FastAPI, settings, event_type: str, res
         event_type,
         data={"task_result": result_payload},
         scope={"beacon_id": result_payload["beacon_id"], "task_id": result_payload["task_id"]},
+    )
+    if redis_client is None:
+        await app.state.operator_realtime_hub.broadcast(event)
+
+
+async def publish_task_result_chunk_event(app: FastAPI, settings, event_type: str, chunk_payload: dict) -> None:
+    redis_client = getattr(app.state, "redis_client", None)
+    event = await publish_operator_event(
+        redis_client,
+        settings,
+        event_type,
+        data={"task_result_chunk": chunk_payload},
+        scope={"beacon_id": chunk_payload["beacon_id"], "task_id": chunk_payload["task_id"]},
     )
     if redis_client is None:
         await app.state.operator_realtime_hub.broadcast(event)
@@ -1359,6 +1376,15 @@ def create_app() -> FastAPI:
                     str(ack_payload["task_event_type"]),
                     ack_payload["task"],
                 )
+            if ack_payload.get("task_result_chunk_event_type") and isinstance(
+                ack_payload.get("task_result_chunk"), dict
+            ):
+                await publish_task_result_chunk_event(
+                    request.app,
+                    settings,
+                    str(ack_payload["task_result_chunk_event_type"]),
+                    ack_payload["task_result_chunk"],
+                )
             if ack_payload.get("task_result_event_type") and isinstance(ack_payload.get("task_result"), dict):
                 await publish_task_result_event(
                     request.app,
@@ -2043,6 +2069,46 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task result artifact not found") from exc
         return TaskResultResponse(**payload)
 
+    @api_router.get(
+        "/tasks/{task_id}/result/chunks",
+        response_model=TaskResultChunkListResponse,
+        tags=["tasks"],
+    )
+    def list_task_result_chunks(
+        task_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+        stream: Annotated[str | None, Query(pattern="^(stdout|stderr)$")] = None,
+        upload_id: Annotated[str | None, Query(max_length=128)] = None,
+        after_sequence: Annotated[int | None, Query(ge=-1)] = None,
+        limit: Annotated[int, Query(ge=1, le=500)] = 250,
+    ) -> TaskResultChunkListResponse:
+        authorize_c2_token(settings, authorization)
+        task = session.get(Task, task_id)
+        if task is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+        query = select(ResultChunk).where(ResultChunk.task_id == task_id)
+        if stream is not None:
+            query = query.where(ResultChunk.stream == stream)
+        if upload_id is not None:
+            query = query.where(ResultChunk.upload_id == upload_id)
+        if after_sequence is not None:
+            query = query.where(ResultChunk.sequence > after_sequence)
+        chunks = (
+            session.execute(
+                query.order_by(
+                    ResultChunk.stream.asc(),
+                    ResultChunk.upload_id.asc(),
+                    ResultChunk.sequence.asc(),
+                ).limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+        return TaskResultChunkListResponse(
+            items=[TaskResultChunkResponse(**public_task_result_chunk(chunk)) for chunk in chunks]
+        )
+
     @api_router.get("/tasks/{task_id}/result/download", response_model=None, tags=["tasks"])
     def download_task_result_text(
         task_id: uuid.UUID,
@@ -2475,6 +2541,15 @@ def create_app() -> FastAPI:
                     settings,
                     str(ack_payload["task_event_type"]),
                     ack_payload["task"],
+                )
+            if ack_payload.get("task_result_chunk_event_type") and isinstance(
+                ack_payload.get("task_result_chunk"), dict
+            ):
+                await publish_task_result_chunk_event(
+                    request.app,
+                    settings,
+                    str(ack_payload["task_result_chunk_event_type"]),
+                    ack_payload["task_result_chunk"],
                 )
             if ack_payload.get("task_result_event_type") and isinstance(ack_payload.get("task_result"), dict):
                 await publish_task_result_event(

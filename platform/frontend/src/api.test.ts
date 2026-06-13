@@ -40,6 +40,7 @@ import {
   getScanResultChunks,
   getTaskAuditEvents,
   getTaskResult,
+  getTaskResultChunks,
   getTaskResults,
   getTasks,
   getTrafficProfiles,
@@ -623,6 +624,7 @@ describe('api client', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ items: [taskAuditPayload] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(taskResultPayload), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ items: [taskResultPayload], next_cursor: null }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(resultBlob, { status: 200 }))
       .mockResolvedValueOnce(new Response(resultBlob, { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
@@ -645,6 +647,12 @@ describe('api client', () => {
     await getTaskAuditEvents('http://c2.local:8001/', 'c2-token', 'task-one', 5);
     await getTaskResult('http://c2.local:8001/', 'c2-token', 'task-one');
     await getTaskResults('http://c2.local:8001/', 'c2-token', { beaconId: 'beacon-one', limit: 5, status: 'completed' });
+    await getTaskResultChunks('http://c2.local:8001/', 'c2-token', 'task-one', {
+      afterSequence: 2,
+      limit: 20,
+      stream: 'stdout',
+      uploadId: 'upload-one',
+    });
     await downloadTaskResultText('http://c2.local:8001/', 'c2-token', 'task-one', 'stdout');
     await downloadTaskResultArtifact('http://c2.local:8001/', 'c2-token', 'task-one', 'artifact-one');
 
@@ -666,8 +674,11 @@ describe('api client', () => {
     expect(fetchMock.mock.calls[5][0]).toBe(
       'http://c2.local:8001/api/v1/task-results?beacon_id=beacon-one&status=completed&limit=5',
     );
-    expect(fetchMock.mock.calls[6][0]).toBe('http://c2.local:8001/api/v1/tasks/task-one/result/download?stream=stdout');
-    expect(fetchMock.mock.calls[7][0]).toBe('http://c2.local:8001/api/v1/tasks/task-one/result/artifacts/artifact-one');
+    expect(fetchMock.mock.calls[6][0]).toBe(
+      'http://c2.local:8001/api/v1/tasks/task-one/result/chunks?stream=stdout&upload_id=upload-one&after_sequence=2&limit=20',
+    );
+    expect(fetchMock.mock.calls[7][0]).toBe('http://c2.local:8001/api/v1/tasks/task-one/result/download?stream=stdout');
+    expect(fetchMock.mock.calls[8][0]).toBe('http://c2.local:8001/api/v1/tasks/task-one/result/artifacts/artifact-one');
   });
 
   it('calls C2 session endpoints and builds the session websocket URL', async () => {

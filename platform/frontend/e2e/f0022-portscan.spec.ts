@@ -19,5 +19,6 @@ test('operator runs an embedded port scan against live C2', async ({ page }) => 
   const openEndpoint = page.getByRole('row').filter({ hasText: '127.0.0.1:8000' });
   await expect(openEndpoint).toContainText('open', { timeout: 15_000 });
   await expect(page.getByText('embedded-c2')).toBeVisible();
-  await expect(page.getByLabel('Scan progress')).toBeVisible();
+  await expect(page.getByLabel('Scan progress', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Port scan progress output')).toContainText('127.0.0.1:8000 open');
 });

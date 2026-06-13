@@ -424,6 +424,27 @@ class TaskResultListResponse(BaseModel):
     next_cursor: datetime | None = None
 
 
+class TaskResultChunkResponse(BaseModel):
+    id: str
+    task_result_id: str
+    task_id: str
+    beacon_id: str
+    upload_id: str
+    stream: Literal["stderr", "stdout"]
+    sequence: int
+    total_chunks: int
+    chunk: str
+    chunk_sha256: str
+    stream_sha256: str | None = None
+    stream_size_bytes: int | None = None
+    received_at: datetime
+    created_at: datetime
+
+
+class TaskResultChunkListResponse(BaseModel):
+    items: list[TaskResultChunkResponse] = Field(default_factory=list)
+
+
 class ModuleDefinitionResponse(BaseModel):
     id: str
     name: str

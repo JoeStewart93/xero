@@ -1558,6 +1558,77 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/tasks/{task_id}/result/chunks:
+    get:
+      tags:
+      - tasks
+      summary: List Task Result Chunks
+      operationId: list_task_result_chunks_api_v1_tasks__task_id__result_chunks_get
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Task Id
+      - name: stream
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            pattern: ^(stdout|stderr)$
+          - type: 'null'
+          title: Stream
+      - name: upload_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 128
+          - type: 'null'
+          title: Upload Id
+      - name: after_sequence
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+            minimum: -1
+          - type: 'null'
+          title: After Sequence
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          default: 250
+          title: Limit
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResultChunkListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/tasks/{task_id}/result/download:
     get:
       tags:
@@ -3885,6 +3956,83 @@ components:
       - size_bytes
       - sha256
       title: TaskResultArtifactResponse
+    TaskResultChunkListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/TaskResultChunkResponse'
+          type: array
+          title: Items
+      type: object
+      title: TaskResultChunkListResponse
+    TaskResultChunkResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        task_result_id:
+          type: string
+          title: Task Result Id
+        task_id:
+          type: string
+          title: Task Id
+        beacon_id:
+          type: string
+          title: Beacon Id
+        upload_id:
+          type: string
+          title: Upload Id
+        stream:
+          type: string
+          enum:
+          - stderr
+          - stdout
+          title: Stream
+        sequence:
+          type: integer
+          title: Sequence
+        total_chunks:
+          type: integer
+          title: Total Chunks
+        chunk:
+          type: string
+          title: Chunk
+        chunk_sha256:
+          type: string
+          title: Chunk Sha256
+        stream_sha256:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Stream Sha256
+        stream_size_bytes:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Stream Size Bytes
+        received_at:
+          type: string
+          format: date-time
+          title: Received At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - task_result_id
+      - task_id
+      - beacon_id
+      - upload_id
+      - stream
+      - sequence
+      - total_chunks
+      - chunk
+      - chunk_sha256
+      - received_at
+      - created_at
+      title: TaskResultChunkResponse
     TaskResultListResponse:
       properties:
         items:

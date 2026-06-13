@@ -15,6 +15,7 @@ from xero_c2.artifacts import artifact_is_available, artifact_store_for_settings
 from xero_c2.models import Artifact, ResultChunk, Task, TaskResult, TaskResultArtifact
 from xero_c2.protocol import ProtocolError
 
+RESULT_EVENT_CHUNK = "task.result.chunk"
 RESULT_EVENT_COMPLETED = "task.result.completed"
 RESULT_STREAMS = {"stdout", "stderr"}
 TERMINAL_RESULT_STATUSES = {"completed", "failed", "ok", "error"}
@@ -288,6 +289,43 @@ def record_result_chunk(session: Session, result: TaskResult, task: Task, payloa
     session.add(chunk)
     session.flush()
     return chunk
+
+
+def task_result_chunk_for_payload(session: Session, task: Task, payload: dict[str, Any]) -> ResultChunk | None:
+    if not is_chunk_payload(payload):
+        return None
+    stream = payload.get("stream")
+    if stream not in RESULT_STREAMS:
+        return None
+    sequence = chunk_sequence(payload)
+    upload_id = chunk_upload_id(payload)
+    return session.execute(
+        select(ResultChunk).where(
+            ResultChunk.task_id == task.id,
+            ResultChunk.stream == stream,
+            ResultChunk.upload_id == upload_id,
+            ResultChunk.sequence == sequence,
+        )
+    ).scalar_one_or_none()
+
+
+def public_task_result_chunk(chunk: ResultChunk) -> dict[str, Any]:
+    return {
+        "id": str(chunk.id),
+        "task_result_id": str(chunk.task_result_id),
+        "task_id": str(chunk.task_id),
+        "beacon_id": str(chunk.beacon_id),
+        "upload_id": chunk.upload_id,
+        "stream": chunk.stream,
+        "sequence": chunk.sequence,
+        "total_chunks": chunk.total_chunks,
+        "chunk": chunk.chunk_text,
+        "chunk_sha256": chunk.chunk_sha256,
+        "stream_sha256": chunk.stream_sha256,
+        "stream_size_bytes": chunk.stream_size_bytes,
+        "received_at": chunk.received_at.isoformat(),
+        "created_at": chunk.created_at.isoformat(),
+    }
 
 
 def assembled_streams_from_chunks(session: Session, result: TaskResult, upload_id: str) -> dict[str, str]:

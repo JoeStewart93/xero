@@ -442,6 +442,27 @@ export interface TaskResultListResponse {
   next_cursor: string | null;
 }
 
+export interface TaskResultChunk {
+  beacon_id: string;
+  chunk: string;
+  chunk_sha256: string;
+  created_at: string;
+  id: string;
+  received_at: string;
+  sequence: number;
+  stream: 'stderr' | 'stdout';
+  stream_sha256: string | null;
+  stream_size_bytes: number | null;
+  task_id: string;
+  task_result_id: string;
+  total_chunks: number;
+  upload_id: string;
+}
+
+export interface TaskResultChunkListResponse {
+  items: TaskResultChunk[];
+}
+
 export interface ModuleDefinition {
   args_schema: Record<string, unknown>;
   category: string;
@@ -991,6 +1012,29 @@ export async function getTaskResults(
   }
   const query = params.toString();
   return c2Fetch<TaskResultListResponse>(baseUrl, accessToken, `/api/v1/task-results${query ? `?${query}` : ''}`);
+}
+
+export async function getTaskResultChunks(
+  baseUrl: string,
+  accessToken: string,
+  taskId: string,
+  options: { afterSequence?: number; limit?: number; stream?: TaskResultChunk['stream']; uploadId?: string } = {},
+): Promise<TaskResultChunkListResponse> {
+  const params = new URLSearchParams();
+  if (options.stream) {
+    params.set('stream', options.stream);
+  }
+  if (options.uploadId) {
+    params.set('upload_id', options.uploadId);
+  }
+  if (typeof options.afterSequence === 'number') {
+    params.set('after_sequence', String(options.afterSequence));
+  }
+  if (options.limit) {
+    params.set('limit', String(options.limit));
+  }
+  const query = params.toString();
+  return c2Fetch<TaskResultChunkListResponse>(baseUrl, accessToken, `/api/v1/tasks/${taskId}/result/chunks${query ? `?${query}` : ''}`);
 }
 
 export async function getModules(baseUrl: string, accessToken: string): Promise<ModuleListResponse> {

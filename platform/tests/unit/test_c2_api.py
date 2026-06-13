@@ -5,11 +5,11 @@ import base64
 import hashlib
 import json
 import socket
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 import time
 import uuid
 from datetime import timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
 import pytest
@@ -44,15 +44,15 @@ from xero_c2.models import (
     TaskResult,
     WorkerEvent,
 )
+from xero_c2.portscan import run_scan_job
 from xero_c2.protocol import HEARTBEAT, REGISTER, SESSION_DATA, TASK_POLL, TASK_RESULT
 from xero_c2.protocol.codec import public_key_bytes
-from xero_c2.portscan import run_scan_job
-from xero_c2.serviceenum import FINGERPRINT_RULES, enumerate_service, parse_tls_certificate
 from xero_c2.registry_sessions import (
     consume_registry_confirmation,
     create_registry_confirmation,
     parse_registry_request,
 )
+from xero_c2.serviceenum import FINGERPRINT_RULES, enumerate_service, parse_tls_certificate
 from xero_c2.sessions import (
     DuplicateSessionAttachError,
     FileListingCache,
@@ -1507,6 +1507,67 @@ def test_task_result_completion_broadcasts_operator_event(protocol_c2_client):
     assert "stdout" not in result_event["data"]["task_result"]
 
 
+def test_task_result_chunk_broadcasts_operator_event(protocol_c2_client):
+    class BroadcastRecorder:
+        def __init__(self) -> None:
+            self.events: list[dict] = []
+
+        async def broadcast(self, event: dict) -> None:
+            self.events.append(event)
+
+    recorder = BroadcastRecorder()
+    protocol_c2_client.app.state.operator_realtime_hub = recorder
+    token = connect_c2(protocol_c2_client)
+    registered = decode_protocol_response(
+        protocol_c2_client.post(
+            "/api/v1/protocol/frames",
+            content=encode_protocol_test_frame(REGISTER, register_payload(supported_versions=[1])),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+        ).content
+    )
+    task = create_shell_task(protocol_c2_client, token, registered["beacon_id"], command="broadcast-chunk")
+    protocol_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(TASK_POLL, {"beacon_id": registered["beacon_id"]}),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+    chunk_text = "first line\n"
+
+    response = protocol_c2_client.post(
+        "/api/v1/protocol/frames",
+        content=encode_protocol_test_frame(
+            TASK_RESULT,
+            {
+                "beacon_id": registered["beacon_id"],
+                "task_id": task["id"],
+                "status": "completed",
+                "upload_id": "broadcast-upload",
+                "stream": "stdout",
+                "chunk_index": 0,
+                "total_chunks": 2,
+                "chunk": chunk_text,
+                "chunk_sha256": hashlib.sha256(chunk_text.encode("utf-8")).hexdigest(),
+                "exit_code": 0,
+            },
+        ),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
+    )
+    ack = decode_protocol_response(response.content)
+    event_by_type = {event["type"]: event for event in recorder.events}
+    chunk_event = event_by_type["task.result.chunk"]
+
+    assert response.status_code == 200
+    assert ack["receipt"] == "chunk_stored"
+    assert ack["task_result_chunk_event_type"] == "task.result.chunk"
+    assert ack["task_result_chunk"]["chunk"] == chunk_text
+    assert chunk_event["scope"]["beacon_id"] == registered["beacon_id"]
+    assert chunk_event["scope"]["task_id"] == task["id"]
+    assert chunk_event["data"]["task_result_chunk"]["task_id"] == task["id"]
+    assert chunk_event["data"]["task_result_chunk"]["sequence"] == 0
+    assert chunk_event["data"]["task_result_chunk"]["chunk"] == chunk_text
+    assert "task.result.completed" not in event_by_type
+
+
 def test_chunked_task_result_assembles_and_uses_artifact_storage(result_c2_client):
     token = connect_c2(result_c2_client)
     registered = decode_protocol_response(
@@ -1595,10 +1656,15 @@ def test_chunked_task_result_assembles_and_uses_artifact_storage(result_c2_clien
 
     assert first.status_code == 200
     assert first_ack["receipt"] == "chunk_stored"
+    assert first_ack["task_result_chunk_event_type"] == "task.result.chunk"
+    assert first_ack["task_result_chunk"]["sequence"] == 0
+    assert first_ack["task_result_chunk"]["chunk"] == chunks[0]
     assert "task" not in first_ack
     assert final.status_code == 200
     assert final_ack["receipt"] == "stored"
     assert final_ack["task"]["status"] == "completed"
+    assert final_ack["task_result_chunk_event_type"] == "task.result.chunk"
+    assert final_ack["task_result_chunk"]["sequence"] == 1
     assert final_ack["task_result_event_type"] == "task.result.completed"
     assert fetched.status_code == 200
     assert fetched.json()["stdout"] == stdout
@@ -1608,6 +1674,21 @@ def test_chunked_task_result_assembles_and_uses_artifact_storage(result_c2_clien
     assert stored is not None and stored.status == "completed"
     assert result.stdout_text is None
     assert len(chunk_count) == 2
+
+    listed_chunks = result_c2_client.get(
+        f"/api/v1/tasks/{task['id']}/result/chunks?stream=stdout",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    resumed_chunks = result_c2_client.get(
+        f"/api/v1/tasks/{task['id']}/result/chunks?stream=stdout&upload_id={upload_id}&after_sequence=0",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert listed_chunks.status_code == 200
+    assert [item["sequence"] for item in listed_chunks.json()["items"]] == [0, 1]
+    assert resumed_chunks.status_code == 200
+    assert [item["sequence"] for item in resumed_chunks.json()["items"]] == [1]
+    assert resumed_chunks.json()["items"][0]["chunk"] == chunks[1]
 
 
 def test_chunked_task_result_rejects_missing_chunks(result_c2_client):

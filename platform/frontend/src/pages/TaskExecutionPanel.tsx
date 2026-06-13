@@ -26,8 +26,12 @@ import type {
   TaskResult,
   TaskStatus,
 } from '../api';
+import { StreamOutput } from '../components/StreamOutput';
 import type { C2Connection } from '../c2ConnectionContext';
-import type { OperatorRealtimeEvent } from '../operatorRealtime';
+import type { OperatorRealtimeEvent, RealtimeStatus } from '../operatorRealtime';
+import { taskResultFromRealtimeEvent } from '../operatorRealtime';
+import type { TaskResultStreamBuffer } from '../taskResultStreams';
+import { useTaskResultStreams } from '../taskResultStreams';
 import { compactDateTime, formatRelativeTime } from './beaconDisplay';
 import { BEACON_DRAG_MIME } from './taskDrag';
 
@@ -44,8 +48,10 @@ interface TaskExecutionPanelProps {
   beacons: Beacon[];
   connection: C2Connection;
   initialBeaconId?: string;
+  initialTaskId?: string;
   labelPrefix?: string;
   latestEvent: OperatorRealtimeEvent | null;
+  realtimeStatus?: RealtimeStatus;
   testIdPrefix?: string;
   title?: string;
 }
@@ -486,24 +492,31 @@ function TaskDetailPanel({
   downloadingResultStream,
   isLoadingTaskResult,
   onDownloadResult,
+  onClearStream,
   result,
   resultError,
   resultStream,
   selectedTask,
   setResultStream,
+  streamBuffer,
 }: {
   downloadingResultStream: string;
   isLoadingTaskResult: boolean;
   onDownloadResult: (stream: 'combined' | ResultStream) => void;
+  onClearStream: () => void;
   result: TaskResult | null;
   resultError: string;
   resultStream: ResultStream;
   selectedTask: Task | null;
   setResultStream: (stream: ResultStream) => void;
+  streamBuffer: TaskResultStreamBuffer | null;
 }) {
   if (!selectedTask) {
     return null;
   }
+  const allLiveChunks = streamBuffer?.chunks ?? [];
+  const liveChunks = allLiveChunks.filter((chunk) => chunk.stream === resultStream);
+  const showLiveOutput = allLiveChunks.length > 0 || isBusyStatus(selectedTask.status);
   return (
     <div className="task-result-panel" data-testid="task-result-panel">
       <div className="task-result-panel-head">
@@ -522,6 +535,32 @@ function TaskDetailPanel({
           <span>{downloadingResultStream === 'combined' ? 'Downloading' : 'Download'}</span>
         </button>
       </div>
+
+      {showLiveOutput ? (
+        <>
+          <div className="task-result-tabs" role="tablist" aria-label="Live task result streams">
+            {(['stdout', 'stderr'] as const).map((stream) => (
+              <button
+                aria-selected={resultStream === stream}
+                className={resultStream === stream ? 'is-selected' : ''}
+                key={stream}
+                onClick={() => setResultStream(stream)}
+                role="tab"
+                type="button"
+              >
+                {stream}
+                <span>{allLiveChunks.filter((chunk) => chunk.stream === stream).length} chunks</span>
+              </button>
+            ))}
+          </div>
+          <StreamOutput
+            chunks={liveChunks}
+            isComplete={Boolean(streamBuffer?.isComplete || isTerminalStatus(selectedTask.status))}
+            onClear={onClearStream}
+            stream={resultStream}
+          />
+        </>
+      ) : null}
 
       {isLoadingTaskResult ? (
         <div className="task-empty-state">Loading task result.</div>
@@ -572,8 +611,10 @@ export function TaskExecutionPanel({
   beacons,
   connection,
   initialBeaconId,
+  initialTaskId,
   labelPrefix,
   latestEvent,
+  realtimeStatus,
   testIdPrefix = '',
   title = 'Task execution',
 }: TaskExecutionPanelProps) {
@@ -591,7 +632,7 @@ export function TaskExecutionPanel({
   const [isLoadingTasks, setIsLoadingTasks] = useState(false);
   const [isSubmittingTask, setIsSubmittingTask] = useState(false);
   const [cancellingTaskId, setCancellingTaskId] = useState('');
-  const [selectedTaskId, setSelectedTaskId] = useState('');
+  const [selectedTaskId, setSelectedTaskId] = useState(initialTaskId ?? '');
   const [taskResult, setTaskResult] = useState<TaskResult | null>(null);
   const [taskResultStream, setTaskResultStream] = useState<ResultStream>('stdout');
   const [taskResultError, setTaskResultError] = useState('');
@@ -610,6 +651,21 @@ export function TaskExecutionPanel({
   const queuedTaskCount = tasks.filter((task) => task.status === 'queued').length;
   const fieldErrors = useMemo(() => validateArgs(selectedModule, args), [args, selectedModule]);
   const canSubmit = Boolean(selectedModule && selectedBeacon && Object.keys(fieldErrors).length === 0);
+  const streamTaskIds = useMemo(() => (
+    Array.from(new Set(tasks
+      .filter((task) => isBusyStatus(task.status) || isTerminalStatus(task.status) || task.id === selectedTaskId)
+      .map((task) => task.id)))
+  ), [selectedTaskId, tasks]);
+  const {
+    backfillTask,
+    clearTaskStream,
+    streamForTask,
+  } = useTaskResultStreams({
+    activeTaskIds: streamTaskIds,
+    connection,
+    latestEvent,
+    realtimeStatus,
+  });
 
   const beaconLabel = useCallback((beaconId: string) => {
     const beacon = beacons.find((item) => item.id === beaconId);
@@ -683,6 +739,16 @@ export function TaskExecutionPanel({
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
+      if (initialTaskId) {
+        setSelectedTaskId(initialTaskId);
+        void backfillTask(initialTaskId).catch(() => undefined);
+      }
+    }, 0);
+    return () => window.clearTimeout(handle);
+  }, [backfillTask, initialTaskId]);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
       if (!moduleId && taskModules.length > 0) {
         setModuleId(taskModules[0].id);
         setArgs(initialArgs(taskModules[0]));
@@ -697,7 +763,7 @@ export function TaskExecutionPanel({
   }, [loadTasks]);
 
   useEffect(() => {
-    if (!latestEvent?.type.startsWith('task.')) {
+    if (!latestEvent?.type.startsWith('task.') || latestEvent.type === 'task.result.chunk') {
       return;
     }
     if (latestEvent.scope.beacon_id && latestEvent.scope.beacon_id !== targetBeaconId) {
@@ -717,6 +783,21 @@ export function TaskExecutionPanel({
     const handle = window.setTimeout(() => void loadTaskResult(selectedTaskId), 0);
     return () => window.clearTimeout(handle);
   }, [latestEvent?.id, latestEvent?.scope.task_id, latestEvent?.type, loadTaskResult, selectedTaskId]);
+
+  useEffect(() => {
+    const result = latestEvent ? taskResultFromRealtimeEvent(latestEvent) : null;
+    if (!result?.task_id) {
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      setTasks((current) => current.map((task) => (
+        task.id === result.task_id
+          ? { ...task, completed_at: result.completed_at, status: result.status, updated_at: result.updated_at }
+          : task
+      )));
+    }, 0);
+    return () => window.clearTimeout(handle);
+  }, [latestEvent]);
 
   function handleModuleChange(nextModuleId: string): void {
     const nextModule = taskModules.find((module) => module.id === nextModuleId) ?? null;
@@ -778,6 +859,7 @@ export function TaskExecutionPanel({
     setSelectedTaskId(task.id);
     setTaskResult(null);
     setTaskResultError('');
+    void backfillTask(task.id).catch(() => undefined);
     if (isTerminalStatus(task.status)) {
       void loadTaskResult(task.id);
     }
@@ -934,12 +1016,14 @@ export function TaskExecutionPanel({
       <TaskDetailPanel
         downloadingResultStream={downloadingResultStream}
         isLoadingTaskResult={isLoadingTaskResult}
+        onClearStream={() => selectedTaskId ? clearTaskStream(selectedTaskId) : undefined}
         onDownloadResult={(stream) => void handleDownloadResult(stream)}
         result={taskResult}
         resultError={taskResultError}
         resultStream={taskResultStream}
         selectedTask={selectedTask}
         setResultStream={setTaskResultStream}
+        streamBuffer={selectedTaskId ? streamForTask(selectedTaskId) : null}
       />
     </div>
   );

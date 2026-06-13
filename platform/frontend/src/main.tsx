@@ -5,6 +5,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { App } from './App';
 import { AuthProvider } from './auth';
 import { C2ConnectionProvider } from './c2Connection';
+import { TaskCompletionNotifier } from './components/TaskCompletionNotifier';
 import { RealtimeProvider } from './realtime';
 import './styles.css';
 
@@ -15,6 +16,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <AuthProvider>
           <RealtimeProvider>
             <App />
+            <TaskCompletionNotifier />
           </RealtimeProvider>
         </AuthProvider>
       </C2ConnectionProvider>

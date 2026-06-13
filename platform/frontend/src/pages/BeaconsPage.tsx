@@ -836,12 +836,14 @@ function BeaconOperationsModal({
   connection,
   latestEvent,
   onClose,
+  realtimeStatus,
 }: {
   beacon: Beacon;
   beacons: Beacon[];
   connection: C2Connection;
   latestEvent: OperatorRealtimeEvent | null;
   onClose: () => void;
+  realtimeStatus: ReturnType<typeof useRealtime>['status'];
 }) {
   const [selectedOperation, setSelectedOperation] = useState<HostOperationKey>('commands');
   const activeOperation = hostOperations.find((operation) => operation.key === selectedOperation) ?? hostOperations[0];
@@ -904,6 +906,7 @@ function BeaconOperationsModal({
                 initialBeaconId={beacon.id}
                 labelPrefix="Host operation"
                 latestEvent={latestEvent}
+                realtimeStatus={realtimeStatus}
                 testIdPrefix="modal-"
                 title="Command queue"
               />
@@ -945,6 +948,8 @@ export function BeaconsPage() {
   const location = useLocation();
   const { connection } = useC2Connection();
   const realtime = useRealtime();
+  const routeBeaconId = useMemo(() => new URLSearchParams(location.search).get('beacon_id') ?? '', [location.search]);
+  const routeTaskId = useMemo(() => new URLSearchParams(location.search).get('task_id') ?? '', [location.search]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBeaconId, setSelectedBeaconId] = useState('');
   const [operationBeaconId, setOperationBeaconId] = useState('');
@@ -1031,6 +1036,14 @@ export function BeaconsPage() {
     const handle = window.setTimeout(() => void loadBeaconActivity(), 0);
     return () => window.clearTimeout(handle);
   }, [loadBeaconActivity]);
+
+  useEffect(() => {
+    if (routeBeaconId && visibleBeacons.some((beacon) => beacon.id === routeBeaconId)) {
+      const handle = window.setTimeout(() => setSelectedBeaconId(routeBeaconId), 0);
+      return () => window.clearTimeout(handle);
+    }
+    return undefined;
+  }, [routeBeaconId, visibleBeacons]);
 
   useEffect(() => {
     const eventBeaconId = realtime.latestEvent?.scope?.beacon_id ?? (realtime.latestEvent?.data.beacon as Beacon | undefined)?.id;
@@ -1413,7 +1426,9 @@ export function BeaconsPage() {
                     beacons={visibleBeacons}
                     connection={connection}
                     initialBeaconId={selectedBeacon.id}
+                    initialTaskId={selectedBeacon.id === routeBeaconId ? routeTaskId : undefined}
                     latestEvent={realtime.latestEvent}
+                    realtimeStatus={realtime.status}
                   />
                 </div>
 
@@ -1508,6 +1523,7 @@ export function BeaconsPage() {
               connection={connection}
               latestEvent={realtime.latestEvent}
               onClose={() => setOperationBeaconId('')}
+              realtimeStatus={realtime.status}
             />
           ) : null}
           {killTarget ? (

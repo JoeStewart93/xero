@@ -6,15 +6,19 @@ import {
   getModules,
   getScanJob,
   getScanJobs,
+  getScanResultChunks,
   ModuleDefinition,
   PortScanResultRecord,
   PortScanArgs,
+  ScanResultChunk,
   ScanJob,
   ServiceEnumArgs,
   ServiceEnumResultRecord,
 } from '../api';
 import { AppShell } from '../components/AppShell';
 import { C2RequiredPanel } from '../components/C2RequiredPanel';
+import { StreamOutput } from '../components/StreamOutput';
+import type { StreamOutputChunk } from '../components/StreamOutput';
 import { useC2Connection } from '../useC2Connection';
 import { useRealtime } from '../useRealtime';
 
@@ -113,6 +117,41 @@ function serviceEnumResults(job: ScanJob | null): ServiceEnumResultRecord[] {
   return job.results.filter(isServiceEnumResult);
 }
 
+function scanChunkFromRealtimeEvent(event: ReturnType<typeof useRealtime>['latestEvent']): ScanResultChunk | null {
+  if (!event?.type.startsWith('scan.result.')) {
+    return null;
+  }
+  const chunk = event.data.scan_result_chunk;
+  return typeof chunk === 'object' && chunk !== null && !Array.isArray(chunk) ? chunk as ScanResultChunk : null;
+}
+
+function scanChunkKey(chunk: ScanResultChunk): string {
+  return `${chunk.scan_job_id}:${chunk.sequence}:${chunk.kind}`;
+}
+
+function formatScanChunk(chunk: ScanResultChunk): string {
+  const progressPrefix = `[${chunk.sequence}] ${chunk.probes_completed}/${chunk.probes_total}`;
+  const results = chunk.payload.results ?? [];
+  if (chunk.kind === 'summary') {
+    const summary = chunk.payload.summary ?? {};
+    const openCount = summary.open_count ?? results.filter(isPortScanResult).length;
+    return `${progressPrefix} complete / ${openCount} open\n`;
+  }
+  if (results.length === 0) {
+    return `${progressPrefix} progress\n`;
+  }
+  return `${results.map((result) => {
+    if (isPortScanResult(result)) {
+      return `${progressPrefix} ${result.host}:${result.port} ${result.state} ${result.latency_ms}ms`;
+    }
+    return `${progressPrefix} ${result.host}:${result.port} ${result.status} ${result.service_guess}`;
+  }).join('\n')}\n`;
+}
+
+function scanChunksToOutput(chunks: ScanResultChunk[]): StreamOutputChunk[] {
+  return chunks.map((chunk) => ({ chunk: formatScanChunk(chunk) }));
+}
+
 function scanJobTitle(job: ScanJob): string {
   if (isPortScanArgs(job.args)) {
     return job.args.targets.join(', ');
@@ -160,6 +199,7 @@ export function ReconPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [serviceEnumPending, setServiceEnumPending] = useState('');
+  const [scanChunksByJob, setScanChunksByJob] = useState<Record<string, ScanResultChunk[]>>({});
   const selectedJob = useMemo(
     () => jobs.find((job) => job.id === selectedJobId) ?? jobs[0] ?? null,
     [jobs, selectedJobId],
@@ -169,6 +209,36 @@ export function ReconPage() {
   const selectedPortScanResults = portScanResults(selectedJob);
   const selectedServiceEnumResults = serviceEnumResults(selectedJob);
   const openResults = selectedPortScanResults.filter((result) => result.state === 'open');
+  const selectedScanJobId = selectedJob?.id ?? '';
+  const selectedScanChunks = useMemo(
+    () => selectedScanJobId ? scanChunksByJob[selectedScanJobId] ?? [] : [],
+    [scanChunksByJob, selectedScanJobId],
+  );
+  const selectedScanOutput = useMemo(() => scanChunksToOutput(selectedScanChunks), [selectedScanChunks]);
+
+  const appendScanChunks = useCallback((chunks: ScanResultChunk[]) => {
+    if (chunks.length === 0) {
+      return;
+    }
+    setScanChunksByJob((current) => {
+      const next = { ...current };
+      for (const chunk of chunks) {
+        const existing = next[chunk.scan_job_id] ?? [];
+        if (existing.some((item) => scanChunkKey(item) === scanChunkKey(chunk))) {
+          continue;
+        }
+        next[chunk.scan_job_id] = [...existing, chunk].sort((left, right) => left.sequence - right.sequence);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearSelectedScanStream = useCallback(() => {
+    if (!selectedScanJobId) {
+      return;
+    }
+    setScanChunksByJob((current) => ({ ...current, [selectedScanJobId]: [] }));
+  }, [selectedScanJobId]);
 
   const loadReconState = useCallback(async () => {
     if (!connection) {
@@ -224,6 +294,10 @@ export function ReconPage() {
       return undefined;
     }
     const handle = window.setTimeout(() => {
+      const chunk = scanChunkFromRealtimeEvent(event);
+      if (chunk) {
+        appendScanChunks([chunk]);
+      }
       const scanJobId = event.scope.scan_job_id;
       if (!scanJobId || typeof scanJobId !== 'string') {
         void loadReconState();
@@ -238,7 +312,24 @@ export function ReconPage() {
       }
     }, 0);
     return () => window.clearTimeout(handle);
-  }, [connection, loadReconState, realtime.latestEvent]);
+  }, [appendScanChunks, connection, loadReconState, realtime.latestEvent]);
+
+  useEffect(() => {
+    if (!connection || !selectedScanJobId) {
+      return undefined;
+    }
+    let isCancelled = false;
+    void getScanResultChunks(connection.baseUrl, connection.accessToken, selectedScanJobId)
+      .then((response) => {
+        if (!isCancelled) {
+          appendScanChunks(response.items);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      isCancelled = true;
+    };
+  }, [appendScanChunks, connection, selectedScanJobId]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -417,6 +508,16 @@ export function ReconPage() {
                     <span style={{ width: `${progressPercent(selectedJob)}%` }} />
                   </div>
                 </div>
+                {selectedJob.module === 'builtin.portscan' ? (
+                  <div className="scan-progress-stream" aria-label="Port scan progress output">
+                    <StreamOutput
+                      chunks={selectedScanOutput}
+                      isComplete={selectedJob.status === 'completed' || selectedJob.status === 'failed'}
+                      onClear={clearSelectedScanStream}
+                      stream="progress"
+                    />
+                  </div>
+                ) : null}
                 <div className="scan-summary-grid">
                   <div>
                     <span>{selectedJob.module === 'builtin.serviceenum' ? 'Identified' : 'Open'}</span>

@@ -1,3 +1,5 @@
+import type { Task, TaskResult, TaskResultChunk } from './api';
+
 export type RealtimeStatus = 'connected' | 'connecting' | 'degraded' | 'disconnected' | 'reconnecting';
 
 export interface OperatorRealtimeEvent {
@@ -59,6 +61,23 @@ export function parseRealtimeEvent(payload: string): OperatorRealtimeEvent | nul
   } catch {
     return null;
   }
+}
+
+function eventRecordValue<T>(event: OperatorRealtimeEvent, key: string): T | null {
+  const value = event.data[key];
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as T : null;
+}
+
+export function taskFromRealtimeEvent(event: OperatorRealtimeEvent): Task | null {
+  return eventRecordValue<Task>(event, 'task');
+}
+
+export function taskResultFromRealtimeEvent(event: OperatorRealtimeEvent): TaskResult | null {
+  return eventRecordValue<TaskResult>(event, 'task_result');
+}
+
+export function taskResultChunkFromRealtimeEvent(event: OperatorRealtimeEvent): TaskResultChunk | null {
+  return event.type === 'task.result.chunk' ? eventRecordValue<TaskResultChunk>(event, 'task_result_chunk') : null;
 }
 
 export class OperatorRealtimeClient {

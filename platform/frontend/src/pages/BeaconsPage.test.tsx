@@ -15,8 +15,10 @@ const mocks = vi.hoisted(() => ({
 const apiMocks = vi.hoisted(() => ({
   cancelTask: vi.fn(),
   closeFileBrowserSession: vi.fn(),
+  closeRegistrySession: vi.fn(),
   closeShellSession: vi.fn(),
   createFileBrowserSession: vi.fn(),
+  createRegistrySession: vi.fn(),
   createShellSession: vi.fn(),
   createShellTask: vi.fn(),
   downloadTaskResultText: vi.fn(),
@@ -33,8 +35,10 @@ vi.mock('../api', async (importOriginal) => ({
   ...((await importOriginal()) as object),
   cancelTask: apiMocks.cancelTask,
   closeFileBrowserSession: apiMocks.closeFileBrowserSession,
+  closeRegistrySession: apiMocks.closeRegistrySession,
   closeShellSession: apiMocks.closeShellSession,
   createFileBrowserSession: apiMocks.createFileBrowserSession,
+  createRegistrySession: apiMocks.createRegistrySession,
   createShellSession: apiMocks.createShellSession,
   createShellTask: apiMocks.createShellTask,
   downloadTaskResultText: apiMocks.downloadTaskResultText,
@@ -228,6 +232,21 @@ const fileBrowserSession = {
   updated_at: '2026-06-08T14:12:00Z',
 } as const;
 
+const registrySession = {
+  actor_subject: 'operator-1',
+  beacon_id: beaconOne.id,
+  close_reason: null,
+  closed_at: null,
+  created_at: '2026-06-08T14:14:00Z',
+  detached_at: null,
+  id: '77777777-7777-7777-7777-777777777777',
+  last_activity_at: '2026-06-08T14:14:00Z',
+  opened_at: '2026-06-08T14:14:00Z',
+  session_type: 'registry',
+  status: 'opening',
+  updated_at: '2026-06-08T14:14:00Z',
+} as const;
+
 function renderBeaconsPage() {
   return render(
     <MemoryRouter>
@@ -280,6 +299,8 @@ describe('BeaconsPage', () => {
     apiMocks.getTasks.mockResolvedValue({ items: [] });
     apiMocks.createFileBrowserSession.mockResolvedValue(fileBrowserSession);
     apiMocks.closeFileBrowserSession.mockResolvedValue({ ...fileBrowserSession, close_reason: 'operator', closed_at: '2026-06-08T14:13:00Z', status: 'closed' });
+    apiMocks.createRegistrySession.mockResolvedValue(registrySession);
+    apiMocks.closeRegistrySession.mockResolvedValue({ ...registrySession, close_reason: 'operator', closed_at: '2026-06-08T14:15:00Z', status: 'closed' });
     apiMocks.createShellSession.mockResolvedValue(shellSession);
     apiMocks.closeShellSession.mockResolvedValue({ ...shellSession, close_reason: 'operator', closed_at: '2026-06-08T14:11:00Z', status: 'closed' });
     apiMocks.createShellTask.mockResolvedValue(queuedTask);
@@ -579,6 +600,165 @@ describe('BeaconsPage', () => {
     }));
 
     expect((await screen.findByTestId('file-preview-output')).textContent).toContain('hello from preview');
+  });
+
+  it('opens a registry session and confirms value write and delete before applying them', async () => {
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 1,
+      beacons: [beaconOne],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 0,
+      status: 'connected',
+    });
+
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    fireEvent.click(screen.getByRole('button', { name: /Registry/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+
+    await waitFor(() => {
+      expect(apiMocks.createRegistrySession).toHaveBeenCalledWith('http://localhost:18001', 'c2-token', {
+        beacon_id: beaconOne.id,
+      });
+    });
+
+    FakeWebSocket.instances[0].open();
+    FakeWebSocket.instances[0].receive(JSON.stringify({ op: 'attached', session: registrySession }));
+    FakeWebSocket.instances[0].receive(JSON.stringify({ op: 'opened', session: { ...registrySession, status: 'open' } }));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual({
+        hive: 'HKLM',
+        key_path: 'Software',
+        op: 'reg_list_key',
+        request_id: 'reg-1',
+      });
+    });
+
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      hive: 'HKLM',
+      key_path: 'Software',
+      ok: true,
+      op: 'reg_list_key',
+      request_id: 'reg-1',
+      subkeys: ['Vendor'],
+      values: [{ name: 'TestValue', type: 'REG_SZ', value: 'initial', writable: true }],
+    }));
+
+    expect(await screen.findByText('TestValue')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /TestValue/ }));
+
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual({
+      hive: 'HKLM',
+      key_path: 'Software',
+      op: 'reg_read_value',
+      request_id: 'reg-2',
+      value_name: 'TestValue',
+    });
+
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      hive: 'HKLM',
+      key_path: 'Software',
+      ok: true,
+      op: 'reg_read_value',
+      request_id: 'reg-2',
+      value: 'initial',
+      value_name: 'TestValue',
+      value_type: 'REG_SZ',
+      writable: true,
+    }));
+
+    fireEvent.change(await screen.findByLabelText('Registry value data'), { target: { value: 'changed' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('dialog', { name: 'Confirm registry operation' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual({
+      hive: 'HKLM',
+      key_path: 'Software',
+      op: 'reg_prepare_write_value',
+      request_id: 'reg-3',
+      value: 'changed',
+      value_name: 'TestValue',
+      value_type: 'REG_SZ',
+    });
+
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      confirm_token: 'confirm-one',
+      hive: 'HKLM',
+      key_path: 'Software',
+      ok: true,
+      op: 'reg_confirm_token',
+      request_id: 'reg-3',
+      value_name: 'TestValue',
+      value_type: 'REG_SZ',
+    }));
+
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual({
+      confirm_token: 'confirm-one',
+      hive: 'HKLM',
+      key_path: 'Software',
+      op: 'reg_write_value',
+      request_id: 'reg-4',
+      value: 'changed',
+      value_name: 'TestValue',
+      value_type: 'REG_SZ',
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByRole('dialog', { name: 'Confirm registry operation' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual({
+      hive: 'HKLM',
+      key_path: 'Software',
+      op: 'reg_prepare_delete_value',
+      request_id: 'reg-5',
+      value_name: 'TestValue',
+    });
+
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      action: 'delete_value',
+      confirm_token: 'confirm-delete',
+      hive: 'HKLM',
+      key_path: 'Software',
+      ok: true,
+      op: 'reg_confirm_token',
+      request_id: 'reg-5',
+      value_name: 'TestValue',
+    }));
+
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual({
+      confirm_token: 'confirm-delete',
+      hive: 'HKLM',
+      key_path: 'Software',
+      op: 'reg_delete_value',
+      request_id: 'reg-6',
+      value_name: 'TestValue',
+    });
+  });
+
+  it('shows registry unavailable for non-Windows beacons', () => {
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 2,
+      beacons: [beaconTwo, beaconOne],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 1,
+      status: 'connected',
+    });
+
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconTwo.id}`));
+    fireEvent.click(screen.getByRole('button', { name: /Registry/ }));
+
+    expect(screen.getByText('Registry unavailable.')).toBeTruthy();
+    expect(screen.getByText('Windows registry sessions require a Windows beacon.')).toBeTruthy();
   });
 
   it('queues a shell task from the command queue modal', async () => {

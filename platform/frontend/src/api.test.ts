@@ -7,9 +7,11 @@ import {
 } from './authStorage';
 import {
   cancelTask,
+  closeRegistrySession,
   closeShellSession,
   createBeaconBuild,
   createFileBrowserSession,
+  createRegistrySession,
   createShellSession,
   createShellTask,
   createWorkerPairingToken,
@@ -381,6 +383,20 @@ describe('api client', () => {
       status: 'opening',
       updated_at: new Date().toISOString(),
     };
+    const registrySession = {
+      actor_subject: 'operator-one',
+      beacon_id: 'beacon-one',
+      close_reason: null,
+      closed_at: null,
+      created_at: new Date().toISOString(),
+      detached_at: null,
+      id: 'registry-session-one',
+      last_activity_at: new Date().toISOString(),
+      opened_at: new Date().toISOString(),
+      session_type: 'registry',
+      status: 'opening',
+      updated_at: new Date().toISOString(),
+    };
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(shellSession), { status: 200 }))
@@ -397,7 +413,9 @@ describe('api client', () => {
           }),
           { status: 200 },
         ),
-      );
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify(registrySession), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...registrySession, close_reason: 'operator', status: 'closed' }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
     await createShellSession('http://c2.local:8001/', 'c2-token', {
@@ -412,6 +430,10 @@ describe('api client', () => {
       beacon_id: 'beacon-one',
       root_path: '/home',
     });
+    await createRegistrySession('http://c2.local:8001/', 'c2-token', {
+      beacon_id: 'beacon-one',
+    });
+    await closeRegistrySession('http://c2.local:8001/', 'c2-token', 'registry-session-one');
 
     expect(fetchMock.mock.calls[0][0]).toBe('http://c2.local:8001/api/v1/sessions/shell');
     expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
@@ -429,6 +451,12 @@ describe('api client', () => {
       beacon_id: 'beacon-one',
       root_path: '/home',
     });
+    expect(fetchMock.mock.calls[4][0]).toBe('http://c2.local:8001/api/v1/sessions/registry');
+    expect(JSON.parse((fetchMock.mock.calls[4][1] as RequestInit).body as string)).toEqual({
+      beacon_id: 'beacon-one',
+    });
+    expect(fetchMock.mock.calls[5][0]).toBe('http://c2.local:8001/api/v1/sessions/registry-session-one');
+    expect((fetchMock.mock.calls[5][1] as RequestInit).method).toBe('DELETE');
     expect(shellSessionWebSocketUrl('https://c2.local:8001/base', 'session one')).toBe('wss://c2.local:8001/ws/sessions/session%20one');
   });
 

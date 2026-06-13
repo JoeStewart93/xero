@@ -170,7 +170,7 @@ TaskPriority = Literal["high", "low", "normal", "urgent"]
 TaskStatus = Literal["cancelled", "completed", "dispatched", "failed", "queued", "running"]
 ShellType = Literal["auto", "bash", "cmd", "powershell"]
 SessionStatus = Literal["closed", "closing", "detached", "failed", "open", "opening"]
-SessionType = Literal["file_browser", "shell"]
+SessionType = Literal["file_browser", "registry", "shell"]
 ShellSessionStatus = SessionStatus
 BeaconBuildStatus = Literal["building", "failed", "queued", "succeeded"]
 BeaconBuildTargetOS = Literal["linux", "windows"]
@@ -308,6 +308,10 @@ class FileBrowserSessionCreateRequest(BaseModel):
         return normalized or None
 
 
+class RegistrySessionCreateRequest(BaseModel):
+    beacon_id: str
+
+
 class SessionResponse(BaseModel):
     id: str
     beacon_id: str
@@ -348,6 +352,21 @@ class FileBrowserSessionResponse(BaseModel):
     id: str
     beacon_id: str
     session_type: Literal["file_browser"]
+    status: SessionStatus
+    actor_subject: str
+    opened_at: datetime
+    last_activity_at: datetime
+    detached_at: datetime | None = None
+    closed_at: datetime | None = None
+    close_reason: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RegistrySessionResponse(BaseModel):
+    id: str
+    beacon_id: str
+    session_type: Literal["registry"]
     status: SessionStatus
     actor_subject: str
     opened_at: datetime

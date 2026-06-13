@@ -636,6 +636,40 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/sessions/registry:
+    post:
+      tags:
+      - sessions
+      summary: Open Registry Session
+      operationId: open_registry_session_api_v1_sessions_registry_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrySessionCreateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrySessionResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/sessions/{session_id}:
     get:
       tags:
@@ -2153,6 +2187,85 @@ components:
       - message
       - occurred_at
       title: ProtocolSecurityEventResponse
+    RegistrySessionCreateRequest:
+      properties:
+        beacon_id:
+          type: string
+          title: Beacon Id
+      type: object
+      required:
+      - beacon_id
+      title: RegistrySessionCreateRequest
+    RegistrySessionResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        beacon_id:
+          type: string
+          title: Beacon Id
+        session_type:
+          type: string
+          const: registry
+          title: Session Type
+        status:
+          type: string
+          enum:
+          - closed
+          - closing
+          - detached
+          - failed
+          - open
+          - opening
+          title: Status
+        actor_subject:
+          type: string
+          title: Actor Subject
+        opened_at:
+          type: string
+          format: date-time
+          title: Opened At
+        last_activity_at:
+          type: string
+          format: date-time
+          title: Last Activity At
+        detached_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Detached At
+        closed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Closed At
+        close_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Close Reason
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - beacon_id
+      - session_type
+      - status
+      - actor_subject
+      - opened_at
+      - last_activity_at
+      - created_at
+      - updated_at
+      title: RegistrySessionResponse
     SessionResponse:
       properties:
         id:
@@ -2165,6 +2278,7 @@ components:
           type: string
           enum:
           - file_browser
+          - registry
           - shell
           title: Session Type
         shell_type:

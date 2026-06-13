@@ -113,6 +113,8 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
     assert "artifacts" in inspector.get_table_names()
     assert "beacon_builds" in inspector.get_table_names()
     assert "sessions" in inspector.get_table_names()
+    assert "registry_confirmations" in inspector.get_table_names()
+    assert "registry_audit_events" in inspector.get_table_names()
     assert "protocol_version" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "protocol_peer_public_key_b64" in {column["name"] for column in inspector.get_columns("beacons")}
     assert "transport_mode" in {column["name"] for column in inspector.get_columns("beacons")}
@@ -189,9 +191,36 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
         "rows",
         "cols",
     }.issubset(interactive_session_columns)
+    registry_confirmation_columns = {column["name"] for column in inspector.get_columns("registry_confirmations")}
+    assert {
+        "session_id",
+        "beacon_id",
+        "actor_subject",
+        "token_hash",
+        "operation",
+        "hive",
+        "key_path",
+        "value_name",
+        "value_digest",
+        "expires_at",
+        "used_at",
+    }.issubset(registry_confirmation_columns)
+    registry_audit_columns = {column["name"] for column in inspector.get_columns("registry_audit_events")}
+    assert {
+        "session_id",
+        "beacon_id",
+        "actor_subject",
+        "operation",
+        "hive",
+        "key_path",
+        "value_name",
+        "value_digest",
+        "result",
+        "occurred_at",
+    }.issubset(registry_audit_columns)
     with engine.connect() as connection:
         context = MigrationContext.configure(connection, opts={"version_table": "c2_alembic_version"})
-        assert context.get_current_heads() == ("c2_0012_interactive_sessions",)
+        assert context.get_current_heads() == ("c2_0013_registry_sessions",)
 
 
 def test_generic_crud_helpers_work_with_service_models(tmp_path):

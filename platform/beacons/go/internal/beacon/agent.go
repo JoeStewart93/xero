@@ -21,6 +21,7 @@ import (
 	"xero-beacon/internal/config"
 	"xero-beacon/internal/filebrowser"
 	"xero-beacon/internal/protocolclient"
+	"xero-beacon/internal/registryeditor"
 	"xero-beacon/internal/session"
 	"xero-beacon/internal/shell"
 	"xero-beacon/internal/state"
@@ -29,12 +30,13 @@ import (
 const resultChunkBytes = 512 * 1024
 
 type Agent struct {
-	Config config.Config
-	State  state.RuntimeState
-	Client *protocolclient.Client
-	HTTP   *http.Client
-	Files  *filebrowser.Manager
-	Shells *session.Manager
+	Config   config.Config
+	State    state.RuntimeState
+	Client   *protocolclient.Client
+	HTTP     *http.Client
+	Files    *filebrowser.Manager
+	Registry *registryeditor.Manager
+	Shells   *session.Manager
 }
 
 func New(cfg config.Config) (*Agent, error) {
@@ -47,12 +49,13 @@ func New(cfg config.Config) (*Agent, error) {
 		return nil, err
 	}
 	return &Agent{
-		Config: cfg,
-		State:  runtimeState,
-		Client: protocol,
-		HTTP:   &http.Client{Timeout: 45 * time.Second},
-		Files:  filebrowser.NewManager(),
-		Shells: session.NewManager(),
+		Config:   cfg,
+		State:    runtimeState,
+		Client:   protocol,
+		HTTP:     &http.Client{Timeout: 45 * time.Second},
+		Files:    filebrowser.NewManager(),
+		Registry: registryeditor.NewManager(),
+		Shells:   session.NewManager(),
 	}, nil
 }
 
@@ -288,6 +291,16 @@ func (a *Agent) handleSessionData(ctx context.Context, payload map[string]any, s
 				"session_type": "file_browser",
 			}, send)
 		}
+		if sessionType == "registry" {
+			if err := a.Registry.Open(sessionID); err != nil {
+				return a.sendSessionData(sessionID, "error", map[string]any{
+					"error_code":   registryeditor.ErrorCode(err),
+					"message":      err.Error(),
+					"session_type": "registry",
+				}, send)
+			}
+			return a.sendSessionData(sessionID, "open_ack", map[string]any{"session_type": "registry"}, send)
+		}
 		shellType := stringValue(payload["shell_type"])
 		if shellType == "" {
 			shellType = "auto"
@@ -307,6 +320,14 @@ func (a *Agent) handleSessionData(ctx context.Context, payload map[string]any, s
 		return a.sendFileStat(sessionID, payload, send)
 	case "read_file":
 		return a.sendFileRead(sessionID, payload, send)
+	case "reg_list_key":
+		return a.sendRegistryList(sessionID, payload, send)
+	case "reg_read_value":
+		return a.sendRegistryRead(sessionID, payload, send)
+	case "reg_write_value":
+		return a.sendRegistryWrite(sessionID, payload, send)
+	case "reg_delete_value":
+		return a.sendRegistryDelete(sessionID, payload, send)
 	case "stdin":
 		data, err := terminalData(payload)
 		if err != nil {
@@ -335,6 +356,16 @@ func (a *Agent) handleSessionData(ctx context.Context, payload map[string]any, s
 				}, send)
 			}
 			return a.sendSessionData(sessionID, "close", map[string]any{"reason": reason, "session_type": "file_browser"}, send)
+		}
+		if sessionType == "registry" {
+			if err := a.Registry.Close(sessionID); err != nil && !errors.Is(err, registryeditor.ErrUnknownSession) {
+				return a.sendSessionData(sessionID, "error", map[string]any{
+					"error_code":   registryeditor.ErrorCode(err),
+					"message":      err.Error(),
+					"session_type": "registry",
+				}, send)
+			}
+			return a.sendSessionData(sessionID, "close", map[string]any{"reason": reason, "session_type": "registry"}, send)
 		}
 		if err := a.Shells.Close(sessionID, reason); err != nil && !errors.Is(err, session.ErrUnknownSession) {
 			return a.sendSessionData(sessionID, "error", map[string]any{"reason": err.Error()}, send)
@@ -409,6 +440,101 @@ func (a *Agent) sendFileError(sessionID string, op string, requestID string, pat
 		"path":         path,
 		"request_id":   requestID,
 		"session_type": "file_browser",
+	}, send)
+}
+
+func (a *Agent) sendRegistryList(sessionID string, payload map[string]any, send func(map[string]any) error) error {
+	requestID := stringValue(payload["request_id"])
+	hive := stringValue(payload["hive"])
+	keyPath := stringValue(payload["key_path"])
+	listing, err := a.Registry.ListKey(sessionID, hive, keyPath)
+	if err != nil {
+		return a.sendRegistryError(sessionID, "reg_list_key", requestID, hive, keyPath, stringValue(payload["value_name"]), err, send)
+	}
+	return a.sendSessionData(sessionID, "reg_list_key", map[string]any{
+		"hive":         listing.Hive,
+		"key_path":     listing.KeyPath,
+		"ok":           true,
+		"request_id":   requestID,
+		"session_type": "registry",
+		"subkeys":      listing.Subkeys,
+		"values":       listing.Values,
+	}, send)
+}
+
+func (a *Agent) sendRegistryRead(sessionID string, payload map[string]any, send func(map[string]any) error) error {
+	requestID := stringValue(payload["request_id"])
+	hive := stringValue(payload["hive"])
+	keyPath := stringValue(payload["key_path"])
+	valueName := stringValue(payload["value_name"])
+	value, err := a.Registry.ReadValue(sessionID, hive, keyPath, valueName)
+	if err != nil {
+		return a.sendRegistryError(sessionID, "reg_read_value", requestID, hive, keyPath, valueName, err, send)
+	}
+	return a.sendSessionData(sessionID, "reg_read_value", map[string]any{
+		"hive":         hive,
+		"key_path":     keyPath,
+		"ok":           true,
+		"request_id":   requestID,
+		"session_type": "registry",
+		"value":        value.Value,
+		"value_name":   value.Name,
+		"value_type":   value.Type,
+		"writable":     value.Writable,
+	}, send)
+}
+
+func (a *Agent) sendRegistryWrite(sessionID string, payload map[string]any, send func(map[string]any) error) error {
+	requestID := stringValue(payload["request_id"])
+	hive := stringValue(payload["hive"])
+	keyPath := stringValue(payload["key_path"])
+	valueName := stringValue(payload["value_name"])
+	valueType := stringValue(payload["value_type"])
+	value, err := a.Registry.WriteValue(sessionID, hive, keyPath, valueName, valueType, payload["value"])
+	if err != nil {
+		return a.sendRegistryError(sessionID, "reg_write_value", requestID, hive, keyPath, valueName, err, send)
+	}
+	return a.sendSessionData(sessionID, "reg_write_value", map[string]any{
+		"hive":         hive,
+		"key_path":     keyPath,
+		"ok":           true,
+		"request_id":   requestID,
+		"session_type": "registry",
+		"value":        value.Value,
+		"value_name":   value.Name,
+		"value_type":   value.Type,
+		"writable":     value.Writable,
+	}, send)
+}
+
+func (a *Agent) sendRegistryDelete(sessionID string, payload map[string]any, send func(map[string]any) error) error {
+	requestID := stringValue(payload["request_id"])
+	hive := stringValue(payload["hive"])
+	keyPath := stringValue(payload["key_path"])
+	valueName := stringValue(payload["value_name"])
+	if err := a.Registry.DeleteValue(sessionID, hive, keyPath, valueName); err != nil {
+		return a.sendRegistryError(sessionID, "reg_delete_value", requestID, hive, keyPath, valueName, err, send)
+	}
+	return a.sendSessionData(sessionID, "reg_delete_value", map[string]any{
+		"hive":         hive,
+		"key_path":     keyPath,
+		"ok":           true,
+		"request_id":   requestID,
+		"session_type": "registry",
+		"value_name":   valueName,
+	}, send)
+}
+
+func (a *Agent) sendRegistryError(sessionID string, op string, requestID string, hive string, keyPath string, valueName string, err error, send func(map[string]any) error) error {
+	return a.sendSessionData(sessionID, op, map[string]any{
+		"error_code":   registryeditor.ErrorCode(err),
+		"hive":         hive,
+		"key_path":     keyPath,
+		"message":      err.Error(),
+		"ok":           false,
+		"request_id":   requestID,
+		"session_type": "registry",
+		"value_name":   emptyToNil(valueName),
 	}, send)
 }
 

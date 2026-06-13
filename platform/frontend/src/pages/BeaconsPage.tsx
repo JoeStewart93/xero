@@ -57,6 +57,7 @@ import { useC2Connection } from '../useC2Connection';
 import { useRealtime } from '../useRealtime';
 import { ShellSessionClient } from '../shellSessionClient';
 import type { FileBrowserEntry, ShellSessionConnectionStatus, ShellSessionMessage } from '../shellSessionClient';
+import { RegistrySessionPanel } from './RegistrySessionPanel';
 import {
   DEFAULT_BEACON_SORT_DIRECTION,
   DEFAULT_BEACON_SORT_KEY,
@@ -102,6 +103,13 @@ const hostOperations = [
     icon: FileArchive,
     key: 'files',
     label: 'Files',
+    status: 'Ready',
+  },
+  {
+    description: 'Browse and edit Windows registry values with confirmation safeguards.',
+    icon: KeyRound,
+    key: 'registry',
+    label: 'Registry',
     status: 'Ready',
   },
   {
@@ -1134,6 +1142,8 @@ function BeaconOperationsModal({
               <ShellSessionPanel beacon={beacon} connection={connection} />
             ) : activeOperation.key === 'files' ? (
               <FileBrowserPanel beacon={beacon} connection={connection} />
+            ) : activeOperation.key === 'registry' ? (
+              <RegistrySessionPanel beacon={beacon} connection={connection} />
             ) : (
               <>
                 <div className="beacon-operation-host-grid">

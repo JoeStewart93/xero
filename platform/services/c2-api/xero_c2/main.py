@@ -40,6 +40,7 @@ from xero_c2.beacon_builds import (
 )
 from xero_c2.beacon_liveness import (
     BEACON_EVENT_REASON_HEARTBEAT,
+    BEACON_STATUS_OFFLINE,
     BEACON_STATUS_ONLINE,
     apply_runtime_metadata,
     publish_beacon_event,
@@ -75,6 +76,7 @@ from xero_c2.models import (
     Artifact,
     Beacon,
     BeaconBuild,
+    BeaconEvent,
     InfrastructureWorker,
     InteractiveSession,
     ProtocolSecurityEvent,
@@ -124,6 +126,8 @@ from xero_c2.realtime import (
     websocket_origin_allowed,
 )
 from xero_c2.schemas import (
+    BeaconActivityItemResponse,
+    BeaconActivityListResponse,
     BeaconBuildCreateRequest,
     BeaconBuildListResponse,
     BeaconBuildResponse,
@@ -131,6 +135,7 @@ from xero_c2.schemas import (
     BeaconBuildTargetResponse,
     BeaconHeartbeatRequest,
     BeaconHeartbeatResponse,
+    BeaconKillResponse,
     BeaconListResponse,
     BeaconRegistrationRequest,
     BeaconRegistrationResponse,
@@ -197,6 +202,7 @@ from xero_c2.scan_jobs import (
     run_scan_job,
 )
 from xero_c2.sessions import (
+    ACTIVE_SESSION_STATUSES,
     FILE_BROWSER_SESSION_TYPE,
     REGISTRY_SESSION_TYPE,
     SESSION_OP_CLOSE,
@@ -297,6 +303,9 @@ def public_beacon(beacon: Beacon) -> dict:
         "transport_mode": beacon.transport_mode,
         "transport_connected": beacon.transport_connected,
         "transport_last_seen": beacon.transport_last_seen.isoformat() if beacon.transport_last_seen else None,
+        "removed_at": beacon.removed_at.isoformat() if beacon.removed_at else None,
+        "removed_by": beacon.removed_by,
+        "removed_reason": beacon.removed_reason,
         "first_seen": beacon.first_seen.isoformat(),
         "last_seen": beacon.last_seen.isoformat(),
     }
@@ -377,6 +386,155 @@ async def publish_task_result_event(app: FastAPI, settings, event_type: str, res
     )
     if redis_client is None:
         await app.state.operator_realtime_hub.broadcast(event)
+
+
+def beacon_removed_exception() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_410_GONE, detail="Beacon has been removed")
+
+
+def ensure_beacon_active(beacon: Beacon) -> None:
+    if beacon.removed_at is not None:
+        raise beacon_removed_exception()
+
+
+async def close_interactive_session_for_operator(
+    app: FastAPI,
+    settings,
+    session: Session,
+    shell_session: InteractiveSession,
+    *,
+    reason: str,
+) -> dict | None:
+    if shell_session.status in {"closed", "failed"}:
+        return None
+    close_payload = session_frame_payload(
+        shell_session,
+        SESSION_OP_CLOSE,
+        reason=reason,
+        session_type=shell_session.session_type,
+    )
+    with suppress(HTTPException):
+        await enqueue_session_data_frame(app, settings, session, shell_session, close_payload)
+    close_shell_session(shell_session, reason=reason)
+    session.add(shell_session)
+    session.flush()
+    return public_session(shell_session)
+
+
+async def publish_closed_session_payload(app: FastAPI, settings, session_payload: dict) -> None:
+    session_id = uuid.UUID(session_payload["id"])
+    await app.state.session_file_cache.clear_session(session_id)
+    await app.state.session_relay_manager.deliver(
+        session_id,
+        {"op": "closed", "session": session_payload},
+    )
+    await publish_session_payload_event(app, settings, "session.closed", session_payload)
+
+
+def public_beacon_activity_item(item: dict) -> dict:
+    return {
+        "id": item["id"],
+        "type": item["type"],
+        "label": item["label"],
+        "occurred_at": item["occurred_at"],
+        "beacon_id": str(item["beacon_id"]),
+        "task_id": str(item["task_id"]) if item.get("task_id") else None,
+        "session_id": str(item["session_id"]) if item.get("session_id") else None,
+        "status": item.get("status"),
+        "detail": item.get("detail"),
+    }
+
+
+def beacon_activity_items(session: Session, beacon: Beacon, *, limit: int) -> list[dict]:
+    items: list[dict] = []
+    beacon_events = (
+        session.execute(
+            select(BeaconEvent)
+            .where(BeaconEvent.beacon_id == beacon.id)
+            .order_by(BeaconEvent.occurred_at.desc(), BeaconEvent.created_at.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    for event in beacon_events:
+        items.append(
+            {
+                "id": f"beacon-{event.id}",
+                "type": "beacon.status",
+                "label": f"Beacon changed from {event.old_status} to {event.new_status}",
+                "occurred_at": event.occurred_at,
+                "beacon_id": event.beacon_id,
+                "status": event.new_status,
+                "detail": event.reason,
+            }
+        )
+
+    task_events = (
+        session.execute(
+            select(TaskAuditEvent)
+            .where(TaskAuditEvent.beacon_id == beacon.id)
+            .order_by(TaskAuditEvent.occurred_at.desc(), TaskAuditEvent.created_at.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    for event in task_events:
+        command = f" {event.command}" if event.command else ""
+        items.append(
+            {
+                "id": f"task-{event.id}",
+                "type": event.event_type,
+                "label": f"Task{command} {event.task_status or 'updated'}",
+                "occurred_at": event.occurred_at,
+                "beacon_id": event.beacon_id,
+                "task_id": event.task_id,
+                "status": event.task_status,
+                "detail": event.message,
+            }
+        )
+
+    sessions = (
+        session.execute(
+            select(InteractiveSession)
+            .where(InteractiveSession.beacon_id == beacon.id)
+            .order_by(InteractiveSession.updated_at.desc(), InteractiveSession.created_at.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    for shell_session in sessions:
+        occurred_at = shell_session.closed_at or shell_session.opened_at
+        items.append(
+            {
+                "id": f"session-{shell_session.id}",
+                "type": f"session.{shell_session.status}",
+                "label": f"{shell_session.session_type.replace('_', ' ').title()} session {shell_session.status}",
+                "occurred_at": occurred_at,
+                "beacon_id": shell_session.beacon_id,
+                "session_id": shell_session.id,
+                "status": shell_session.status,
+                "detail": shell_session.close_reason,
+            }
+        )
+
+    if beacon.removed_at is not None:
+        items.append(
+            {
+                "id": f"beacon-removed-{beacon.id}",
+                "type": "beacon.killed",
+                "label": "Beacon removed from active inventory",
+                "occurred_at": beacon.removed_at,
+                "beacon_id": beacon.id,
+                "status": "removed",
+                "detail": beacon.removed_reason,
+            }
+        )
+
+    items.sort(key=lambda item: item["occurred_at"], reverse=True)
+    return [public_beacon_activity_item(item) for item in items[:limit]]
 
 
 def schedule_scan_execution(app: FastAPI, settings, scan_job_id: uuid.UUID) -> None:
@@ -468,7 +626,7 @@ async def build_next_longpoll_task_frame(app: FastAPI, settings, beacon_id: uuid
     SessionFactory = session_factory_for_settings(settings)
     with SessionFactory() as session:
         beacon = session.get(Beacon, beacon_id)
-        if beacon is None or not beacon.protocol_session_id or not beacon.protocol_peer_public_key_b64:
+        if beacon is None or beacon.removed_at is not None or not beacon.protocol_session_id or not beacon.protocol_peer_public_key_b64:
             return None
         task = await dispatch_next_task(
             session,
@@ -1568,6 +1726,7 @@ def create_app() -> FastAPI:
         beacon = session.get(Beacon, beacon_id)
         if beacon is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
+        ensure_beacon_active(beacon)
         shell_session = create_shell_session(
             session,
             beacon=beacon,
@@ -1612,6 +1771,7 @@ def create_app() -> FastAPI:
         beacon = session.get(Beacon, beacon_id)
         if beacon is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
+        ensure_beacon_active(beacon)
         file_session = create_file_browser_session(session, beacon=beacon, actor_subject=actor_subject)
         open_payload = session_frame_payload(
             file_session,
@@ -1648,6 +1808,7 @@ def create_app() -> FastAPI:
         beacon = session.get(Beacon, beacon_id)
         if beacon is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
+        ensure_beacon_active(beacon)
         if "windows" not in beacon.os.lower():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1692,25 +1853,17 @@ def create_app() -> FastAPI:
         shell_session = session.get(InteractiveSession, session_id)
         if shell_session is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-        if shell_session.status not in {"closed", "failed"}:
-            close_payload = session_frame_payload(
-                shell_session,
-                SESSION_OP_CLOSE,
-                reason="operator",
-                session_type=shell_session.session_type,
-            )
-            with suppress(HTTPException):
-                await enqueue_session_data_frame(request.app, settings, session, shell_session, close_payload)
-            close_shell_session(shell_session, reason="operator")
-            session.add(shell_session)
+        session_payload = await close_interactive_session_for_operator(
+            request.app,
+            settings,
+            session,
+            shell_session,
+            reason="operator",
+        )
+        if session_payload is not None:
             session.commit()
             session.refresh(shell_session)
-            await request.app.state.session_file_cache.clear_session(shell_session.id)
-            await request.app.state.session_relay_manager.deliver(
-                shell_session.id,
-                {"op": "closed", "session": public_session(shell_session)},
-            )
-            await publish_session_event(request.app, settings, "session.closed", shell_session)
+            await publish_closed_session_payload(request.app, settings, session_payload)
         return SessionResponse(**public_session(shell_session))
 
     @api_router.post("/tasks", response_model=TaskResponse, tags=["tasks"])
@@ -1729,8 +1882,10 @@ def create_app() -> FastAPI:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="beacon_id must be a UUID",
             ) from exc
-        if session.get(Beacon, beacon_id) is None:
+        beacon = session.get(Beacon, beacon_id)
+        if beacon is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
+        ensure_beacon_active(beacon)
 
         args = validate_task_timeout(settings, payload.args)
         task = Task(
@@ -2005,6 +2160,7 @@ def create_app() -> FastAPI:
                 last_seen=now,
             )
         else:
+            ensure_beacon_active(beacon)
             old_status = beacon.status
             beacon.hostname = payload.hostname
             beacon.os = payload.os
@@ -2084,6 +2240,7 @@ def create_app() -> FastAPI:
 
         if not verify_beacon_token(bearer_token(authorization), beacon.beacon_token_hash):
             raise beacon_auth_exception()
+        ensure_beacon_active(beacon)
 
         now = utc_now()
         old_status = beacon.status
@@ -2131,6 +2288,7 @@ def create_app() -> FastAPI:
         beacon = session.get(Beacon, beacon_id)
         if beacon is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
+        ensure_beacon_active(beacon)
         profile = None
         if payload.profile_id is not None:
             profile = find_profile(session, payload.profile_id)
@@ -2158,6 +2316,7 @@ def create_app() -> FastAPI:
         beacon = session.get(Beacon, beacon_id)
         if beacon is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
+        ensure_beacon_active(beacon)
         assign_profile_to_beacon(session, beacon, None)
         session.commit()
         session.refresh(beacon)
@@ -2179,6 +2338,7 @@ def create_app() -> FastAPI:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
             if not verify_beacon_token(bearer_token(authorization), beacon.beacon_token_hash):
                 raise beacon_auth_exception()
+            ensure_beacon_active(beacon)
 
         manager: BeaconLongPollManager = request.app.state.beacon_longpoll_manager
         try:
@@ -2253,6 +2413,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
         if not verify_beacon_token(bearer_token(authorization), beacon.beacon_token_hash):
             raise beacon_auth_exception()
+        ensure_beacon_active(beacon)
 
         raw_frame = await request.body()
         metadata = frame_metadata(raw_frame)
@@ -2371,24 +2532,137 @@ def create_app() -> FastAPI:
     def list_beacons(
         session: DbSession,
         authorization: Annotated[str | None, Header()] = None,
+        include_removed: Annotated[bool, Query()] = False,
         status_filter: Annotated[str | None, Query(alias="status", pattern="^(online|offline)$")] = None,
     ) -> BeaconListResponse:
         authorize_c2_token(settings, authorization)
         query = select(Beacon).order_by(Beacon.last_seen.desc())
+        if not include_removed:
+            query = query.where(Beacon.removed_at.is_(None))
         if status_filter is not None:
             query = query.where(Beacon.status == status_filter)
         beacons = session.execute(query).scalars().all()
         return BeaconListResponse(items=[BeaconResponse(**public_beacon(beacon)) for beacon in beacons])
+
+    @api_router.post("/beacons/{beacon_id}/kill", response_model=BeaconKillResponse, tags=["beacons"])
+    async def kill_beacon(
+        beacon_id: uuid.UUID,
+        request: Request,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> BeaconKillResponse:
+        claims = authorize_c2_token(settings, authorization)
+        actor_subject = actor_subject_from_claims(claims)
+        beacon = session.get(Beacon, beacon_id)
+        if beacon is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
+
+        already_removed = beacon.removed_at is not None
+        now = utc_now()
+        if not already_removed:
+            old_status = beacon.status
+            beacon.status = BEACON_STATUS_OFFLINE
+            beacon.transport_connected = False
+            beacon.transport_last_seen = now
+            beacon.removed_at = now
+            beacon.removed_by = actor_subject
+            beacon.removed_reason = "operator"
+            record_status_transition(
+                session,
+                beacon,
+                old_status=old_status,
+                new_status=BEACON_STATUS_OFFLINE,
+                reason="operator-killed",
+                occurred_at=now,
+            )
+            session.add(beacon)
+
+        active_sessions = (
+            session.execute(
+                select(InteractiveSession)
+                .where(InteractiveSession.beacon_id == beacon.id, InteractiveSession.status.in_(ACTIVE_SESSION_STATUSES))
+                .order_by(InteractiveSession.updated_at.desc())
+            )
+            .scalars()
+            .all()
+        )
+        closed_session_payloads = []
+        for shell_session in active_sessions:
+            session_payload = await close_interactive_session_for_operator(
+                request.app,
+                settings,
+                session,
+                shell_session,
+                reason="beacon_killed",
+            )
+            if session_payload is not None:
+                closed_session_payloads.append(session_payload)
+
+        queued_tasks = (
+            session.execute(
+                select(Task)
+                .where(Task.beacon_id == beacon.id, Task.status == TASK_STATUS_QUEUED)
+                .order_by(Task.queued_at.desc())
+            )
+            .scalars()
+            .all()
+        )
+        cancelled_task_payloads = []
+        for task in queued_tasks:
+            cancelled = await cancel_task(
+                session,
+                request.app.state.task_queue_service,
+                getattr(request.app.state, "redis_client", None),
+                task,
+                actor_subject=actor_subject,
+            )
+            cancelled_task_payloads.append(public_task(cancelled))
+
+        session.commit()
+        session.refresh(beacon)
+        beacon_payload = public_beacon(beacon)
+
+        await request.app.state.beacon_transport_manager.close_beacon(beacon.id)
+        await request.app.state.beacon_longpoll_manager.close_beacon(beacon.id)
+        for session_payload in closed_session_payloads:
+            await publish_closed_session_payload(request.app, settings, session_payload)
+        for task_payload in cancelled_task_payloads:
+            await publish_task_event(request.app, settings, "task.cancelled", task_payload)
+        await publish_beacon_event(request.app, settings, "beacon.killed", beacon_payload)
+
+        return BeaconKillResponse(
+            beacon=BeaconResponse(**beacon_payload),
+            cancelled_tasks=len(cancelled_task_payloads),
+            closed_sessions=len(closed_session_payloads),
+            status="already_removed" if already_removed else "removed",
+        )
+
+    @api_router.get("/beacons/{beacon_id}/activity", response_model=BeaconActivityListResponse, tags=["beacons"])
+    def list_beacon_activity(
+        beacon_id: uuid.UUID,
+        session: DbSession,
+        authorization: Annotated[str | None, Header()] = None,
+        limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    ) -> BeaconActivityListResponse:
+        authorize_c2_token(settings, authorization)
+        beacon = session.get(Beacon, beacon_id)
+        if beacon is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
+        items = beacon_activity_items(session, beacon, limit=limit)
+        return BeaconActivityListResponse(items=[BeaconActivityItemResponse(**item) for item in items])
 
     @api_router.get("/beacons/{beacon_id}", response_model=BeaconResponse, tags=["beacons"])
     def get_beacon(
         beacon_id: uuid.UUID,
         session: DbSession,
         authorization: Annotated[str | None, Header()] = None,
+        include_removed: Annotated[bool, Query()] = False,
     ) -> BeaconResponse:
         authorize_c2_token(settings, authorization)
         beacon = session.get(Beacon, beacon_id)
         if beacon is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
+        if beacon.removed_at is not None and not include_removed:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beacon not found")
         return BeaconResponse(**public_beacon(beacon))
 

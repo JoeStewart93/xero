@@ -24,9 +24,11 @@ const apiMocks = vi.hoisted(() => ({
   createShellSession: vi.fn(),
   createShellTask: vi.fn(),
   downloadTaskResultText: vi.fn(),
+  getBeaconActivity: vi.fn(),
   getTaskResult: vi.fn(),
   getTasks: vi.fn(),
   getTrafficProfiles: vi.fn(),
+  killBeacon: vi.fn(),
 }));
 
 const terminalMocks = vi.hoisted(() => ({
@@ -47,9 +49,11 @@ vi.mock('../api', async (importOriginal) => ({
   createShellSession: apiMocks.createShellSession,
   createShellTask: apiMocks.createShellTask,
   downloadTaskResultText: apiMocks.downloadTaskResultText,
+  getBeaconActivity: apiMocks.getBeaconActivity,
   getTaskResult: apiMocks.getTaskResult,
   getTasks: apiMocks.getTasks,
   getTrafficProfiles: apiMocks.getTrafficProfiles,
+  killBeacon: apiMocks.killBeacon,
 }));
 
 vi.mock('@xterm/xterm', () => ({
@@ -278,9 +282,9 @@ const registrySession = {
   updated_at: '2026-06-08T14:14:00Z',
 } as const;
 
-function renderBeaconsPage() {
+function renderBeaconsPage(initialEntries = ['/beacons']) {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntries}>
       <BeaconsPage />
     </MemoryRouter>,
   );
@@ -361,7 +365,35 @@ describe('BeaconsPage', () => {
       updated_at: '2026-06-08T14:09:00Z',
     });
     apiMocks.downloadTaskResultText.mockResolvedValue(new Blob(['output line\n'], { type: 'text/plain' }));
+    apiMocks.getBeaconActivity.mockResolvedValue({
+      items: [
+        {
+          beacon_id: beaconOne.id,
+          detail: 'Operator queued shell task.',
+          id: 'activity-one',
+          label: 'Task whoami queued',
+          occurred_at: '2026-06-08T14:09:00Z',
+          session_id: null,
+          status: 'queued',
+          task_id: queuedTask.id,
+          type: 'task.queued',
+        },
+      ],
+    });
     apiMocks.getTrafficProfiles.mockResolvedValue({ items: [cloudfrontProfile] });
+    apiMocks.killBeacon.mockResolvedValue({
+      beacon: {
+        ...beaconOne,
+        removed_at: '2026-06-08T14:11:00Z',
+        removed_by: 'xero-ui-client',
+        removed_reason: 'operator',
+        status: 'offline',
+        transport_connected: false,
+      },
+      cancelled_tasks: 1,
+      closed_sessions: 0,
+      status: 'removed',
+    });
     apiMocks.assignBeaconTrafficProfile.mockResolvedValue({
       ...beaconOne,
       applied_profile_version: 1,
@@ -512,6 +544,116 @@ describe('BeaconsPage', () => {
     expect(rows[1].textContent).toContain('beacon-bravo');
     expect(screen.getByRole('button', { name: 'Toggle beacon sort direction' }).textContent).toContain('Desc');
     expect(screen.getByRole('button', { name: 'Sort beacons by Last Heartbeat' }).textContent).toContain('Descending');
+  });
+
+  it('filters beacon rows by URL-seeded and operator-selected status', () => {
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 2,
+      beacons: [beaconOne, beaconTwo],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 1,
+      status: 'connected',
+    });
+
+    renderBeaconsPage(['/beacons?status=offline']);
+
+    expect(screen.queryByTestId(`beacon-row-${beaconOne.id}`)).toBeNull();
+    expect(screen.getByTestId(`beacon-row-${beaconTwo.id}`)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Online' }));
+    expect(screen.getByTestId(`beacon-row-${beaconOne.id}`)).toBeTruthy();
+    expect(screen.queryByTestId(`beacon-row-${beaconTwo.id}`)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    expect(screen.getByTestId(`beacon-row-${beaconOne.id}`)).toBeTruthy();
+    expect(screen.getByTestId(`beacon-row-${beaconTwo.id}`)).toBeTruthy();
+  });
+
+  it('exports only the visible beacon rows as CSV', async () => {
+    const createObjectURL = vi.fn((object: Blob | MediaSource) => {
+      expect(object).toBeInstanceOf(Blob);
+      return 'blob:xero-beacons';
+    });
+    const revokeObjectURL = vi.fn();
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL, revokeObjectURL }));
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 2,
+      beacons: [beaconOne, beaconTwo],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 1,
+      status: 'connected',
+    });
+
+    renderBeaconsPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Offline' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export visible beacons' }));
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:xero-beacons');
+    const blob = createObjectURL.mock.calls[0]?.[0];
+    expect(blob).toBeInstanceOf(Blob);
+    const csv = await (blob as Blob).text();
+    expect(csv).toContain('hostname,os,status,last_seen,transport');
+    expect(csv).toContain('beacon-bravo,Ubuntu 24.04,offline');
+    expect(csv).not.toContain('beacon-alpha');
+  });
+
+  it('renders recent activity for the selected beacon', async () => {
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 1,
+      beacons: [beaconOne],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 0,
+      status: 'connected',
+    });
+
+    renderBeaconsPage();
+
+    expect(await screen.findByTestId('beacon-activity-list')).toBeTruthy();
+    expect(screen.getByText('Task whoami queued')).toBeTruthy();
+    expect(apiMocks.getBeaconActivity).toHaveBeenCalledWith('http://localhost:18001', 'c2-token', beaconOne.id, 20);
+  });
+
+  it('kills a beacon after confirmation and removes it from the active list', async () => {
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 2,
+      beacons: [beaconOne, beaconTwo],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 1,
+      status: 'connected',
+    });
+
+    renderBeaconsPage();
+
+    fireEvent.click(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Kill beacon' })[0]);
+
+    let dialog = screen.getByRole('dialog', { name: 'Kill beacon confirmation' });
+    expect(dialog.textContent).toContain('Remove beacon-alpha from active inventory');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByTestId(`beacon-row-${beaconOne.id}`)).toBeTruthy();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Kill beacon' })[0]);
+    dialog = screen.getByRole('dialog', { name: 'Kill beacon confirmation' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Kill beacon' }));
+
+    await waitFor(() => {
+      expect(apiMocks.killBeacon).toHaveBeenCalledWith('http://localhost:18001', 'c2-token', beaconOne.id);
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId(`beacon-row-${beaconOne.id}`)).toBeNull();
+    });
+    expect(screen.getByText('Removed beacon-alpha; closed 0 sessions and cancelled 1 tasks.')).toBeTruthy();
   });
 
   it('opens host operations from a beacon row double-click', () => {

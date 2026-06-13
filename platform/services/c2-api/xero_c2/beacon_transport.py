@@ -106,6 +106,14 @@ class BeaconTransportManager:
         await connection.cancel_sender()
         return True
 
+    async def close_beacon(self, beacon_id: uuid.UUID, *, code: int = 1000) -> bool:
+        async with self._lock:
+            connection = self._connections.pop(beacon_id, None)
+        if connection is None:
+            return False
+        await connection.close(code=code)
+        return True
+
     async def close_all(self) -> None:
         async with self._lock:
             connections = list(self._connections.values())

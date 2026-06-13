@@ -2126,7 +2126,7 @@ h2 {
 
 .beacon-registry-toolbar {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) auto auto auto;
+  grid-template-columns: minmax(240px, 1fr) auto auto auto auto auto;
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
@@ -2167,8 +2167,42 @@ h2 {
   color: rgba(141, 164, 184, 0.62);
 }
 
+.beacon-status-filter {
+  display: inline-flex;
+  overflow: hidden;
+  min-height: 34px;
+  align-items: stretch;
+  border: 1px solid var(--xero-border);
+  border-radius: 5px;
+  background: rgba(3, 6, 9, 0.72);
+}
+
+.beacon-status-filter button {
+  min-width: 58px;
+  border: 0;
+  border-right: 1px solid rgba(0, 231, 255, 0.14);
+  padding: 0 10px;
+  background: transparent;
+  color: var(--xero-muted-strong);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 16px;
+}
+
+.beacon-status-filter button:last-child {
+  border-right: 0;
+}
+
+.beacon-status-filter button:hover,
+.beacon-status-filter button.is-selected {
+  background: rgba(0, 231, 255, 0.12);
+  color: var(--xero-primary);
+}
+
 .beacon-sort-direction,
-.beacon-sort-reset {
+.beacon-sort-reset,
+.beacon-export-button {
   display: inline-flex;
   min-height: 34px;
   align-items: center;
@@ -2186,9 +2220,15 @@ h2 {
 }
 
 .beacon-sort-direction:hover,
-.beacon-sort-reset:hover {
+.beacon-sort-reset:hover,
+.beacon-export-button:hover:not(:disabled) {
   border-color: var(--xero-primary);
   color: var(--xero-primary);
+}
+
+.beacon-export-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
 }
 
 .beacon-registry-count {
@@ -2594,6 +2634,12 @@ h2 {
   line-height: 16px;
 }
 
+.beacon-detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 10px;
+}
+
 .beacon-detail-row {
   display: grid;
   gap: 2px;
@@ -2675,6 +2721,128 @@ h2 {
 
 .beacon-metadata-band div:last-child {
   border-right: 0;
+}
+
+.beacon-activity-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  border: 1px solid rgba(0, 231, 255, 0.18);
+  border-radius: 5px;
+  padding: 9px;
+  background: rgba(1, 5, 9, 0.62);
+}
+
+.beacon-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.beacon-section-head > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.beacon-section-head strong {
+  color: var(--xero-text);
+  font-size: 13px;
+  font-weight: 820;
+  line-height: 18px;
+}
+
+.beacon-section-head span {
+  color: var(--xero-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.beacon-activity-list {
+  display: grid;
+  gap: 6px;
+}
+
+.beacon-activity-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  border: 1px solid rgba(0, 231, 255, 0.12);
+  border-radius: 5px;
+  padding: 7px 9px;
+  background: rgba(0, 231, 255, 0.04);
+}
+
+.beacon-activity-item > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.beacon-activity-item strong {
+  overflow: hidden;
+  color: var(--xero-text);
+  font-size: 12.5px;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.beacon-activity-item span,
+.beacon-activity-item time,
+.beacon-activity-empty {
+  color: var(--xero-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.beacon-activity-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.beacon-activity-item time {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  white-space: nowrap;
+}
+
+.beacon-activity-empty {
+  border: 1px dashed rgba(0, 231, 255, 0.18);
+  border-radius: 5px;
+  padding: 10px;
+  background: rgba(1, 5, 9, 0.46);
+}
+
+.beacon-kill-modal-body {
+  display: grid;
+  gap: 12px;
+}
+
+.beacon-kill-modal-body p {
+  margin: 0;
+  color: var(--xero-muted-strong);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.beacon-kill-modal-body p strong {
+  color: var(--xero-text);
+}
+
+.beacon-kill-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.beacon-kill-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .beacon-operations-backdrop {

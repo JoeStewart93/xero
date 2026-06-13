@@ -70,11 +70,37 @@ export interface Beacon {
   profile_template?: string | null;
   profile_version?: number | null;
   protocol_version: number | null;
+  removed_at?: string | null;
+  removed_by?: string | null;
+  removed_reason?: string | null;
   sleep_seconds?: number;
   status: string;
   transport_connected: boolean;
   transport_last_seen: string | null;
   transport_mode: 'long-poll' | 'rest' | 'websocket';
+}
+
+export interface BeaconKillResponse {
+  beacon: Beacon;
+  cancelled_tasks: number;
+  closed_sessions: number;
+  status: 'already_removed' | 'removed';
+}
+
+export interface BeaconActivityItem {
+  beacon_id: string;
+  detail: string | null;
+  id: string;
+  label: string;
+  occurred_at: string;
+  session_id: string | null;
+  status: string | null;
+  task_id: string | null;
+  type: string;
+}
+
+export interface BeaconActivityListResponse {
+  items: BeaconActivityItem[];
 }
 
 export type WorkerKind = 'beacon-handler' | 'scanner';
@@ -698,13 +724,35 @@ export async function getCurrentOperator(accessToken?: string): Promise<Operator
   return apiFetch<Operator>('/api/v1/me', {}, accessToken);
 }
 
-export async function getC2Beacons(baseUrl: string, accessToken: string): Promise<BeaconListResponse> {
+export async function getC2Beacons(
+  baseUrl: string,
+  accessToken: string,
+  options: { includeRemoved?: boolean; status?: 'offline' | 'online' } = {},
+): Promise<BeaconListResponse> {
   const headers = new Headers();
   headers.set('Accept', 'application/json');
   headers.set('Authorization', `Bearer ${accessToken}`);
 
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/beacons`, { headers });
+  const params = new URLSearchParams();
+  if (options.includeRemoved) {
+    params.set('include_removed', 'true');
+  }
+  if (options.status) {
+    params.set('status', options.status);
+  }
+  const query = params.toString();
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/beacons${query ? `?${query}` : ''}`, { headers });
   return parseJsonResponse<BeaconListResponse>(response);
+}
+
+export async function getC2Beacon(
+  baseUrl: string,
+  accessToken: string,
+  beaconId: string,
+  includeRemoved = false,
+): Promise<Beacon> {
+  const query = includeRemoved ? '?include_removed=true' : '';
+  return c2Fetch<Beacon>(baseUrl, accessToken, `/api/v1/beacons/${beaconId}${query}`);
 }
 
 async function c2Fetch<T>(baseUrl: string, accessToken: string, path: string, options: RequestInit = {}): Promise<T> {
@@ -871,6 +919,21 @@ export async function clearBeaconTrafficProfile(baseUrl: string, accessToken: st
   return c2Fetch<Beacon>(baseUrl, accessToken, `/api/v1/beacons/${beaconId}/profile`, {
     method: 'DELETE',
   });
+}
+
+export async function killBeacon(baseUrl: string, accessToken: string, beaconId: string): Promise<BeaconKillResponse> {
+  return c2Fetch<BeaconKillResponse>(baseUrl, accessToken, `/api/v1/beacons/${beaconId}/kill`, {
+    method: 'POST',
+  });
+}
+
+export async function getBeaconActivity(
+  baseUrl: string,
+  accessToken: string,
+  beaconId: string,
+  limit = 20,
+): Promise<BeaconActivityListResponse> {
+  return c2Fetch<BeaconActivityListResponse>(baseUrl, accessToken, `/api/v1/beacons/${beaconId}/activity?limit=${limit}`);
 }
 
 export async function getTasks(

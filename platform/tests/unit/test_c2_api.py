@@ -2948,6 +2948,169 @@ def test_list_beacons_filters_by_status(c2_client):
     assert hostnames == {online["beacon"]["hostname"]}
 
 
+def test_kill_beacon_removes_from_active_list_and_keeps_history(c2_client):
+    token = connect_c2(c2_client)
+    registered = register_beacon(c2_client, hostname="kill-target")
+
+    response = c2_client.post(
+        f"/api/v1/beacons/{registered['beacon_id']}/kill",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    list_default = c2_client.get("/api/v1/beacons", headers={"Authorization": f"Bearer {token}"})
+    list_history = c2_client.get("/api/v1/beacons?include_removed=true", headers={"Authorization": f"Bearer {token}"})
+    get_default = c2_client.get(
+        f"/api/v1/beacons/{registered['beacon_id']}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    get_history = c2_client.get(
+        f"/api/v1/beacons/{registered['beacon_id']}?include_removed=true",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "removed"
+    assert payload["beacon"]["removed_at"] is not None
+    assert payload["beacon"]["removed_by"] == "xero-ui-client"
+    assert list_default.json()["items"] == []
+    assert [item["hostname"] for item in list_history.json()["items"]] == ["kill-target"]
+    assert get_default.status_code == 404
+    assert get_history.status_code == 200
+
+
+def test_kill_beacon_closes_sessions_cancels_tasks_and_is_idempotent(c2_client):
+    token = connect_c2(c2_client)
+    registered = register_beacon(c2_client)
+    queued_task = create_shell_task(c2_client, token, registered["beacon_id"], command="hostname")
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        beacon = session.get(Beacon, uuid.UUID(registered["beacon_id"]))
+        assert beacon is not None
+        shell_session = InteractiveSession(
+            actor_subject="operator:test",
+            beacon_id=beacon.id,
+            opened_at=utc_now(),
+            session_type="shell",
+            shell_type="bash",
+            status="open",
+        )
+        session.add(shell_session)
+        session.commit()
+        session_id = shell_session.id
+
+    first = c2_client.post(
+        f"/api/v1/beacons/{registered['beacon_id']}/kill",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    second = c2_client.post(
+        f"/api/v1/beacons/{registered['beacon_id']}/kill",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    with SessionFactory() as session:
+        task = session.get(Task, uuid.UUID(queued_task["id"]))
+        stored_session = session.get(InteractiveSession, session_id)
+        beacon = session.get(Beacon, uuid.UUID(registered["beacon_id"]))
+
+    assert first.status_code == 200
+    assert first.json()["closed_sessions"] == 1
+    assert first.json()["cancelled_tasks"] == 1
+    assert second.status_code == 200
+    assert second.json()["status"] == "already_removed"
+    assert second.json()["closed_sessions"] == 0
+    assert second.json()["cancelled_tasks"] == 0
+    assert task is not None
+    assert task.status == "cancelled"
+    assert stored_session is not None
+    assert stored_session.status == "closed"
+    assert stored_session.close_reason == "beacon_killed"
+    assert beacon is not None
+    assert beacon.status == "offline"
+    assert beacon.transport_connected is False
+
+
+def test_removed_beacon_rejects_heartbeat_tasks_sessions_and_profile_changes(c2_client):
+    token = connect_c2(c2_client)
+    registered = register_beacon(c2_client)
+    kill = c2_client.post(
+        f"/api/v1/beacons/{registered['beacon_id']}/kill",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    heartbeat = c2_client.post(
+        f"/api/v1/beacons/{registered['beacon_id']}/heartbeat",
+        headers={"Authorization": f"Bearer {registered['beacon_token']}"},
+        json={},
+    )
+    task = c2_client.post(
+        "/api/v1/tasks",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "beacon_id": registered["beacon_id"],
+            "module": "shell",
+            "args": {"command": "whoami"},
+            "priority": "normal",
+        },
+    )
+    shell = c2_client.post(
+        "/api/v1/sessions/shell",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"beacon_id": registered["beacon_id"], "shell_type": "auto"},
+    )
+    profile = c2_client.delete(
+        f"/api/v1/beacons/{registered['beacon_id']}/profile",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert kill.status_code == 200
+    assert heartbeat.status_code == 410
+    assert task.status_code == 410
+    assert shell.status_code == 410
+    assert profile.status_code == 410
+
+
+def test_beacon_activity_includes_lifecycle_task_and_session_events(c2_client):
+    token = connect_c2(c2_client)
+    registered = register_beacon(c2_client)
+    queued_task = create_shell_task(c2_client, token, registered["beacon_id"], command="id")
+
+    settings = get_settings()
+    SessionFactory = get_session_factory(settings.database_url)
+    with SessionFactory() as session:
+        beacon = session.get(Beacon, uuid.UUID(registered["beacon_id"]))
+        assert beacon is not None
+        session.add(
+            InteractiveSession(
+                actor_subject="operator:test",
+                beacon_id=beacon.id,
+                opened_at=utc_now(),
+                session_type="shell",
+                shell_type="bash",
+                status="open",
+            )
+        )
+        session.commit()
+
+    kill = c2_client.post(
+        f"/api/v1/beacons/{registered['beacon_id']}/kill",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    activity = c2_client.get(
+        f"/api/v1/beacons/{registered['beacon_id']}/activity",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert kill.status_code == 200
+    assert queued_task["status"] == "queued"
+    assert activity.status_code == 200
+    labels = [item["label"] for item in activity.json()["items"]]
+    assert "Beacon removed from active inventory" in labels
+    assert any(label.startswith("Task id ") for label in labels)
+    assert "Shell session closed" in labels
+
+
 def test_stale_detector_marks_beacons_offline_and_logs_event(c2_client):
     registered = register_beacon(c2_client)
     settings = get_settings()

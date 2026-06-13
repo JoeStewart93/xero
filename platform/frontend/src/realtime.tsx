@@ -24,6 +24,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   const [latestEvent, setLatestEvent] = useState<OperatorRealtimeEvent | null>(null);
   const [status, setStatus] = useState<RealtimeStatus>('disconnected');
   const seenEventIds = useRef(new Set<string>());
+  const removedBeaconIds = useRef(new Set<string>());
   const isRealtimeEnabled = Boolean(session && connection);
 
   const reconcileBeacons = useCallback(async () => {
@@ -33,9 +34,14 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     try {
       const response = await getC2Beacons(connection.baseUrl, connection.accessToken);
       setBeacons((current) => {
-        const merged = new Map(current.map((beacon) => [beacon.id, beacon]));
-        response.items.forEach((beacon) => merged.set(beacon.id, beacon));
-        return [...merged.values()];
+        const freshItems = response.items.filter((beacon) => !removedBeaconIds.current.has(beacon.id));
+        const nextById = new Map(freshItems.map((beacon) => [beacon.id, beacon]));
+        current.forEach((beacon) => {
+          if (!nextById.has(beacon.id) && !removedBeaconIds.current.has(beacon.id)) {
+            nextById.set(beacon.id, beacon);
+          }
+        });
+        return Array.from(nextById.values());
       });
       setError('');
     } catch (caught) {
@@ -47,6 +53,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!session || !connection) {
       seenEventIds.current.clear();
+      removedBeaconIds.current.clear();
       return undefined;
     }
     if (typeof WebSocket === 'undefined') {
@@ -69,7 +76,12 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
         }
         setLatestEvent(event);
         const beacon = beaconFromEvent(event);
-        if (beacon) {
+        if (event.type === 'beacon.killed' && beacon) {
+          removedBeaconIds.current.add(beacon.id);
+          setBeacons((current) => current.filter((item) => item.id !== beacon.id));
+          return;
+        }
+        if (beacon && !removedBeaconIds.current.has(beacon.id)) {
           setBeacons((current) => {
             const next = current.filter((item) => item.id !== beacon.id);
             return [beacon, ...next];

@@ -256,10 +256,17 @@ def test_c2_migrations_create_only_beacon_schema(monkeypatch, tmp_path):
         scan_chunk_columns
     )
     beacon_columns = {column["name"] for column in inspector.get_columns("beacons")}
-    assert {"profile_id", "applied_profile_version", "profile_applied_at"}.issubset(beacon_columns)
+    assert {
+        "profile_id",
+        "applied_profile_version",
+        "profile_applied_at",
+        "removed_at",
+        "removed_by",
+        "removed_reason",
+    }.issubset(beacon_columns)
     with engine.connect() as connection:
         context = MigrationContext.configure(connection, opts={"version_table": "c2_alembic_version"})
-        assert context.get_current_heads() == ("c2_0015_scan_jobs",)
+        assert context.get_current_heads() == ("c2_0016_beacon_soft_removal",)
 
 
 def test_generic_crud_helpers_work_with_service_models(tmp_path):

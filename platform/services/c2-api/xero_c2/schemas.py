@@ -169,7 +169,9 @@ class TransportStatusResponse(BaseModel):
 TaskPriority = Literal["high", "low", "normal", "urgent"]
 TaskStatus = Literal["cancelled", "completed", "dispatched", "failed", "queued", "running"]
 ShellType = Literal["auto", "bash", "cmd", "powershell"]
-ShellSessionStatus = Literal["closed", "closing", "detached", "failed", "open", "opening"]
+SessionStatus = Literal["closed", "closing", "detached", "failed", "open", "opening"]
+SessionType = Literal["file_browser", "shell"]
+ShellSessionStatus = SessionStatus
 BeaconBuildStatus = Literal["building", "failed", "queued", "succeeded"]
 BeaconBuildTargetOS = Literal["linux", "windows"]
 BeaconBuildTargetArch = Literal["amd64"]
@@ -293,6 +295,37 @@ class ShellSessionCreateRequest(BaseModel):
     cols: int = Field(default=120, ge=20, le=300)
 
 
+class FileBrowserSessionCreateRequest(BaseModel):
+    beacon_id: str
+    root_path: str | None = Field(default=None, max_length=1024)
+
+    @field_validator("root_path")
+    @classmethod
+    def normalize_root_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class SessionResponse(BaseModel):
+    id: str
+    beacon_id: str
+    session_type: SessionType
+    shell_type: ShellType | str | None = None
+    status: SessionStatus
+    actor_subject: str
+    opened_at: datetime
+    last_activity_at: datetime
+    detached_at: datetime | None = None
+    closed_at: datetime | None = None
+    close_reason: str | None = None
+    rows: int | None = None
+    cols: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class ShellSessionResponse(BaseModel):
     id: str
     beacon_id: str
@@ -307,6 +340,21 @@ class ShellSessionResponse(BaseModel):
     close_reason: str | None = None
     rows: int
     cols: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class FileBrowserSessionResponse(BaseModel):
+    id: str
+    beacon_id: str
+    session_type: Literal["file_browser"]
+    status: SessionStatus
+    actor_subject: str
+    opened_at: datetime
+    last_activity_at: datetime
+    detached_at: datetime | None = None
+    closed_at: datetime | None = None
+    close_reason: str | None = None
     created_at: datetime
     updated_at: datetime
 

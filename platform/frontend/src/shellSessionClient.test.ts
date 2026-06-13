@@ -95,6 +95,38 @@ describe('shell session client', () => {
     expect(messages).toHaveBeenCalledWith({ data: 'output', op: 'stdout' });
   });
 
+  it('queues session operations until the websocket opens', () => {
+    const client = new ShellSessionClient({
+      accessToken: 'token-one',
+      baseUrl: 'http://localhost:8001',
+      onMessage: vi.fn(),
+      onStatusChange: vi.fn(),
+      sessionId: 'session-one',
+      webSocketCtor: FakeWebSocket as unknown as typeof WebSocket,
+    });
+
+    client.start();
+    client.sendMessage({
+      op: 'list_dir',
+      path: '',
+      refresh: false,
+      request_id: 'file-1',
+    });
+
+    expect(FakeWebSocket.instances[0].sent).toEqual([]);
+
+    FakeWebSocket.instances[0].open();
+
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toEqual([
+      {
+        op: 'list_dir',
+        path: '',
+        refresh: false,
+        request_id: 'file-1',
+      },
+    ]);
+  });
+
   it('reconnects unexpected closes and stops cleanly', async () => {
     const statuses = vi.fn();
     const client = new ShellSessionClient({

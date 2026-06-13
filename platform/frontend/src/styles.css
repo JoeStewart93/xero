@@ -3100,6 +3100,133 @@ h2 {
   white-space: pre-wrap;
 }
 
+.file-browser-panel {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.file-browser-breadcrumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.file-browser-breadcrumbs button {
+  min-height: 30px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: rgba(148, 163, 184, 0.08);
+  color: #d8e7ee;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.file-browser-breadcrumbs button:disabled {
+  color: #7dd3fc;
+  cursor: default;
+}
+
+.file-browser-grid {
+  display: grid;
+  min-height: 380px;
+  grid-template-columns: minmax(0, 1.45fr) minmax(260px, 0.75fr);
+  gap: 14px;
+}
+
+.file-browser-table-wrap {
+  overflow: auto;
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+}
+
+.file-browser-table {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+}
+
+.file-browser-table th,
+.file-browser-table td {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  padding: 10px 12px;
+  color: #d8e7ee;
+  font-size: 12px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.file-browser-table th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background: rgba(3, 7, 18, 0.78);
+  color: #8ba5b4;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.file-browser-entry-button {
+  display: inline-flex;
+  max-width: 320px;
+  min-height: 26px;
+  align-items: center;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #e8f6fb;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+  gap: 8px;
+  text-align: left;
+}
+
+.file-browser-entry-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-browser-empty {
+  display: block;
+  padding: 20px;
+  color: #8ba5b4;
+  text-align: center;
+}
+
+.file-preview-panel {
+  display: grid;
+  min-width: 0;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  padding: 14px;
+  background: rgba(3, 7, 18, 0.38);
+}
+
+.file-preview-output {
+  overflow: auto;
+  min-height: 260px;
+  margin: 0;
+  border: 1px solid rgba(125, 211, 252, 0.16);
+  border-radius: 6px;
+  padding: 14px;
+  background: #010509;
+  color: #d7f7ff;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .task-empty-state {
   display: grid;
   min-height: 52px;
@@ -3922,6 +4049,10 @@ h2 {
     grid-template-columns: minmax(150px, 1fr) auto auto;
   }
 
+  .file-browser-grid {
+    grid-template-columns: 1fr;
+  }
+
   .project-action-stack {
     grid-column: 1 / -1;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4139,6 +4270,7 @@ h2 {
   .beacon-operation-rail,
   .shell-session-status-strip,
   .shell-session-toolbar,
+  .file-browser-grid,
   .task-command-grid,
   .task-result-meta,
   .task-row,

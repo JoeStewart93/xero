@@ -4,6 +4,8 @@ import asyncio
 import base64
 import contextlib
 import json
+import posixpath
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
@@ -50,6 +52,9 @@ SESSION_OP_RESIZE = "resize"
 SESSION_OP_CLOSE = "close"
 SESSION_OP_EXIT = "exit"
 SESSION_OP_ERROR = "error"
+SESSION_OP_LIST_DIR = "list_dir"
+SESSION_OP_STAT = "stat"
+SESSION_OP_READ_FILE = "read_file"
 SESSION_DATA_OPS = {
     SESSION_OP_OPEN,
     SESSION_OP_OPEN_ACK,
@@ -60,7 +65,15 @@ SESSION_DATA_OPS = {
     SESSION_OP_CLOSE,
     SESSION_OP_EXIT,
     SESSION_OP_ERROR,
+    SESSION_OP_LIST_DIR,
+    SESSION_OP_STAT,
+    SESSION_OP_READ_FILE,
 }
+
+FILE_BROWSER_SESSION_TYPE = "file_browser"
+SHELL_SESSION_TYPE = "shell"
+FILE_BROWSER_OPS = {SESSION_OP_LIST_DIR, SESSION_OP_STAT, SESSION_OP_READ_FILE}
+FILE_BROWSER_ERROR_CODES = {"access_denied", "binary_file", "not_found", "path_invalid", "unsupported_operation"}
 
 
 class DuplicateSessionAttachError(RuntimeError):
@@ -73,6 +86,46 @@ class SessionDataOutcome:
     session_payload: dict[str, Any]
     operator_message: dict[str, Any] | None
     event_type: str | None
+    cache_listing: dict[str, Any] | None = None
+
+
+class FileListingCache:
+    def __init__(self, *, ttl_seconds: float = 5.0) -> None:
+        self.ttl_seconds = ttl_seconds
+        self._items: dict[tuple[uuid.UUID, str], tuple[float, dict[str, Any]]] = {}
+        self._lock = asyncio.Lock()
+
+    async def get(self, session_id: uuid.UUID, path: str, *, request_id: str) -> dict[str, Any] | None:
+        key = (session_id, normalize_file_browser_path(path))
+        async with self._lock:
+            cached = self._items.get(key)
+            if cached is None:
+                return None
+            expires_at, payload = cached
+            if expires_at <= time.monotonic():
+                self._items.pop(key, None)
+                return None
+            response = dict(payload)
+        response["request_id"] = request_id
+        response["cached"] = True
+        return response
+
+    async def store(self, session_id: uuid.UUID, payload: dict[str, Any]) -> None:
+        if payload.get("op") != SESSION_OP_LIST_DIR or payload.get("ok") is not True:
+            return
+        path = normalize_file_browser_path(str(payload.get("path") or ""))
+        key = (session_id, path)
+        cached = dict(payload)
+        cached["path"] = path
+        cached["cached"] = False
+        async with self._lock:
+            self._items[key] = (time.monotonic() + self.ttl_seconds, cached)
+
+    async def clear_session(self, session_id: uuid.UUID) -> None:
+        async with self._lock:
+            for key in list(self._items):
+                if key[0] == session_id:
+                    self._items.pop(key, None)
 
 
 class ManagedSessionConnection:
@@ -176,7 +229,7 @@ def authenticate_session_websocket(websocket: WebSocket, settings) -> tuple[str,
     return str(subject), accepted_protocol
 
 
-def public_shell_session(shell_session: InteractiveSession) -> dict[str, Any]:
+def public_session(shell_session: InteractiveSession) -> dict[str, Any]:
     return {
         "id": str(shell_session.id),
         "beacon_id": str(shell_session.beacon_id),
@@ -194,6 +247,10 @@ def public_shell_session(shell_session: InteractiveSession) -> dict[str, Any]:
         "created_at": shell_session.created_at.isoformat(),
         "updated_at": shell_session.updated_at.isoformat(),
     }
+
+
+def public_shell_session(shell_session: InteractiveSession) -> dict[str, Any]:
+    return public_session(shell_session)
 
 
 def resolve_shell_type(beacon: Beacon, requested: str) -> str:
@@ -228,6 +285,29 @@ def create_shell_session(
     session.add(shell_session)
     session.flush()
     return shell_session
+
+
+def create_file_browser_session(
+    session: Session,
+    *,
+    beacon: Beacon,
+    actor_subject: str,
+) -> InteractiveSession:
+    now = utc_now()
+    file_session = InteractiveSession(
+        beacon_id=beacon.id,
+        session_type=FILE_BROWSER_SESSION_TYPE,
+        shell_type="none",
+        status=SESSION_STATUS_OPENING,
+        actor_subject=actor_subject,
+        opened_at=now,
+        last_activity_at=now,
+        rows=32,
+        cols=120,
+    )
+    session.add(file_session)
+    session.flush()
+    return file_session
 
 
 def mark_shell_session_open(session: InteractiveSession) -> InteractiveSession:
@@ -281,6 +361,47 @@ def terminal_text(payload: dict[str, Any]) -> str:
         return ""
 
 
+def normalize_file_browser_path(path: str | None) -> str:
+    raw = (path or "").replace("\\", "/").strip()
+    if not raw or raw == ".":
+        return ""
+    if raw.startswith("/") or ":" in raw:
+        raise ValueError("File browser path must be relative to the session root")
+    normalized = posixpath.normpath(raw)
+    if normalized in {"", "."}:
+        return ""
+    parts = [part for part in normalized.split("/") if part]
+    if any(part == ".." for part in parts) or normalized.startswith("../"):
+        raise ValueError("File browser path cannot traverse above the session root")
+    return "/".join(parts)
+
+
+def parse_file_browser_request(raw_message: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(raw_message)
+    except json.JSONDecodeError as exc:
+        raise ValueError("File browser message must be JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("File browser message must be a JSON object")
+    op = payload.get("op")
+    if op not in {SESSION_OP_LIST_DIR, SESSION_OP_STAT, SESSION_OP_READ_FILE, SESSION_OP_CLOSE, "ping"}:
+        raise ValueError("File browser message op is invalid")
+    if op == "ping":
+        return {"op": "ping"}
+    if op == SESSION_OP_CLOSE:
+        return {"op": SESSION_OP_CLOSE}
+    request_id = payload.get("request_id")
+    if not isinstance(request_id, str) or not request_id.strip():
+        raise ValueError("File browser request_id is required")
+    path = normalize_file_browser_path(str(payload.get("path") or ""))
+    return {
+        "op": op,
+        "path": path,
+        "refresh": bool(payload.get("refresh")),
+        "request_id": request_id.strip(),
+    }
+
+
 def validate_session_data_payload(payload: dict[str, Any]) -> None:
     raw_session_id = payload.get("session_id")
     if not isinstance(raw_session_id, str):
@@ -292,6 +413,23 @@ def validate_session_data_payload(payload: dict[str, Any]) -> None:
     op = payload.get("op")
     if not isinstance(op, str) or op not in SESSION_DATA_OPS:
         raise ProtocolError("INVALID_PAYLOAD", "SESSION_DATA op is invalid")
+    session_type = payload.get("session_type")
+    if session_type is not None and session_type not in {FILE_BROWSER_SESSION_TYPE, SHELL_SESSION_TYPE}:
+        raise ProtocolError("INVALID_PAYLOAD", "SESSION_DATA session_type is invalid")
+    request_id = payload.get("request_id")
+    if request_id is not None and (not isinstance(request_id, str) or not request_id.strip()):
+        raise ProtocolError("INVALID_PAYLOAD", "SESSION_DATA request_id is invalid")
+    path = payload.get("path")
+    if path is not None:
+        if not isinstance(path, str):
+            raise ProtocolError("INVALID_PAYLOAD", "SESSION_DATA path must be a string")
+        try:
+            normalize_file_browser_path(path)
+        except ValueError as exc:
+            raise ProtocolError("INVALID_PAYLOAD", str(exc)) from exc
+    error_code = payload.get("error_code")
+    if error_code is not None and error_code not in FILE_BROWSER_ERROR_CODES:
+        raise ProtocolError("INVALID_PAYLOAD", "SESSION_DATA error_code is invalid")
     data_b64 = payload.get("data_b64")
     if data_b64 is not None:
         if not isinstance(data_b64, str):
@@ -379,8 +517,14 @@ def apply_beacon_session_data(
     if op == SESSION_OP_OPEN_ACK:
         mark_shell_session_open(shell_session)
         event_type = "session.opened"
-        operator_message = {"op": "opened", "session": public_shell_session(shell_session)}
+        operator_message = {
+            "op": "opened",
+            "root_path": payload.get("root_path"),
+            "session": public_session(shell_session),
+        }
     elif op in {SESSION_OP_STDOUT, SESSION_OP_STDERR}:
+        if shell_session.session_type != SHELL_SESSION_TYPE:
+            raise ProtocolError("INVALID_SESSION_OP", "Terminal output is only valid for shell sessions")
         if shell_session.status in {SESSION_STATUS_OPENING, SESSION_STATUS_DETACHED}:
             shell_session.status = SESSION_STATUS_OPEN
             shell_session.detached_at = None
@@ -392,31 +536,73 @@ def apply_beacon_session_data(
             "data_b64": payload.get("data_b64"),
         }
         event_type = "session.output.received"
+    elif op in FILE_BROWSER_OPS:
+        if shell_session.session_type != FILE_BROWSER_SESSION_TYPE:
+            raise ProtocolError("INVALID_SESSION_OP", "File browser op is only valid for file browser sessions")
+        if shell_session.status in {SESSION_STATUS_OPENING, SESSION_STATUS_DETACHED}:
+            shell_session.status = SESSION_STATUS_OPEN
+            shell_session.detached_at = None
+        path = normalize_file_browser_path(str(payload.get("path") or ""))
+        operator_message = {
+            "cached": False,
+            "entries": payload.get("entries", []),
+            "error_code": payload.get("error_code"),
+            "message": payload.get("message"),
+            "modified_at": payload.get("modified_at"),
+            "ok": payload.get("ok", True),
+            "op": op,
+            "path": path,
+            "permissions": payload.get("permissions"),
+            "request_id": payload.get("request_id"),
+            "session_id": str(shell_session.id),
+            "size": payload.get("size"),
+            "truncated": payload.get("truncated", False),
+            "type": payload.get("type"),
+            "content": payload.get("content"),
+            "encoding": payload.get("encoding"),
+        }
+        event_type = "session.file.response.received" if operator_message["ok"] else "session.file.error"
     elif op == SESSION_OP_EXIT:
         close_shell_session(shell_session, reason=str(payload.get("reason") or "process_exit"))
-        operator_message = {"op": "closed", "session": public_shell_session(shell_session)}
+        operator_message = {"op": "closed", "session": public_session(shell_session)}
         event_type = "session.closed"
     elif op == SESSION_OP_ERROR:
-        fail_shell_session(shell_session, reason=str(payload.get("reason") or payload.get("message") or "beacon_error"))
-        operator_message = {
-            "op": "error",
-            "session": public_shell_session(shell_session),
-            "message": shell_session.close_reason,
-        }
-        event_type = "session.failed"
+        if shell_session.session_type == FILE_BROWSER_SESSION_TYPE and payload.get("request_id"):
+            operator_message = {
+                "error_code": payload.get("error_code") or "unsupported_operation",
+                "message": str(payload.get("message") or payload.get("reason") or "File browser operation failed."),
+                "ok": False,
+                "op": "error",
+                "path": normalize_file_browser_path(str(payload.get("path") or "")),
+                "request_id": payload.get("request_id"),
+                "session_id": str(shell_session.id),
+            }
+            event_type = "session.file.error"
+        else:
+            fail_shell_session(
+                shell_session,
+                reason=str(payload.get("reason") or payload.get("message") or "beacon_error"),
+            )
+            operator_message = {
+                "op": "error",
+                "session": public_session(shell_session),
+                "message": shell_session.close_reason,
+            }
+            event_type = "session.failed"
     elif op == SESSION_OP_CLOSE:
         close_shell_session(shell_session, reason=str(payload.get("reason") or "beacon_closed"))
-        operator_message = {"op": "closed", "session": public_shell_session(shell_session)}
+        operator_message = {"op": "closed", "session": public_session(shell_session)}
         event_type = "session.closed"
     else:
-        operator_message = {"op": "ack", "session": public_shell_session(shell_session)}
+        operator_message = {"op": "ack", "session": public_session(shell_session)}
 
     session.add(shell_session)
     return SessionDataOutcome(
         session_id=shell_session.id,
-        session_payload=public_shell_session(shell_session),
+        session_payload=public_session(shell_session),
         operator_message=operator_message,
         event_type=event_type,
+        cache_listing=operator_message if op == SESSION_OP_LIST_DIR and operator_message is not None else None,
     )
 
 
@@ -556,6 +742,7 @@ async def run_shell_session_websocket(websocket: WebSocket, *, settings, session
         }:
             await websocket.close(code=WS_CLOSE_UNAUTHORIZED)
             return
+        session_type = shell_session.session_type
         shell_session.detached_at = None
         if shell_session.status == SESSION_STATUS_DETACHED:
             shell_session.status = SESSION_STATUS_OPEN
@@ -563,7 +750,7 @@ async def run_shell_session_websocket(websocket: WebSocket, *, settings, session
         db.add(shell_session)
         db.commit()
         db.refresh(shell_session)
-        attach_message = {"op": "attached", "session": public_shell_session(shell_session)}
+        attach_message = {"op": "attached", "session": public_session(shell_session)}
 
     manager: SessionRelayManager = websocket.app.state.session_relay_manager
     try:
@@ -577,7 +764,10 @@ async def run_shell_session_websocket(websocket: WebSocket, *, settings, session
         while True:
             raw_message = await websocket.receive_text()
             try:
-                message = parse_operator_terminal_message(raw_message, settings.session_max_chunk_bytes)
+                if session_type == FILE_BROWSER_SESSION_TYPE:
+                    message = parse_file_browser_request(raw_message)
+                else:
+                    message = parse_operator_terminal_message(raw_message, settings.session_max_chunk_bytes)
             except (ValueError, UnicodeEncodeError) as exc:
                 await connection.enqueue({"op": "error", "message": str(exc)})
                 continue
@@ -594,7 +784,40 @@ async def run_shell_session_websocket(websocket: WebSocket, *, settings, session
                 if shell_session.actor_subject != actor_subject:
                     await connection.close(code=WS_CLOSE_UNAUTHORIZED)
                     break
-                if message["op"] == SESSION_OP_RESIZE:
+                if session_type == FILE_BROWSER_SESSION_TYPE and message["op"] == SESSION_OP_LIST_DIR:
+                    shell_session.last_activity_at = utc_now()
+                    db.add(shell_session)
+                    db.commit()
+                    if not message.get("refresh"):
+                        cached = await websocket.app.state.session_file_cache.get(
+                            session_id,
+                            message["path"],
+                            request_id=message["request_id"],
+                        )
+                        if cached is not None:
+                            await connection.enqueue(cached)
+                            continue
+                    frame_payload = session_frame_payload(
+                        shell_session,
+                        SESSION_OP_LIST_DIR,
+                        path=message["path"],
+                        request_id=message["request_id"],
+                        session_type=FILE_BROWSER_SESSION_TYPE,
+                    )
+                    await enqueue_session_data_frame(websocket.app, settings, db, shell_session, frame_payload)
+                    continue
+                if session_type == FILE_BROWSER_SESSION_TYPE and message["op"] in {
+                    SESSION_OP_STAT,
+                    SESSION_OP_READ_FILE,
+                }:
+                    frame_payload = session_frame_payload(
+                        shell_session,
+                        message["op"],
+                        path=message["path"],
+                        request_id=message["request_id"],
+                        session_type=FILE_BROWSER_SESSION_TYPE,
+                    )
+                elif message["op"] == SESSION_OP_RESIZE:
                     cols = int(message.get("cols", shell_session.cols))
                     rows = int(message.get("rows", shell_session.rows))
                     if cols < 20 or cols > 300 or rows < 5 or rows > 80:
@@ -605,7 +828,12 @@ async def run_shell_session_websocket(websocket: WebSocket, *, settings, session
                     frame_payload = session_frame_payload(shell_session, SESSION_OP_RESIZE, cols=cols, rows=rows)
                 elif message["op"] == SESSION_OP_CLOSE:
                     shell_session.status = SESSION_STATUS_CLOSING
-                    frame_payload = session_frame_payload(shell_session, SESSION_OP_CLOSE, reason="operator")
+                    frame_payload = session_frame_payload(
+                        shell_session,
+                        SESSION_OP_CLOSE,
+                        reason="operator",
+                        session_type=session_type,
+                    )
                 else:
                     frame_payload = session_frame_payload(shell_session, SESSION_OP_STDIN, data_b64=message["data_b64"])
                 shell_session.last_activity_at = utc_now()
@@ -613,7 +841,8 @@ async def run_shell_session_websocket(websocket: WebSocket, *, settings, session
                 await enqueue_session_data_frame(websocket.app, settings, db, shell_session, frame_payload)
                 if message["op"] == SESSION_OP_CLOSE:
                     close_shell_session(shell_session, reason="operator")
-                    await connection.enqueue({"op": "closed", "session": public_shell_session(shell_session)})
+                    await websocket.app.state.session_file_cache.clear_session(session_id)
+                    await connection.enqueue({"op": "closed", "session": public_session(shell_session)})
                 db.commit()
                 db.refresh(shell_session)
                 if message["op"] == SESSION_OP_CLOSE:

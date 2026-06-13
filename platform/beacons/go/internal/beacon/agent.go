@@ -19,6 +19,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"xero-beacon/internal/config"
+	"xero-beacon/internal/filebrowser"
 	"xero-beacon/internal/protocolclient"
 	"xero-beacon/internal/session"
 	"xero-beacon/internal/shell"
@@ -32,6 +33,7 @@ type Agent struct {
 	State  state.RuntimeState
 	Client *protocolclient.Client
 	HTTP   *http.Client
+	Files  *filebrowser.Manager
 	Shells *session.Manager
 }
 
@@ -49,6 +51,7 @@ func New(cfg config.Config) (*Agent, error) {
 		State:  runtimeState,
 		Client: protocol,
 		HTTP:   &http.Client{Timeout: 45 * time.Second},
+		Files:  filebrowser.NewManager(),
 		Shells: session.NewManager(),
 	}, nil
 }
@@ -201,10 +204,12 @@ func (a *Agent) runWebSocketReadLoop(ctx context.Context, conn *websocket.Conn) 
 	for {
 		select {
 		case <-ctx.Done():
+			a.Files.CloseAll()
 			a.Shells.CloseAll("context_cancelled")
 			return ctx.Err()
 		case read := <-readCh:
 			if read.err != nil {
+				a.Files.CloseAll()
 				a.Shells.CloseAll("transport_closed")
 				return nil
 			}
@@ -259,6 +264,7 @@ func (a *Agent) handleWebSocketFrame(ctx context.Context, messageType string, pa
 func (a *Agent) handleSessionData(ctx context.Context, payload map[string]any, send func(map[string]any) error) error {
 	sessionID := stringValue(payload["session_id"])
 	op := stringValue(payload["op"])
+	sessionType := stringValue(payload["session_type"])
 	if sessionID == "" {
 		return errors.New("SESSION_DATA missing session_id")
 	}
@@ -268,6 +274,20 @@ func (a *Agent) handleSessionData(ctx context.Context, payload map[string]any, s
 
 	switch op {
 	case "open":
+		if sessionType == "file_browser" {
+			rootPath, err := a.Files.Open(sessionID, stringValue(payload["root_path"]))
+			if err != nil {
+				return a.sendSessionData(sessionID, "error", map[string]any{
+					"error_code":   filebrowser.ErrorCode(err),
+					"message":      err.Error(),
+					"session_type": "file_browser",
+				}, send)
+			}
+			return a.sendSessionData(sessionID, "open_ack", map[string]any{
+				"root_path":    rootPath,
+				"session_type": "file_browser",
+			}, send)
+		}
 		shellType := stringValue(payload["shell_type"])
 		if shellType == "" {
 			shellType = "auto"
@@ -280,7 +300,13 @@ func (a *Agent) handleSessionData(ctx context.Context, payload map[string]any, s
 		if err != nil {
 			return a.sendSessionData(sessionID, "error", map[string]any{"reason": err.Error()}, send)
 		}
-		return a.sendSessionData(sessionID, "open_ack", map[string]any{"shell_type": shellType, "rows": rows, "cols": cols}, send)
+		return a.sendSessionData(sessionID, "open_ack", map[string]any{"shell_type": shellType, "rows": rows, "cols": cols, "session_type": "shell"}, send)
+	case "list_dir":
+		return a.sendFileList(sessionID, payload, send)
+	case "stat":
+		return a.sendFileStat(sessionID, payload, send)
+	case "read_file":
+		return a.sendFileRead(sessionID, payload, send)
 	case "stdin":
 		data, err := terminalData(payload)
 		if err != nil {
@@ -300,6 +326,16 @@ func (a *Agent) handleSessionData(ctx context.Context, payload map[string]any, s
 		if reason == "" {
 			reason = "operator"
 		}
+		if sessionType == "file_browser" {
+			if err := a.Files.Close(sessionID); err != nil && !errors.Is(err, filebrowser.ErrUnknownSession) {
+				return a.sendSessionData(sessionID, "error", map[string]any{
+					"error_code":   filebrowser.ErrorCode(err),
+					"message":      err.Error(),
+					"session_type": "file_browser",
+				}, send)
+			}
+			return a.sendSessionData(sessionID, "close", map[string]any{"reason": reason, "session_type": "file_browser"}, send)
+		}
 		if err := a.Shells.Close(sessionID, reason); err != nil && !errors.Is(err, session.ErrUnknownSession) {
 			return a.sendSessionData(sessionID, "error", map[string]any{"reason": err.Error()}, send)
 		}
@@ -308,6 +344,72 @@ func (a *Agent) handleSessionData(ctx context.Context, payload map[string]any, s
 		return a.sendSessionData(sessionID, "error", map[string]any{"reason": "unsupported SESSION_DATA op"}, send)
 	}
 	return nil
+}
+
+func (a *Agent) sendFileList(sessionID string, payload map[string]any, send func(map[string]any) error) error {
+	requestID := stringValue(payload["request_id"])
+	path := stringValue(payload["path"])
+	entries, err := a.Files.ListDir(sessionID, path)
+	if err != nil {
+		return a.sendFileError(sessionID, "list_dir", requestID, path, err, send)
+	}
+	return a.sendSessionData(sessionID, "list_dir", map[string]any{
+		"entries":      entries,
+		"ok":           true,
+		"path":         path,
+		"request_id":   requestID,
+		"session_type": "file_browser",
+	}, send)
+}
+
+func (a *Agent) sendFileStat(sessionID string, payload map[string]any, send func(map[string]any) error) error {
+	requestID := stringValue(payload["request_id"])
+	path := stringValue(payload["path"])
+	entry, err := a.Files.Stat(sessionID, path)
+	if err != nil {
+		return a.sendFileError(sessionID, "stat", requestID, path, err, send)
+	}
+	return a.sendSessionData(sessionID, "stat", map[string]any{
+		"modified_at":  entry.ModifiedAt,
+		"ok":           true,
+		"path":         entry.Path,
+		"permissions":  entry.Permissions,
+		"request_id":   requestID,
+		"session_type": "file_browser",
+		"size":         entry.Size,
+		"type":         entry.Type,
+	}, send)
+}
+
+func (a *Agent) sendFileRead(sessionID string, payload map[string]any, send func(map[string]any) error) error {
+	requestID := stringValue(payload["request_id"])
+	path := stringValue(payload["path"])
+	result, err := a.Files.ReadFile(sessionID, path, filebrowser.DefaultPreviewLimitBytes)
+	if err != nil {
+		return a.sendFileError(sessionID, "read_file", requestID, path, err, send)
+	}
+	return a.sendSessionData(sessionID, "read_file", map[string]any{
+		"content":      result.Content,
+		"encoding":     result.Encoding,
+		"ok":           true,
+		"path":         path,
+		"request_id":   requestID,
+		"session_type": "file_browser",
+		"size":         result.Size,
+		"truncated":    result.Truncated,
+		"type":         "file",
+	}, send)
+}
+
+func (a *Agent) sendFileError(sessionID string, op string, requestID string, path string, err error, send func(map[string]any) error) error {
+	return a.sendSessionData(sessionID, op, map[string]any{
+		"error_code":   filebrowser.ErrorCode(err),
+		"message":      err.Error(),
+		"ok":           false,
+		"path":         path,
+		"request_id":   requestID,
+		"session_type": "file_browser",
+	}, send)
 }
 
 func (a *Agent) sendSessionEvent(sessionID string, event session.Event, send func(map[string]any) error) error {

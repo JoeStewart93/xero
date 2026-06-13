@@ -1,16 +1,38 @@
 import { shellSessionWebSocketUrl } from './api';
-import type { ShellSession } from './api';
+import type { FileBrowserSession, ShellSession } from './api';
 
 export type ShellSessionConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'reconnecting';
 
 export interface ShellSessionMessage {
+  cached?: boolean;
+  content?: string;
   data?: string;
   data_b64?: string;
+  encoding?: string;
+  entries?: FileBrowserEntry[];
+  error_code?: string;
   message?: string;
+  modified_at?: string;
+  ok?: boolean;
   op: string;
-  session?: ShellSession;
+  path?: string;
+  permissions?: string;
+  request_id?: string;
+  session?: FileBrowserSession | ShellSession;
   session_id?: string;
+  size?: number;
   stream?: string;
+  truncated?: boolean;
+  type?: string;
+}
+
+export interface FileBrowserEntry {
+  modified_at: string;
+  name: string;
+  path: string;
+  permissions: string;
+  size: number;
+  type: 'directory' | 'file' | 'other' | 'symlink';
 }
 
 interface ShellSessionClientOptions {
@@ -58,6 +80,8 @@ export class ShellSessionClient {
   private readonly reconnectMaxMs: number;
   private readonly sessionId: string;
   private readonly webSocketCtor: typeof WebSocket;
+  private pendingFlushTimer: number | undefined;
+  private pendingMessages: string[] = [];
   private reconnectAttempt = 0;
   private reconnectTimer: number | undefined;
   private socket: WebSocket | null = null;
@@ -81,6 +105,8 @@ export class ShellSessionClient {
 
   stop(): void {
     this.stopped = true;
+    this.pendingMessages = [];
+    this.clearPendingFlush();
     this.clearReconnect();
     if (this.socket) {
       this.socket.close(1000);
@@ -105,6 +131,10 @@ export class ShellSessionClient {
     this.send({ op: 'close' });
   }
 
+  sendMessage(payload: Record<string, unknown>): void {
+    this.send(payload);
+  }
+
   private connect(status: ShellSessionConnectionStatus): void {
     if (this.stopped) {
       return;
@@ -118,6 +148,7 @@ export class ShellSessionClient {
     this.socket.onopen = () => {
       this.reconnectAttempt = 0;
       this.onStatusChange('connected');
+      this.flushPendingMessages();
     };
 
     this.socket.onmessage = (event) => {
@@ -146,10 +177,44 @@ export class ShellSessionClient {
   }
 
   private send(payload: Record<string, unknown>): void {
+    const serialized = JSON.stringify(payload);
     if (!this.isOpen()) {
+      if (!this.stopped) {
+        this.pendingMessages.push(serialized);
+        this.schedulePendingFlush();
+      }
       return;
     }
-    this.socket?.send(JSON.stringify(payload));
+    this.socket?.send(serialized);
+  }
+
+  private flushPendingMessages(): void {
+    this.clearPendingFlush();
+    if (!this.isOpen() || this.pendingMessages.length === 0) {
+      return;
+    }
+    const messages = this.pendingMessages;
+    this.pendingMessages = [];
+    for (const message of messages) {
+      this.socket?.send(message);
+    }
+  }
+
+  private schedulePendingFlush(): void {
+    if (this.pendingFlushTimer !== undefined) {
+      return;
+    }
+    this.pendingFlushTimer = window.setTimeout(() => {
+      this.pendingFlushTimer = undefined;
+      this.flushPendingMessages();
+    }, 0);
+  }
+
+  private clearPendingFlush(): void {
+    if (this.pendingFlushTimer !== undefined) {
+      window.clearTimeout(this.pendingFlushTimer);
+      this.pendingFlushTimer = undefined;
+    }
   }
 
   private scheduleReconnect(): void {

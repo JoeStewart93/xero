@@ -14,7 +14,9 @@ const mocks = vi.hoisted(() => ({
 
 const apiMocks = vi.hoisted(() => ({
   cancelTask: vi.fn(),
+  closeFileBrowserSession: vi.fn(),
   closeShellSession: vi.fn(),
+  createFileBrowserSession: vi.fn(),
   createShellSession: vi.fn(),
   createShellTask: vi.fn(),
   downloadTaskResultText: vi.fn(),
@@ -30,7 +32,9 @@ const terminalMocks = vi.hoisted(() => ({
 vi.mock('../api', async (importOriginal) => ({
   ...((await importOriginal()) as object),
   cancelTask: apiMocks.cancelTask,
+  closeFileBrowserSession: apiMocks.closeFileBrowserSession,
   closeShellSession: apiMocks.closeShellSession,
+  createFileBrowserSession: apiMocks.createFileBrowserSession,
   createShellSession: apiMocks.createShellSession,
   createShellTask: apiMocks.createShellTask,
   downloadTaskResultText: apiMocks.downloadTaskResultText,
@@ -209,6 +213,21 @@ const shellSession = {
   updated_at: '2026-06-08T14:10:00Z',
 } as const;
 
+const fileBrowserSession = {
+  actor_subject: 'operator-1',
+  beacon_id: beaconOne.id,
+  close_reason: null,
+  closed_at: null,
+  created_at: '2026-06-08T14:12:00Z',
+  detached_at: null,
+  id: '88888888-8888-8888-8888-888888888888',
+  last_activity_at: '2026-06-08T14:12:00Z',
+  opened_at: '2026-06-08T14:12:00Z',
+  session_type: 'file_browser',
+  status: 'opening',
+  updated_at: '2026-06-08T14:12:00Z',
+} as const;
+
 function renderBeaconsPage() {
   return render(
     <MemoryRouter>
@@ -259,6 +278,8 @@ describe('BeaconsPage', () => {
       status: 'connected',
     });
     apiMocks.getTasks.mockResolvedValue({ items: [] });
+    apiMocks.createFileBrowserSession.mockResolvedValue(fileBrowserSession);
+    apiMocks.closeFileBrowserSession.mockResolvedValue({ ...fileBrowserSession, close_reason: 'operator', closed_at: '2026-06-08T14:13:00Z', status: 'closed' });
     apiMocks.createShellSession.mockResolvedValue(shellSession);
     apiMocks.closeShellSession.mockResolvedValue({ ...shellSession, close_reason: 'operator', closed_at: '2026-06-08T14:11:00Z', status: 'closed' });
     apiMocks.createShellTask.mockResolvedValue(queuedTask);
@@ -469,6 +490,95 @@ describe('BeaconsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual({ op: 'close' });
+  });
+
+  it('opens a file browser session, navigates folders, and previews text files', async () => {
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 1,
+      beaconCount: 1,
+      beacons: [beaconOne],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 0,
+      status: 'connected',
+    });
+
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    fireEvent.click(screen.getByRole('button', { name: /Files/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+
+    await waitFor(() => {
+      expect(apiMocks.createFileBrowserSession).toHaveBeenCalledWith('http://localhost:18001', 'c2-token', {
+        beacon_id: beaconOne.id,
+      });
+    });
+
+    FakeWebSocket.instances[0].open();
+    FakeWebSocket.instances[0].receive(JSON.stringify({ op: 'attached', session: fileBrowserSession }));
+    FakeWebSocket.instances[0].receive(JSON.stringify({ op: 'opened', session: { ...fileBrowserSession, status: 'open' } }));
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual({
+        op: 'list_dir',
+        path: '',
+        refresh: false,
+        request_id: 'file-1',
+      });
+    });
+
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      entries: [
+        { modified_at: '2026-06-08T14:00:00Z', name: 'Documents', path: 'Documents', permissions: 'drwxr-xr-x', size: 0, type: 'directory' },
+        { modified_at: '2026-06-08T14:01:00Z', name: 'readme.txt', path: 'readme.txt', permissions: '-rw-r--r--', size: 14, type: 'file' },
+      ],
+      ok: true,
+      op: 'list_dir',
+      path: '',
+      request_id: 'file-1',
+    }));
+
+    expect(await screen.findByText('Documents')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Documents/ }));
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual({
+      op: 'list_dir',
+      path: 'Documents',
+      refresh: false,
+      request_id: 'file-2',
+    });
+
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      entries: [
+        { modified_at: '2026-06-08T14:02:00Z', name: 'notes.txt', path: 'Documents/notes.txt', permissions: '-rw-r--r--', size: 18, type: 'file' },
+      ],
+      ok: true,
+      op: 'list_dir',
+      path: 'Documents',
+      request_id: 'file-2',
+    }));
+
+    expect(await screen.findByText('notes.txt')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /notes.txt/ }));
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual({
+      op: 'read_file',
+      path: 'Documents/notes.txt',
+      refresh: false,
+      request_id: 'file-3',
+    });
+
+    FakeWebSocket.instances[0].receive(JSON.stringify({
+      content: 'hello from preview',
+      encoding: 'utf-8',
+      ok: true,
+      op: 'read_file',
+      path: 'Documents/notes.txt',
+      request_id: 'file-3',
+      size: 18,
+      truncated: false,
+    }));
+
+    expect((await screen.findByTestId('file-preview-output')).textContent).toContain('hello from preview');
   });
 
   it('queues a shell task from the command queue modal', async () => {

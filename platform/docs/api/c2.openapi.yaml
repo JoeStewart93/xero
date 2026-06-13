@@ -1866,6 +1866,13 @@ paths:
       summary: List Beacons
       operationId: list_beacons_api_v1_beacons_get
       parameters:
+      - name: include_removed
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+          title: Include Removed
       - name: status
         in: query
         required: false
@@ -1896,6 +1903,85 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/beacons/{beacon_id}/kill:
+    post:
+      tags:
+      - beacons
+      summary: Kill Beacon
+      operationId: kill_beacon_api_v1_beacons__beacon_id__kill_post
+      parameters:
+      - name: beacon_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Beacon Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeaconKillResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/beacons/{beacon_id}/activity:
+    get:
+      tags:
+      - beacons
+      summary: List Beacon Activity
+      operationId: list_beacon_activity_api_v1_beacons__beacon_id__activity_get
+      parameters:
+      - name: beacon_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Beacon Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 50
+          minimum: 1
+          default: 20
+          title: Limit
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeaconActivityListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/beacons/{beacon_id}:
     get:
       tags:
@@ -1910,6 +1996,13 @@ paths:
           type: string
           format: uuid
           title: Beacon Id
+      - name: include_removed
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+          title: Include Removed
       - name: authorization
         in: header
         required: false
@@ -1933,6 +2026,61 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
+    BeaconActivityItemResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        type:
+          type: string
+          title: Type
+        label:
+          type: string
+          title: Label
+        occurred_at:
+          type: string
+          format: date-time
+          title: Occurred At
+        beacon_id:
+          type: string
+          title: Beacon Id
+        task_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Task Id
+        session_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Session Id
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+        detail:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Detail
+      type: object
+      required:
+      - id
+      - type
+      - label
+      - occurred_at
+      - beacon_id
+      title: BeaconActivityItemResponse
+    BeaconActivityListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/BeaconActivityItemResponse'
+          type: array
+          title: Items
+      type: object
+      title: BeaconActivityListResponse
     BeaconBuildCreateRequest:
       properties:
         target_os:
@@ -2209,6 +2357,29 @@ components:
       - jitter
       - beacon
       title: BeaconHeartbeatResponse
+    BeaconKillResponse:
+      properties:
+        beacon:
+          $ref: '#/components/schemas/BeaconResponse'
+        cancelled_tasks:
+          type: integer
+          title: Cancelled Tasks
+          default: 0
+        closed_sessions:
+          type: integer
+          title: Closed Sessions
+          default: 0
+        status:
+          type: string
+          enum:
+          - already_removed
+          - removed
+          title: Status
+      type: object
+      required:
+      - beacon
+      - status
+      title: BeaconKillResponse
     BeaconListResponse:
       properties:
         items:
@@ -2392,6 +2563,22 @@ components:
             format: date-time
           - type: 'null'
           title: Transport Last Seen
+        removed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Removed At
+        removed_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Removed By
+        removed_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Removed Reason
         first_seen:
           type: string
           format: date-time

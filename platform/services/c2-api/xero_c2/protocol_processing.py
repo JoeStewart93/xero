@@ -219,6 +219,12 @@ def process_protocol_register(
             last_seen=now,
         )
     else:
+        if beacon.removed_at is not None:
+            raise ProtocolError(
+                "BEACON_REMOVED",
+                "Beacon has been removed",
+                status_code=status.HTTP_410_GONE,
+            )
         old_status = beacon.status
         beacon.hostname = registration.hostname
         beacon.os = registration.os
@@ -290,6 +296,12 @@ def process_protocol_frame(
         beacon = session.get(Beacon, candidate_beacon_id)
         if beacon is None:
             raise ProtocolError("UNKNOWN_BEACON", "Frame references an unknown beacon")
+        if beacon.removed_at is not None:
+            raise ProtocolError(
+                "BEACON_REMOVED",
+                "Beacon has been removed",
+                status_code=status.HTTP_410_GONE,
+            )
         now = utc_now()
         beacon_id = beacon.id
         if decoded.message_type == HEARTBEAT:

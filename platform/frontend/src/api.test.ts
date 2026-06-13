@@ -26,6 +26,9 @@ import {
   downloadTaskResultText,
   getBeaconBuilds,
   getBeaconBuildTargets,
+  getBeaconActivity,
+  getC2Beacons,
+  getC2Beacon,
   getCurrentOperator,
   getDashboardSummary,
   getModules,
@@ -42,6 +45,7 @@ import {
   getTrafficProfiles,
   getTrafficProfileVersions,
   getTransportStatus,
+  killBeacon,
   launchInfrastructureWorker,
   loginOperator,
   rollbackTrafficProfile,
@@ -489,6 +493,70 @@ describe('api client', () => {
     expect(JSON.parse((fetchMock.mock.calls[7][1] as RequestInit).body as string)).toEqual({ profile_id: 'profile-one' });
     expect(fetchMock.mock.calls[8][0]).toBe('http://c2.local:8001/api/v1/beacons/beacon-one/profile');
     expect((fetchMock.mock.calls[8][1] as RequestInit).method).toBe('DELETE');
+  });
+
+  it('calls C2 beacon inventory endpoints with filters and lifecycle actions', async () => {
+    const beaconPayload = {
+      architecture: 'amd64',
+      external_ip: '198.51.100.10',
+      first_seen: new Date().toISOString(),
+      hostname: 'host-one',
+      id: 'beacon-one',
+      internal_ip: '10.0.0.10',
+      jitter: 0.2,
+      last_seen: new Date().toISOString(),
+      machine_fingerprint_hash: 'fingerprint-one',
+      os: 'Windows',
+      pid: 1234,
+      profile_id: null,
+      profile_name: null,
+      profile_template: null,
+      profile_version: null,
+      protocol_version: 1,
+      removed_at: null,
+      removed_by: null,
+      removed_reason: null,
+      sleep_seconds: 30,
+      status: 'online',
+      transport_connected: true,
+      transport_last_seen: new Date().toISOString(),
+      transport_mode: 'websocket',
+    };
+    const activityPayload = {
+      beacon_id: 'beacon-one',
+      detail: 'operator',
+      id: 'activity-one',
+      label: 'Beacon removed from active inventory',
+      occurred_at: new Date().toISOString(),
+      session_id: null,
+      status: 'removed',
+      task_id: null,
+      type: 'beacon.killed',
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [beaconPayload] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...beaconPayload, removed_at: new Date().toISOString() }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        beacon: { ...beaconPayload, removed_at: new Date().toISOString() },
+        cancelled_tasks: 1,
+        closed_sessions: 2,
+        status: 'removed',
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [activityPayload] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getC2Beacons('http://c2.local:8001/', 'c2-token', { includeRemoved: true, status: 'online' });
+    await getC2Beacon('http://c2.local:8001/', 'c2-token', 'beacon-one', true);
+    await killBeacon('http://c2.local:8001/', 'c2-token', 'beacon-one');
+    await getBeaconActivity('http://c2.local:8001/', 'c2-token', 'beacon-one', 15);
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://c2.local:8001/api/v1/beacons?include_removed=true&status=online');
+    expect(headersFromFirstFetchCall(fetchMock).get('Authorization')).toBe('Bearer c2-token');
+    expect(fetchMock.mock.calls[1][0]).toBe('http://c2.local:8001/api/v1/beacons/beacon-one?include_removed=true');
+    expect(fetchMock.mock.calls[2][0]).toBe('http://c2.local:8001/api/v1/beacons/beacon-one/kill');
+    expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe('POST');
+    expect(fetchMock.mock.calls[3][0]).toBe('http://c2.local:8001/api/v1/beacons/beacon-one/activity?limit=15');
   });
 
   it('calls C2 task endpoints with bearer auth', async () => {

@@ -29,12 +29,38 @@ class BeaconResponse(BaseModel):
     transport_mode: Literal["long-poll", "rest", "websocket"] = "rest"
     transport_connected: bool = False
     transport_last_seen: datetime | None = None
+    removed_at: datetime | None = None
+    removed_by: str | None = None
+    removed_reason: str | None = None
     first_seen: datetime
     last_seen: datetime
 
 
 class BeaconListResponse(BaseModel):
     items: list[BeaconResponse] = Field(default_factory=list)
+
+
+class BeaconKillResponse(BaseModel):
+    beacon: BeaconResponse
+    cancelled_tasks: int = 0
+    closed_sessions: int = 0
+    status: Literal["already_removed", "removed"]
+
+
+class BeaconActivityItemResponse(BaseModel):
+    id: str
+    type: str
+    label: str
+    occurred_at: datetime
+    beacon_id: str
+    task_id: str | None = None
+    session_id: str | None = None
+    status: str | None = None
+    detail: str | None = None
+
+
+class BeaconActivityListResponse(BaseModel):
+    items: list[BeaconActivityItemResponse] = Field(default_factory=list)
 
 
 class BeaconRegistrationRequest(BaseModel):

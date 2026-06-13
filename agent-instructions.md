@@ -29,6 +29,8 @@
 
 3. Be sure when creating development plans, and features that you break each feature down into multiple stages/phases, where each stage is an increment of work. Each stage must be testable, and deliver some value.
 
+3a. When planning feature work, always surface the complete proposed plan in-thread before implementation so the user can review or approve it later.
+
 4. Ensure every feature, and stage has it's own set of acceptance criteria, dependency callouts, and effort/scope sizing. Stages and overall features CANNOT be considered complete until ALL acceptance criteria are complete.
 
 5. When developing a feature, be sure to create a new branch (in git) for that feature. The branch name should include the feature number and a short title (ex: F0049-add-signal-page). On completion, create commit to the feature branch with a meaningful commit message.

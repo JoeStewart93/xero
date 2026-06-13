@@ -12,9 +12,10 @@ from xero_c2.task_queue import public_task
 
 
 def beacon_counts(session: Session) -> dict[str, int]:
-    total = session.scalar(select(func.count()).select_from(Beacon)) or 0
-    online = session.scalar(select(func.count()).select_from(Beacon).where(Beacon.status == "online")) or 0
-    offline = session.scalar(select(func.count()).select_from(Beacon).where(Beacon.status == "offline")) or 0
+    active = Beacon.removed_at.is_(None)
+    total = session.scalar(select(func.count()).select_from(Beacon).where(active)) or 0
+    online = session.scalar(select(func.count()).select_from(Beacon).where(active, Beacon.status == "online")) or 0
+    offline = session.scalar(select(func.count()).select_from(Beacon).where(active, Beacon.status == "offline")) or 0
     return {"total": int(total), "online": int(online), "offline": int(offline)}
 
 

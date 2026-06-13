@@ -73,6 +73,15 @@ class BeaconLongPollManager:
             poll.pending_frame.cancel()
         return True
 
+    async def close_beacon(self, beacon_id: uuid.UUID) -> bool:
+        async with self._lock:
+            poll = self._polls.pop(beacon_id, None)
+        if poll is None:
+            return False
+        if not poll.pending_frame.done():
+            poll.pending_frame.cancel()
+        return True
+
     async def wait_for_frame(self, beacon_id: uuid.UUID, poll_id: str, *, timeout_seconds: int) -> bytes | None:
         async with self._lock:
             poll = self._polls.get(beacon_id)
@@ -116,6 +125,8 @@ def update_beacon_longpoll_state(
     beacon = session.get(Beacon, beacon_id)
     if beacon is None:
         return None
+    if beacon.removed_at is not None:
+        return beacon
     beacon.transport_mode = "long-poll"
     beacon.transport_connected = connected
     beacon.transport_last_seen = utc_now()

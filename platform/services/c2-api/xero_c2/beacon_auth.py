@@ -30,4 +30,6 @@ def find_authenticated_beacon(session: Session, beacon_id: uuid.UUID, token: str
     beacon = session.get(Beacon, beacon_id)
     if beacon is None or not verify_beacon_token(token, beacon.beacon_token_hash):
         return None
+    if beacon.removed_at is not None:
+        return None
     return beacon

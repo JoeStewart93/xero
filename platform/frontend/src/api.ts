@@ -381,6 +381,94 @@ export interface TaskResultListResponse {
   next_cursor: string | null;
 }
 
+export interface ModuleDefinition {
+  args_schema: Record<string, unknown>;
+  category: string;
+  description: string;
+  example: Record<string, unknown>;
+  execution_kind: string;
+  id: string;
+  name: string;
+  result_schema: Record<string, unknown>;
+  source: string;
+  supported_execution_targets: string[];
+  version: string;
+}
+
+export interface ModuleListResponse {
+  items: ModuleDefinition[];
+}
+
+export type ScanJobStatus = 'completed' | 'failed' | 'queued' | 'running';
+export type ScanResultState = 'closed' | 'filtered' | 'open';
+
+export interface PortScanArgs {
+  execution_target?: 'auto';
+  max_threads?: number;
+  port_range: string;
+  targets: string[];
+  timeout_ms?: number;
+}
+
+export interface ScanResultRecord {
+  host: string;
+  latency_ms: number;
+  port: number;
+  state: ScanResultState;
+}
+
+export interface ScanJob {
+  actor_subject: string;
+  args: PortScanArgs;
+  completed_at: string | null;
+  created_at: string;
+  error_message: string | null;
+  execution_target_requested: string;
+  execution_target_resolved: string;
+  id: string;
+  module: string;
+  progress_completed: number;
+  progress_total: number;
+  queued_at: string;
+  results: ScanResultRecord[];
+  started_at: string | null;
+  state_counts: Record<ScanResultState, number>;
+  status: ScanJobStatus;
+  summary: {
+    duration_ms?: number;
+    hosts_scanned?: number;
+    open_count?: number;
+    ports_scanned?: number;
+    state_counts?: Record<ScanResultState, number>;
+  };
+  updated_at: string;
+  worker_id: string | null;
+}
+
+export interface ScanJobListResponse {
+  items: ScanJob[];
+}
+
+export interface ScanResultChunk {
+  created_at: string;
+  emitted_at: string;
+  id: string;
+  kind: 'progress' | 'summary';
+  payload: {
+    results?: ScanResultRecord[];
+    state_counts?: Record<ScanResultState, number>;
+    summary?: ScanJob['summary'];
+  };
+  probes_completed: number;
+  probes_total: number;
+  scan_job_id: string;
+  sequence: number;
+}
+
+export interface ScanResultChunkListResponse {
+  items: ScanResultChunk[];
+}
+
 export interface BeaconBuildTarget {
   arch: BeaconBuildTargetArch;
   extension: string;
@@ -753,6 +841,48 @@ export async function getTaskResults(
   }
   const query = params.toString();
   return c2Fetch<TaskResultListResponse>(baseUrl, accessToken, `/api/v1/task-results${query ? `?${query}` : ''}`);
+}
+
+export async function getModules(baseUrl: string, accessToken: string): Promise<ModuleListResponse> {
+  return c2Fetch<ModuleListResponse>(baseUrl, accessToken, '/api/v1/modules');
+}
+
+export async function createScanJob(baseUrl: string, accessToken: string, args: PortScanArgs): Promise<ScanJob> {
+  return c2Fetch<ScanJob>(baseUrl, accessToken, '/api/v1/scan-jobs', {
+    method: 'POST',
+    body: JSON.stringify({
+      args: { ...args, execution_target: args.execution_target ?? 'auto' },
+      module: 'builtin.portscan',
+    }),
+  });
+}
+
+export async function getScanJobs(
+  baseUrl: string,
+  accessToken: string,
+  options: { limit?: number; status?: ScanJobStatus } = {},
+): Promise<ScanJobListResponse> {
+  const params = new URLSearchParams();
+  if (options.status) {
+    params.set('status', options.status);
+  }
+  if (options.limit) {
+    params.set('limit', String(options.limit));
+  }
+  const query = params.toString();
+  return c2Fetch<ScanJobListResponse>(baseUrl, accessToken, `/api/v1/scan-jobs${query ? `?${query}` : ''}`);
+}
+
+export async function getScanJob(baseUrl: string, accessToken: string, scanJobId: string): Promise<ScanJob> {
+  return c2Fetch<ScanJob>(baseUrl, accessToken, `/api/v1/scan-jobs/${scanJobId}`);
+}
+
+export async function getScanResultChunks(
+  baseUrl: string,
+  accessToken: string,
+  scanJobId: string,
+): Promise<ScanResultChunkListResponse> {
+  return c2Fetch<ScanResultChunkListResponse>(baseUrl, accessToken, `/api/v1/scan-jobs/${scanJobId}/chunks`);
 }
 
 export async function downloadTaskResultText(

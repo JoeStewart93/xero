@@ -1,0 +1,144 @@
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { ReconPage } from './ReconPage';
+
+const mocks = vi.hoisted(() => ({
+  useAuth: vi.fn(),
+  useC2Connection: vi.fn(),
+  useRealtime: vi.fn(),
+}));
+
+const apiMocks = vi.hoisted(() => ({
+  createScanJob: vi.fn(),
+  getModules: vi.fn(),
+  getScanJob: vi.fn(),
+  getScanJobs: vi.fn(),
+}));
+
+vi.mock('../useC2Connection', () => ({
+  useC2Connection: mocks.useC2Connection,
+}));
+
+vi.mock('../useAuth', () => ({
+  useAuth: mocks.useAuth,
+}));
+
+vi.mock('../useRealtime', () => ({
+  useRealtime: mocks.useRealtime,
+}));
+
+vi.mock('../api', async (importOriginal) => ({
+  ...((await importOriginal()) as object),
+  createScanJob: apiMocks.createScanJob,
+  getModules: apiMocks.getModules,
+  getScanJob: apiMocks.getScanJob,
+  getScanJobs: apiMocks.getScanJobs,
+}));
+
+const completedScan = {
+  actor_subject: 'operator-one',
+  args: {
+    execution_target: 'auto',
+    max_threads: 8,
+    port_range: '80,443',
+    targets: ['127.0.0.1'],
+    timeout_ms: 1000,
+  },
+  completed_at: '2026-06-13T05:00:00Z',
+  created_at: '2026-06-13T05:00:00Z',
+  error_message: null,
+  execution_target_requested: 'auto',
+  execution_target_resolved: 'embedded-c2',
+  id: 'scan-one',
+  module: 'builtin.portscan',
+  progress_completed: 2,
+  progress_total: 2,
+  queued_at: '2026-06-13T05:00:00Z',
+  results: [
+    { host: '127.0.0.1', latency_ms: 2.5, port: 80, state: 'open' },
+    { host: '127.0.0.1', latency_ms: 1.1, port: 443, state: 'closed' },
+  ],
+  started_at: '2026-06-13T05:00:00Z',
+  state_counts: { closed: 1, filtered: 0, open: 1 },
+  status: 'completed',
+  summary: { duration_ms: 20.4, hosts_scanned: 1, open_count: 1, ports_scanned: 2 },
+  updated_at: '2026-06-13T05:00:00Z',
+  worker_id: 'worker-one',
+};
+
+function renderPage() {
+  return render(
+    <MemoryRouter>
+      <ReconPage />
+    </MemoryRouter>,
+  );
+}
+
+describe('ReconPage', () => {
+  beforeEach(() => {
+    apiMocks.getModules.mockResolvedValue({
+      items: [{ id: 'builtin.portscan', name: 'Port Scan', version: '0.1.0' }],
+    });
+    apiMocks.getScanJobs.mockResolvedValue({ items: [completedScan] });
+    apiMocks.getScanJob.mockResolvedValue(completedScan);
+    apiMocks.createScanJob.mockResolvedValue({ ...completedScan, id: 'scan-two', status: 'queued' });
+    mocks.useC2Connection.mockReturnValue({
+      connection: {
+        accessToken: 'c2-token',
+        baseUrl: 'http://localhost:18001',
+        connectedAt: '2026-06-13T00:00:00Z',
+        expiresAt: '2099-01-01T00:00:00Z',
+        service: 'xero-c2-core',
+        serviceRole: 'c2',
+        status: 'connected',
+        tokenType: 'bearer',
+      },
+    });
+    mocks.useAuth.mockReturnValue({
+      logout: vi.fn(),
+      session: {
+        accessToken: 'local-token',
+        expiresAt: '2099-01-01T00:00:00Z',
+        operator: { created_at: '2026-06-13T00:00:00Z', id: 'operator-1', is_enabled: true, role: 'admin', username: 'admin' },
+        tokenType: 'bearer',
+      },
+    });
+    mocks.useRealtime.mockReturnValue({
+      activeBeaconCount: 0,
+      beaconCount: 0,
+      beacons: [],
+      error: '',
+      latestEvent: null,
+      offlineBeaconCount: 0,
+      status: 'connected',
+    });
+  });
+
+  it('loads scan jobs and queues a port scan', async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('scan-one')).toBeTruthy();
+    });
+    expect(screen.getByText('127.0.0.1:80')).toBeTruthy();
+    expect(within(screen.getByRole('table')).getByText('open')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Scan targets'), { target: { value: '127.0.0.1' } });
+    fireEvent.change(screen.getByLabelText('Port range'), { target: { value: '8000,9000' } });
+    fireEvent.click(screen.getByRole('button', { name: /Run scan/ }));
+
+    await waitFor(() => {
+      expect(apiMocks.createScanJob).toHaveBeenCalledWith(
+        'http://localhost:18001',
+        'c2-token',
+        expect.objectContaining({
+          execution_target: 'auto',
+          port_range: '8000,9000',
+          targets: ['127.0.0.1'],
+        }),
+      );
+    });
+  });
+});

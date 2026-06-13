@@ -402,6 +402,52 @@ class TaskResultArtifact(BaseModel):
     artifact: Mapped[Artifact] = relationship(foreign_keys=[artifact_id])
 
 
+class ScanJob(BaseModel):
+    __tablename__ = "scan_jobs"
+
+    module: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    args: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False, index=True)
+    actor_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    execution_target_requested: Mapped[str] = mapped_column(String(64), default="auto", nullable=False)
+    execution_target_resolved: Mapped[str] = mapped_column(String(64), default="embedded-c2", nullable=False)
+    worker_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("infrastructure_workers.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    progress_completed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    progress_total: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    state_counts: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    summary: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    results: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    worker: Mapped[InfrastructureWorker | None] = relationship(foreign_keys=[worker_id])
+
+
+class ScanResultChunk(BaseModel):
+    __tablename__ = "scan_result_chunks"
+    __table_args__ = (UniqueConstraint("scan_job_id", "sequence", name="uq_scan_result_chunks_sequence"),)
+
+    scan_job_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("scan_jobs.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    probes_completed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    probes_total: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    emitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    scan_job: Mapped[ScanJob] = relationship(foreign_keys=[scan_job_id])
+
+
 class Artifact(BaseModel):
     __tablename__ = "artifacts"
 

@@ -18,7 +18,6 @@ import {
 } from '../api';
 import { AppShell } from '../components/AppShell';
 import { C2RequiredPanel } from '../components/C2RequiredPanel';
-import { ModalShell } from '../components/ModalShell';
 import { StreamOutput } from '../components/StreamOutput';
 import type { StreamOutputChunk } from '../components/StreamOutput';
 import { decodeLaunchArgs, stringValue } from '../modules/moduleCatalog';
@@ -554,7 +553,7 @@ export function ReconPage() {
     );
   }
 
-  function renderScanTypeModal() {
+  function renderInlineScanConfig() {
     if (!activeScanType) {
       return null;
     }
@@ -562,23 +561,16 @@ export function ReconPage() {
     const ActiveIcon = activeScanType.icon;
     const isNmap = activeScanType.id === 'nmap';
     return (
-      <ModalShell
-        ariaLabel={`${activeScanType.label} launcher`}
-        onClose={() => setActiveScanTypeId('')}
-        subtitle={activeScanType.capability}
-        title={activeScanType.label}
-        variant="wide"
-      >
-        <div className="recon-scanner-modal">
-          <div className="recon-scanner-modal-head">
-            <div className="panel-icon" aria-hidden="true">
-              <ActiveIcon size={18} strokeWidth={2} />
-            </div>
-            <p>{activeScanType.description}</p>
+      <div className="recon-inline-scan-config">
+        <div className="recon-scanner-modal-head">
+          <div className="panel-icon" aria-hidden="true">
+            <ActiveIcon size={18} strokeWidth={2} />
           </div>
+          <p>{activeScanType.description}</p>
+        </div>
 
-          {isNmap ? (
-            <form className="recon-scan-form recon-scan-form--modal" onSubmit={handleSubmit}>
+        {isNmap ? (
+          <form className="recon-scan-form" onSubmit={handleSubmit}>
               <label className="recon-wide-field">
                 Targets
                 <textarea
@@ -694,8 +686,7 @@ export function ReconPage() {
           ) : (
             renderPlannedScannerModal(activeScanType)
           )}
-        </div>
-      </ModalShell>
+      </div>
     );
   }
 
@@ -741,6 +732,7 @@ export function ReconPage() {
                 );
               })}
             </div>
+            {renderInlineScanConfig()}
             {error && !activeScanType ? <p className="task-queue-error" role="alert">{error}</p> : null}
             {message && !activeScanType ? <p className="profile-status-message">{message}</p> : null}
           </section>
@@ -932,7 +924,6 @@ export function ReconPage() {
           </section>
         </div>
       )}
-      {renderScanTypeModal()}
     </AppShell>
   );
 }

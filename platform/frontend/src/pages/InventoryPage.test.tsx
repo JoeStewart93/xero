@@ -226,7 +226,7 @@ describe('InventoryPage', () => {
     await waitFor(() => expect(apiMocks.getAsset).toHaveBeenCalledWith('http://localhost:18001', 'c2-token', 'asset-alpha'));
     const detail = screen.getByRole('complementary', { name: 'Asset detail' });
     expect(within(detail).getByText('Windows 11')).toBeTruthy();
-    expect(within(detail).getByText('beacon-one')).toBeTruthy();
+    expect(within(detail).getByRole('link', { name: 'beacon-o' })).toBeTruthy();
     expect(within(detail).getByText('beacon.registered')).toBeTruthy();
     expect(within(detail).getByText('Subnet 10.20.0.0/24')).toBeTruthy();
   });

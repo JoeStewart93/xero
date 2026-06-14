@@ -16,6 +16,7 @@ import {
   stopInfrastructureWorker,
   WorkerKind,
 } from '../api';
+import { SettingsLayout } from '../components/SettingsLayout';
 import { AppShell } from '../components/AppShell';
 import { C2RequiredPanel } from '../components/C2RequiredPanel';
 import { useC2Connection } from '../useC2Connection';
@@ -173,6 +174,7 @@ export function C2SettingsPage() {
       {!connection ? (
         <C2RequiredPanel />
       ) : (
+        <SettingsLayout>
         <div className="c2-settings-layout">
           <section className="workspace-panel infrastructure-overview" aria-label="C2 worker overview">
             <div className="panel-header">
@@ -245,6 +247,7 @@ export function C2SettingsPage() {
             />
           </div>
         </div>
+        </SettingsLayout>
       )}
 
       {action ? (

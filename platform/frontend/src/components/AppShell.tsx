@@ -15,9 +15,9 @@ import {
   Unplug,
 } from 'lucide-react';
 import { ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Link, NavLink } from 'react-router-dom';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 
-import { getSectionDefinition, healthNav, primaryNav, ShellSection } from '../navigation';
+import { getSectionDefinition, getVisibleTabs, healthNav, NavItem, primaryNav, ShellSection } from '../navigation';
 import {
   GLOBAL_SCOPE_LABEL,
   readProjectScopeSnapshot,
@@ -73,36 +73,20 @@ function c2HostLabel(baseUrl: string): string {
   }
 }
 
-const createResourceActions = [
-  {
-    description: 'Define an engagement container.',
-    icon: FolderPlus,
-    label: 'Project',
-    to: '/projects?create=1',
-  },
-  {
-    description: 'Open beacon tasking.',
-    icon: TerminalSquare,
-    label: 'Task',
-    to: '/beacons?module=shell',
-  },
-  {
-    description: 'Add target scope.',
-    icon: Crosshair,
-    label: 'Target',
-    to: '/projects/scope',
-  },
-  {
-    description: 'Open inventory resources.',
-    icon: Boxes,
-    label: 'Resource',
-    to: '/assets',
-  },
-];
+function primaryNavActive(pathname: string, item: NavItem): boolean {
+  if (item.to === '/home') {
+    return pathname === '/home' || pathname.startsWith('/home/');
+  }
+  if (item.to === '/payloads/traffic-patterns') {
+    return pathname.startsWith('/payloads');
+  }
+  return pathname === item.to || pathname.startsWith(`${item.to}/`);
+}
 
 export function AppShell({ children, description, section, title, toolbar, wide = false }: AppShellProps) {
   const { logout, session } = useAuth();
   const { connection } = useC2Connection();
+  const location = useLocation();
   const [projectScope, setProjectScope] = useState(() => readProjectScopeSnapshot());
   const [isCreateMenuOpen, setCreateMenuOpen] = useState(false);
   const [isNotificationMenuOpen, setNotificationMenuOpen] = useState(false);
@@ -113,14 +97,45 @@ export function AppShell({ children, description, section, title, toolbar, wide 
   const createMenuId = useId();
   const notificationMenuId = useId();
   const projectScopeMenuId = useId();
-  const subNav = getSectionDefinition(section).tabs;
+  const sectionDefinition = getSectionDefinition(section);
+  const subNav = getVisibleTabs(section);
   const hasC2Connection = Boolean(connection);
+  const c2SettingsPath = hasC2Connection ? '/settings/infrastructure' : '/settings';
   const HealthIcon = healthNav.icon;
   const C2StatusIcon = hasC2Connection ? Plug : Unplug;
   const c2Host = connection ? c2HostLabel(connection.baseUrl) : '';
   const activeProject = useMemo(
     () => projectScope.projects.find((project) => project.id === projectScope.activeProjectId),
     [projectScope.activeProjectId, projectScope.projects],
+  );
+  const createResourceActions = useMemo(
+    () => [
+      {
+        description: 'Define an engagement container.',
+        icon: FolderPlus,
+        label: 'Project',
+        to: '/projects?create=1',
+      },
+      {
+        description: 'Open beacon tasking.',
+        icon: TerminalSquare,
+        label: 'Task',
+        to: '/beacons?module=shell',
+      },
+      {
+        description: 'Add target scope.',
+        icon: Crosshair,
+        label: 'Target',
+        to: activeProject ? `/projects/${activeProject.id}/scope` : '/projects?create=1',
+      },
+      {
+        description: 'Open inventory resources.',
+        icon: Boxes,
+        label: 'Resource',
+        to: '/assets',
+      },
+    ],
+    [activeProject],
   );
   const scopeLabel = activeProject?.name ?? GLOBAL_SCOPE_LABEL;
   const scopeTitle = `Scope: ${scopeLabel}`;
@@ -198,6 +213,7 @@ export function AppShell({ children, description, section, title, toolbar, wide 
             <h1 className="sr-only">{title}</h1>
             {description && <p className="sr-only">{description}</p>}
 
+            {subNav.length > 0 && !sectionDefinition.usesSideNav ? (
             <nav className="sub-nav" aria-label={`${title} sections`}>
               {subNav.map((item) => {
                 const Icon = item.icon;
@@ -208,25 +224,12 @@ export function AppShell({ children, description, section, title, toolbar, wide 
                   </>
                 );
 
-                const isEnabled = item.enabled;
-                if (!isEnabled) {
-                  return (
-                    <DisabledNavButton
-                      className="sub-nav-tab sub-nav-tab--disabled"
-                      key={item.label}
-                      label={item.label}
-                    >
-                      {content}
-                    </DisabledNavButton>
-                  );
-                }
-
                 return (
                   <NavLink
                     aria-label={item.label}
                     className={({ isActive }) => activeClass('sub-nav-tab', isActive)}
-                    end
-                    key={item.label}
+                    end={item.to === '/beacons' || item.to === '/projects' || item.to === '/home'}
+                    key={item.id}
                     title={item.label}
                     to={item.to}
                   >
@@ -235,6 +238,7 @@ export function AppShell({ children, description, section, title, toolbar, wide 
                 );
               })}
             </nav>
+            ) : null}
           </div>
 
           <div className="shell-brand-banner" aria-hidden="true">
@@ -356,7 +360,7 @@ export function AppShell({ children, description, section, title, toolbar, wide 
                   aria-label={hasC2Connection ? `C2 Connected to ${c2Host}` : 'C2 Disconnected'}
                   className={`c2-status-button ${hasC2Connection ? 'c2-status-button--connected' : 'c2-status-button--disconnected'}`}
                   title={c2Title}
-                  to="/settings"
+                  to={c2SettingsPath}
                 >
                   <C2StatusIcon aria-hidden="true" size={15} strokeWidth={2.25} />
                   <span className="c2-status-copy">
@@ -443,7 +447,11 @@ export function AppShell({ children, description, section, title, toolbar, wide 
             }
 
             return (
-              <NavLink className={({ isActive }) => activeClass('side-nav-tab', isActive)} key={item.label} to={item.to}>
+              <NavLink
+                className={() => activeClass('side-nav-tab', primaryNavActive(location.pathname, item))}
+                key={item.label}
+                to={item.to}
+              >
                 {content}
               </NavLink>
             );

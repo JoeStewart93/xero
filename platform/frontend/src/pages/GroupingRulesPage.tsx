@@ -3,6 +3,7 @@ import { Layers3, RefreshCw, RotateCw, SlidersHorizontal } from 'lucide-react';
 
 import type { GroupingRule, GroupingRuleKey } from '../api';
 import { getGroupingRules, rerunGrouping, updateGroupingRules } from '../api';
+import { SettingsLayout } from '../components/SettingsLayout';
 import { AppShell } from '../components/AppShell';
 import { C2RequiredPanel } from '../components/C2RequiredPanel';
 import { useC2Connection } from '../useC2Connection';
@@ -143,6 +144,7 @@ export function GroupingRulesPage() {
       {!connection ? (
         <C2RequiredPanel />
       ) : (
+        <SettingsLayout>
         <div className="grouping-rules-layout">
           <section className="workspace-panel grouping-rules-overview" aria-label="Grouping rules overview">
             <div className="panel-header">
@@ -234,6 +236,7 @@ export function GroupingRulesPage() {
             </div>
           </section>
         </div>
+        </SettingsLayout>
       )}
     </AppShell>
   );

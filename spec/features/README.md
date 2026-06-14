@@ -7,6 +7,7 @@ Numbered implementation backlog for Xero. Features are developed in order where 
 ## Current Alignment Notes
 
 - F0001-F0015, F0015.01-AMD, F0048, and F0049 are complete.
+- F0230 adds local setup automation scripts for Docker Compose startup, deterministic smoke data, and smoke cleanup.
 - The current UI/BFF stack, separate C2 stack, handler scaffold, and scanner scaffold are documented in F0001, F0048, and the architecture docs.
 - The current UI navigation is Home, Projects, Recon, Beacons, Exploits, Payloads, Assets, Reports, Loot, Settings, and separated Health/Realtime utility surfaces. Several sections are routeable shell stubs only; Inventory is under Assets.
 - F0008 adds direct-to-C2 operator realtime over /ws/operator; F0009 completes the beacon registration contract and the initial C2-backed Beacons overview; F0010 completes beacon heartbeat, stale/offline transitions, and active/offline UI counts.
@@ -286,6 +287,12 @@ F0049 completes shared handler/scanner worker pairing, heartbeat, stale detectio
 | F0081 | [Payload Generation System](0081-payload-generation-system.md) | P0 | F0015, F0021, F0015.01-AMD |
 | F0082 | [Post-Exploitation Orchestration](0082-post-exploitation-orchestration.md) | P1 | F0080, F0081 |
 | F0083 | [Exploit Source Adapters](0083-exploit-source-adapters.md) | P1 | F0080 |
+
+## Developer Tooling
+
+| ID | Feature | Priority | Depends |
+| :--- | :--- | :--- | :--- |
+| F0230 | [Local Setup Automation](0230-local-setup-automation.md) | P1 | F0001, F0003, F0009, F0048, F0049 |
 
 ## Post-MVP v2
 

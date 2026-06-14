@@ -6144,9 +6144,10 @@ h2 {
 
 .recon-workspace {
   display: grid;
-  grid-template-columns: minmax(300px, 0.85fr) minmax(280px, 0.7fr) minmax(420px, 1.25fr);
+  grid-template-columns: minmax(340px, 0.85fr) minmax(560px, 1.15fr);
   align-items: start;
   gap: 12px;
+  max-width: 1280px;
 }
 
 .recon-scan-form,
@@ -6158,6 +6159,9 @@ h2 {
 .recon-scan-type-list {
   display: grid;
   gap: 8px;
+  overflow: auto;
+  max-height: 318px;
+  padding-right: 2px;
 }
 
 .recon-scan-type-card {
@@ -6234,6 +6238,10 @@ h2 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.recon-result-panel {
+  grid-column: 1 / -1;
+}
+
 .recon-scan-form label {
   display: grid;
   gap: 6px;
@@ -6290,7 +6298,7 @@ h2 {
 .recon-scanner-modal {
   display: grid;
   gap: 12px;
-  padding: 16px;
+  padding: 12px;
 }
 
 .recon-scanner-modal-head {
@@ -6309,6 +6317,298 @@ h2 {
   color: var(--xero-muted);
   font-size: 13px;
   line-height: 18px;
+}
+
+.recon-nmap-modal {
+  display: grid;
+  min-height: min(680px, calc(100vh - 148px));
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.recon-modal-tabs {
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid rgba(0, 231, 255, 0.14);
+  padding: 0 0 10px;
+}
+
+.recon-modal-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  border: 1px solid rgba(0, 231, 255, 0.16);
+  border-radius: 5px;
+  padding: 0 11px;
+  background: rgba(1, 5, 9, 0.54);
+  color: var(--xero-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 780;
+  line-height: 16px;
+}
+
+.recon-modal-tab:hover,
+.recon-modal-tab.is-selected {
+  border-color: rgba(0, 231, 255, 0.38);
+  background: rgba(0, 231, 255, 0.1);
+  color: var(--xero-primary);
+}
+
+.recon-modal-body {
+  overflow: auto;
+  min-height: 0;
+  padding: 12px 2px 12px 0;
+}
+
+.recon-tab-panel {
+  min-width: 0;
+}
+
+.recon-field-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.recon-field-grid label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--xero-muted);
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 16px;
+}
+
+.recon-field-grid input,
+.recon-field-grid select,
+.recon-field-grid textarea {
+  width: 100%;
+  border: 1px solid rgba(0, 231, 255, 0.2);
+  border-radius: 5px;
+  background: rgba(1, 5, 9, 0.72);
+  color: var(--xero-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  outline: none;
+}
+
+.recon-field-grid input,
+.recon-field-grid select {
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.recon-field-grid textarea {
+  min-height: 110px;
+  padding: 9px 10px;
+  resize: vertical;
+}
+
+.recon-field-grid input:focus,
+.recon-field-grid select:focus,
+.recon-field-grid textarea:focus {
+  border-color: var(--xero-primary);
+  box-shadow: 0 0 0 3px var(--xero-primary-ring);
+}
+
+.recon-toggle-list,
+.recon-script-panel {
+  display: grid;
+  gap: 9px;
+}
+
+.recon-toggle-row,
+.recon-script-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  border: 1px solid rgba(0, 231, 255, 0.14);
+  border-radius: 5px;
+  padding: 8px 10px;
+  background: rgba(1, 5, 9, 0.56);
+  color: var(--xero-muted);
+}
+
+.recon-toggle-row input,
+.recon-script-option input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--xero-primary);
+}
+
+.recon-toggle-row span,
+.recon-script-option span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.recon-toggle-row strong,
+.recon-script-option strong {
+  overflow: hidden;
+  color: var(--xero-text);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recon-toggle-row small,
+.recon-script-option small {
+  overflow: hidden;
+  color: var(--xero-muted);
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recon-toggle-row--danger {
+  border-color: rgba(255, 92, 92, 0.28);
+  background: rgba(255, 48, 69, 0.08);
+}
+
+.recon-script-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.recon-script-option input:disabled + span {
+  opacity: 0.48;
+}
+
+.recon-routing-summary {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.recon-routing-summary div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(0, 231, 255, 0.14);
+  border-radius: 5px;
+  padding: 8px 10px;
+  background: rgba(1, 5, 9, 0.54);
+}
+
+.recon-routing-summary span {
+  color: var(--xero-muted);
+  font-size: 11px;
+  font-weight: 760;
+  line-height: 14px;
+  text-transform: uppercase;
+}
+
+.recon-routing-summary strong {
+  overflow: hidden;
+  color: var(--xero-text);
+  font-size: 14px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recon-scanner-roster {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 6px;
+  overflow: auto;
+  max-height: 278px;
+  padding-right: 2px;
+}
+
+.recon-scanner-roster-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(160px, 1fr) 74px auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border: 1px solid rgba(0, 231, 255, 0.12);
+  border-radius: 5px;
+  padding: 6px 8px;
+  background: rgba(1, 5, 9, 0.48);
+}
+
+.recon-scanner-roster-row strong,
+.recon-scanner-roster-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recon-scanner-roster-row strong {
+  color: var(--xero-text);
+  font-size: 12.5px;
+  font-weight: 800;
+  line-height: 16px;
+}
+
+.recon-scanner-roster-row span,
+.recon-scanner-roster-row small {
+  color: var(--xero-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.recon-scanner-roster-row small {
+  justify-self: end;
+}
+
+.recon-scanner-roster-row em {
+  justify-self: end;
+  border: 1px solid rgba(141, 164, 184, 0.24);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--xero-muted);
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 820;
+  line-height: 13px;
+  text-transform: uppercase;
+}
+
+.recon-scanner-roster-row em.is-online {
+  border-color: rgba(52, 232, 139, 0.36);
+  color: #34e88b;
+}
+
+.recon-scanner-roster-row em.is-failed,
+.recon-scanner-roster-row em.is-offline {
+  border-color: rgba(255, 92, 92, 0.38);
+  color: #ff8a8a;
+}
+
+.recon-modal-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid rgba(0, 231, 255, 0.14);
+  padding-top: 10px;
+}
+
+.recon-modal-status {
+  min-width: 0;
+}
+
+.recon-modal-status p {
+  margin: 0;
+}
+
+.recon-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .recon-planned-form {
@@ -6375,8 +6675,46 @@ h2 {
 }
 
 .recon-job-list {
-  max-height: 440px;
+  max-height: 318px;
   overflow: auto;
+  padding-right: 2px;
+  scrollbar-gutter: stable;
+}
+
+.recon-scrollbar,
+.recon-scan-type-list,
+.recon-job-list,
+.scan-result-table-wrap,
+.stream-output-buffer {
+  scrollbar-color: rgba(0, 231, 255, 0.38) rgba(1, 5, 9, 0.44);
+  scrollbar-width: thin;
+}
+
+.recon-scrollbar::-webkit-scrollbar,
+.recon-scan-type-list::-webkit-scrollbar,
+.recon-job-list::-webkit-scrollbar,
+.scan-result-table-wrap::-webkit-scrollbar,
+.stream-output-buffer::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.recon-scrollbar::-webkit-scrollbar-track,
+.recon-scan-type-list::-webkit-scrollbar-track,
+.recon-job-list::-webkit-scrollbar-track,
+.scan-result-table-wrap::-webkit-scrollbar-track,
+.stream-output-buffer::-webkit-scrollbar-track {
+  background: rgba(1, 5, 9, 0.44);
+}
+
+.recon-scrollbar::-webkit-scrollbar-thumb,
+.recon-scan-type-list::-webkit-scrollbar-thumb,
+.recon-job-list::-webkit-scrollbar-thumb,
+.scan-result-table-wrap::-webkit-scrollbar-thumb,
+.stream-output-buffer::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(1, 5, 9, 0.44);
+  border-radius: 999px;
+  background: rgba(0, 231, 255, 0.38);
 }
 
 .recon-job-row {
@@ -6385,10 +6723,10 @@ h2 {
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 58px;
+  min-height: 42px;
   border: 1px solid rgba(0, 231, 255, 0.14);
   border-radius: 5px;
-  padding: 9px 10px;
+  padding: 7px 9px;
   background: rgba(1, 5, 9, 0.54);
   color: var(--xero-text);
   cursor: pointer;
@@ -6401,9 +6739,10 @@ h2 {
   background: rgba(0, 231, 255, 0.08);
 }
 
-.recon-job-row span {
-  display: grid;
-  gap: 3px;
+.recon-job-main {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
   min-width: 0;
 }
 
@@ -6420,9 +6759,11 @@ h2 {
   font-style: normal;
   font-weight: 760;
   line-height: 18px;
+  max-width: 34%;
 }
 
 .recon-job-row em {
+  min-width: 0;
   color: var(--xero-muted);
   font-size: 12px;
   font-style: normal;
@@ -7427,8 +7768,11 @@ h2 {
 
 @media (max-width: 900px) {
   .recon-workspace,
+  .recon-field-grid,
   .recon-planned-form,
+  .recon-routing-summary,
   .recon-scan-form--modal,
+  .recon-script-grid,
   .deploy-builder-layout,
   .deploy-target-grid,
   .deploy-field-grid,
@@ -7439,6 +7783,18 @@ h2 {
   .recon-scan-form,
   .scan-summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .recon-modal-footer {
+    grid-template-columns: 1fr;
+  }
+
+  .recon-modal-actions {
+    justify-content: flex-end;
+  }
+
+  .recon-scanner-roster-row {
+    grid-template-columns: 1fr auto;
   }
 
   .deploy-build-button {

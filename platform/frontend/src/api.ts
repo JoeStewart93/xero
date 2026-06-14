@@ -678,15 +678,19 @@ export interface AssetListOptions {
 
 export type ScanJobStatus = 'completed' | 'failed' | 'queued' | 'running';
 export type ScanModuleId = 'builtin.portscan' | 'builtin.serviceenum';
+export type ScanExecutionTarget = 'auto' | 'distributed' | `scanner:${string}`;
 export type ScanResultState = 'closed' | 'filtered' | 'open';
 export type ServiceEnumStatus = 'error' | 'identified' | 'skipped' | 'timeout' | 'unknown';
 
 export interface PortScanArgs {
+  allow_disruptive_scripts?: boolean;
   dns_resolution?: boolean;
-  execution_target?: 'auto';
+  execution_target?: ScanExecutionTarget;
   max_threads?: number;
   os_detection?: boolean;
   port_range: string;
+  script_categories?: string[];
+  script_scan_enabled?: boolean;
   scan_engine?: 'nmap';
   scan_technique?: string;
   service_detection?: boolean;

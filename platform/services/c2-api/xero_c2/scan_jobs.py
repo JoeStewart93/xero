@@ -45,6 +45,25 @@ def find_embedded_scanner(session: Session) -> InfrastructureWorker | None:
     ).scalar_one_or_none()
 
 
+def resolve_scan_worker(session: Session, execution_target: str) -> tuple[InfrastructureWorker, str]:
+    if execution_target.startswith("scanner:"):
+        try:
+            worker_id = uuid.UUID(execution_target.removeprefix("scanner:"))
+        except ValueError as exc:
+            raise ValueError("Selected scanner id is invalid") from exc
+        worker = session.get(InfrastructureWorker, worker_id)
+        if worker is None or worker.kind != WORKER_KIND_SCANNER:
+            raise ValueError("Selected scanner is not available")
+        return worker, f"scanner:{worker.name}"[:64]
+
+    embedded = find_embedded_scanner(session)
+    if embedded is None:
+        raise ValueError("Embedded scanner is not available")
+    if execution_target == "distributed":
+        return embedded, "distributed"
+    return embedded, "embedded-c2"
+
+
 def public_scan_job(job: ScanJob) -> dict[str, Any]:
     return {
         "id": str(job.id),
@@ -113,14 +132,12 @@ def create_scan_job(
     raw_args: dict[str, Any],
 ) -> ScanJob:
     args = normalize_scan_args(module, raw_args)
-    worker = find_embedded_scanner(session)
-    if worker is None:
-        raise ValueError("Embedded scanner is not available")
+    worker, resolved_target = resolve_scan_worker(session, args["execution_target"])
     job = ScanJob(
         actor_subject=actor_subject,
         args=args,
         execution_target_requested=args["execution_target"],
-        execution_target_resolved="embedded-c2",
+        execution_target_resolved=resolved_target,
         module=module,
         progress_completed=0,
         progress_total=estimate_scan_progress_total(module, args),

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 
 const apiMocks = vi.hoisted(() => ({
   createScanJob: vi.fn(),
+  getInfrastructureWorkers: vi.fn(),
   getModules: vi.fn(),
   getScanJob: vi.fn(),
   getScanJobs: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock('../useRealtime', () => ({
 vi.mock('../api', async (importOriginal) => ({
   ...((await importOriginal()) as object),
   createScanJob: apiMocks.createScanJob,
+  getInfrastructureWorkers: apiMocks.getInfrastructureWorkers,
   getModules: apiMocks.getModules,
   getScanJob: apiMocks.getScanJob,
   getScanJobs: apiMocks.getScanJobs,
@@ -71,6 +73,26 @@ const completedScan = {
   worker_id: 'worker-one',
 };
 
+const embeddedScanner = {
+  capabilities: ['embedded-scanner', 'recon-ready'],
+  capacity: 1,
+  created_at: '2026-06-13T05:00:00Z',
+  current_load: 0,
+  endpoint: 'http://localhost:18001',
+  id: '22222222-2222-2222-2222-222222222222',
+  kind: 'scanner',
+  last_error: null,
+  last_seen: '2026-06-13T05:00:00Z',
+  managed_host_port: null,
+  managed_project: null,
+  managed_service: null,
+  name: 'Embedded C2 scanner',
+  origin: 'embedded',
+  status: 'online',
+  updated_at: '2026-06-13T05:00:00Z',
+  version: 'embedded',
+};
+
 function renderPage(initialEntries = ['/recon']) {
   return render(
     <MemoryRouter initialEntries={initialEntries}>
@@ -81,12 +103,14 @@ function renderPage(initialEntries = ['/recon']) {
 
 describe('ReconPage', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     apiMocks.getModules.mockResolvedValue({
       items: [
         { id: 'builtin.portscan', name: 'Port Scan', version: '0.1.0' },
         { id: 'builtin.serviceenum', name: 'Service Enumeration', version: '0.1.0' },
       ],
     });
+    apiMocks.getInfrastructureWorkers.mockResolvedValue({ items: [embeddedScanner] });
     apiMocks.getScanJobs.mockResolvedValue({ items: [completedScan] });
     apiMocks.getScanJob.mockResolvedValue(completedScan);
     apiMocks.getScanResultChunks.mockResolvedValue({ items: [] });
@@ -135,6 +159,19 @@ describe('ReconPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /NMAP port scan/ }));
     fireEvent.change(screen.getByLabelText('Scan targets'), { target: { value: '127.0.0.1' } });
     fireEvent.change(screen.getByLabelText('Port range'), { target: { value: '8000,9000' } });
+    expect(screen.queryByRole('button', { name: /Refresh/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Detection/ }));
+    fireEvent.click(screen.getByLabelText(/Service discovery/));
+    fireEvent.click(screen.getByLabelText(/OS fingerprinting/));
+
+    fireEvent.click(screen.getByRole('tab', { name: /Scripts/ }));
+    fireEvent.click(screen.getByLabelText(/Enable NSE scripts/));
+    fireEvent.click(screen.getByLabelText(/Vuln/));
+    fireEvent.click(screen.getByLabelText(/Allow disruptive script categories/));
+
+    fireEvent.click(screen.getByRole('tab', { name: /Routing/ }));
+    fireEvent.change(screen.getByLabelText('Scanner routing'), { target: { value: 'distributed' } });
     fireEvent.click(screen.getByRole('button', { name: /Run scan/ }));
 
     await waitFor(() => {
@@ -142,8 +179,13 @@ describe('ReconPage', () => {
         'http://localhost:18001',
         'c2-token',
         expect.objectContaining({
-          execution_target: 'auto',
+          execution_target: 'distributed',
+          allow_disruptive_scripts: true,
+          os_detection: true,
           port_range: '8000,9000',
+          script_categories: expect.arrayContaining(['default', 'safe', 'vuln']),
+          script_scan_enabled: true,
+          service_detection: true,
           targets: ['127.0.0.1'],
         }),
       );

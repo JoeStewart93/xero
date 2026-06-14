@@ -54,7 +54,7 @@ from xero_c2.models import (
     TaskResult,
     WorkerEvent,
 )
-from xero_c2.portscan import run_scan_job
+from xero_c2.portscan import PortScanArgs, build_nmap_command, run_scan_job
 from xero_c2.protocol import HEARTBEAT, REGISTER, SESSION_DATA, TASK_POLL, TASK_RESULT
 from xero_c2.protocol.codec import public_key_bytes
 from xero_c2.registry_sessions import (
@@ -415,8 +415,10 @@ def test_module_registry_exposes_builtin_portscan(c2_client):
     assert "beacon-task" in modules["shell"]["tags"]
     assert "builtin.portscan" in modules
     assert modules["builtin.portscan"]["execution_kind"] == "scan-job"
-    assert modules["builtin.portscan"]["supported_execution_targets"] == ["auto"]
-    assert modules["builtin.portscan"]["args_schema"]["properties"]["execution_target"]["enum"] == ["auto"]
+    assert modules["builtin.portscan"]["supported_execution_targets"] == ["auto", "distributed", "scanner"]
+    assert "scanner:<worker-id>" in modules["builtin.portscan"]["args_schema"]["properties"]["execution_target"]["description"]
+    assert modules["builtin.portscan"]["args_schema"]["properties"]["script_scan_enabled"]["default"] is False
+    assert "vuln" in modules["builtin.portscan"]["args_schema"]["properties"]["script_categories"]["items"]["enum"]
     assert modules["builtin.portscan"]["author"] == "Xero"
     assert modules["builtin.portscan"]["plugin_id"] is None
     assert modules["builtin.portscan"]["status"] == "enabled"
@@ -692,7 +694,7 @@ def test_subnet_rule_prefix_change_reruns_memberships(c2_client):
     assert merged_group.json()["items"][0]["member_count"] == 2
 
 
-def test_portscan_args_validation_rejects_public_and_non_auto_targets(c2_client):
+def test_portscan_args_validation_rejects_public_and_unsupported_targets(c2_client):
     token = connect_c2(c2_client)
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -724,6 +726,29 @@ def test_portscan_args_validation_rejects_public_and_non_auto_targets(c2_client)
     assert public_target.status_code == 422
     assert external_target.status_code == 422
     assert invalid_port.status_code == 422
+
+
+def test_nmap_command_includes_detection_scripts_and_routing_options():
+    args = PortScanArgs.model_validate(
+        {
+            "allow_disruptive_scripts": True,
+            "dns_resolution": True,
+            "execution_target": "distributed",
+            "os_detection": True,
+            "port_range": "80,443",
+            "script_categories": ["default", "vuln", "intrusive"],
+            "script_scan_enabled": True,
+            "service_detection": True,
+            "targets": ["127.0.0.1"],
+        }
+    )
+
+    cmd = build_nmap_command("nmap", args, ["127.0.0.1"], [80, 443])
+
+    assert "-sV" in cmd
+    assert "-O" in cmd
+    assert "-n" not in cmd
+    assert cmd[cmd.index("--script") + 1] == "default,vuln,intrusive"
 
 
 def test_portscan_job_scans_loopback_and_records_chunks(c2_client, monkeypatch):

@@ -31,15 +31,30 @@ MAX_EXPANDED_HOSTS = 256
 MAX_TOTAL_PROBES = 65_535
 IpAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 IpNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
+SAFE_NMAP_SCRIPT_CATEGORIES = {
+    "auth",
+    "broadcast",
+    "default",
+    "discovery",
+    "external",
+    "safe",
+    "version",
+    "vuln",
+}
+DISRUPTIVE_NMAP_SCRIPT_CATEGORIES = {"dos", "exploit", "intrusive", "malware"}
+NMAP_SCRIPT_CATEGORIES = SAFE_NMAP_SCRIPT_CATEGORIES | DISRUPTIVE_NMAP_SCRIPT_CATEGORIES
 
 
 class PortScanArgs(BaseModel):
+    allow_disruptive_scripts: bool = False
     targets: list[str] = Field(min_length=1, max_length=MAX_TARGET_ENTRIES)
     port_range: str = Field(min_length=1, max_length=512)
     timeout_ms: int = Field(default=1000, ge=50, le=60_000)
     max_threads: int = Field(default=64, ge=1, le=256)
     scan_engine: str = "nmap"
     scan_technique: str = "tcp-connect"
+    script_categories: list[str] = Field(default_factory=list, max_length=8)
+    script_scan_enabled: bool = False
     timing_template: int = Field(default=3, ge=0, le=5)
     service_detection: bool = False
     os_detection: bool = False
@@ -66,8 +81,28 @@ class PortScanArgs(BaseModel):
     @classmethod
     def validate_execution_target(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized != "auto":
-            raise ValueError("F0022 supports execution_target=auto only")
+        if normalized in {"auto", "distributed"}:
+            return normalized
+        if normalized.startswith("scanner:"):
+            try:
+                uuid.UUID(normalized.removeprefix("scanner:"))
+            except ValueError as exc:
+                raise ValueError("execution_target scanner selector must be scanner:<worker-id>") from exc
+            return normalized
+        raise ValueError("execution_target must be auto, distributed, or scanner:<worker-id>")
+
+    @field_validator("script_categories")
+    @classmethod
+    def validate_script_categories(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for category in value:
+            item = category.strip().lower()
+            if not item:
+                continue
+            if item not in NMAP_SCRIPT_CATEGORIES:
+                raise ValueError("script_categories contains an unsupported NMAP category")
+            if item not in normalized:
+                normalized.append(item)
         return normalized
 
     @field_validator("targets")
@@ -91,6 +126,15 @@ class PortScanArgs(BaseModel):
 
     @model_validator(mode="after")
     def validate_probe_budget(self) -> PortScanArgs:
+        if not self.script_scan_enabled:
+            self.script_categories = []
+        elif not self.script_categories:
+            self.script_categories = ["default", "safe"]
+        if not self.allow_disruptive_scripts:
+            requested_disruptive = set(self.script_categories) & DISRUPTIVE_NMAP_SCRIPT_CATEGORIES
+            if requested_disruptive:
+                requested = ", ".join(sorted(requested_disruptive))
+                raise ValueError(f"Disruptive NMAP script categories require allow_disruptive_scripts=true: {requested}")
         total = estimate_portscan_progress_total(self.model_dump())
         if total > MAX_TOTAL_PROBES:
             raise ValueError(f"Scan probe budget exceeds {MAX_TOTAL_PROBES}")
@@ -409,6 +453,8 @@ def build_nmap_command(executable: str, args: PortScanArgs, hosts: list[str], po
         cmd.append("-sV")
     if args.os_detection:
         cmd.append("-O")
+    if args.script_scan_enabled:
+        cmd.extend(["--script", ",".join(args.script_categories or ["default", "safe"])])
     cmd.extend(hosts)
     return cmd
 

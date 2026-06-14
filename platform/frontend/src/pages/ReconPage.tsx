@@ -1,13 +1,29 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { Compass, Crosshair, Database, Globe2, Play, Radar, RefreshCw, Route, Search, ShieldCheck, Zap } from 'lucide-react';
+import {
+  AlertTriangle,
+  Compass,
+  Crosshair,
+  Database,
+  Globe2,
+  Play,
+  Radar,
+  Route,
+  Search,
+  ServerCog,
+  ShieldCheck,
+  SlidersHorizontal,
+  Zap,
+} from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 
 import {
   createScanJob,
+  getInfrastructureWorkers,
   getModules,
   getScanJob,
   getScanJobs,
   getScanResultChunks,
+  InfrastructureWorker,
   ModuleDefinition,
   PortScanResultRecord,
   PortScanArgs,
@@ -27,10 +43,14 @@ import { useC2Connection } from '../useC2Connection';
 import { useRealtime } from '../useRealtime';
 
 interface ScanFormState {
+  allowDisruptiveScripts: string;
   dnsResolution: string;
+  executionTarget: string;
   maxThreads: string;
   osDetection: string;
   portRange: string;
+  scriptCategories: string[];
+  scriptScanEnabled: string;
   scanTechnique: string;
   serviceDetection: string;
   targets: string;
@@ -39,10 +59,14 @@ interface ScanFormState {
 }
 
 const initialForm: ScanFormState = {
+  allowDisruptiveScripts: 'disabled',
   dnsResolution: 'disabled',
+  executionTarget: 'auto',
   maxThreads: '32',
   osDetection: 'disabled',
   portRange: '80,443',
+  scriptCategories: ['default', 'safe'],
+  scriptScanEnabled: 'disabled',
   scanTechnique: 'tcp-connect',
   serviceDetection: 'disabled',
   targets: '127.0.0.1',
@@ -51,6 +75,26 @@ const initialForm: ScanFormState = {
 };
 
 type ReconScanTypeId = 'nmap' | 'masscan' | 'dns' | 'path' | 'shodan';
+type NmapModalTabId = 'targets' | 'detection' | 'scripts' | 'routing';
+
+const nmapModalTabs: Array<{ icon: typeof SlidersHorizontal; id: NmapModalTabId; label: string }> = [
+  { icon: SlidersHorizontal, id: 'targets', label: 'Targets' },
+  { icon: Crosshair, id: 'detection', label: 'Detection' },
+  { icon: AlertTriangle, id: 'scripts', label: 'Scripts' },
+  { icon: ServerCog, id: 'routing', label: 'Routing' },
+];
+
+const scriptCategoryOptions = [
+  { description: 'Baseline NSE script set', label: 'Default', value: 'default' },
+  { description: 'Low-risk checks', label: 'Safe', value: 'safe' },
+  { description: 'Host and service discovery', label: 'Discovery', value: 'discovery' },
+  { description: 'Version enrichment', label: 'Version', value: 'version' },
+  { description: 'Known vulnerability checks', label: 'Vuln', value: 'vuln' },
+  { description: 'Auth-oriented checks', label: 'Auth', value: 'auth' },
+  { description: 'Intrusive probes', label: 'Intrusive', value: 'intrusive' },
+  { description: 'Potential denial checks', label: 'DoS', value: 'dos' },
+  { description: 'Exploit verification', label: 'Exploit', value: 'exploit' },
+];
 
 const reconScanTypes: Array<{
   capability: string;
@@ -132,6 +176,30 @@ function parseInteger(value: string, label: string, minimum: number, maximum: nu
   return parsed;
 }
 
+function stringArrayValue(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function toggleValue(value: unknown, fallback: string): string {
+  if (typeof value === 'boolean') {
+    return value ? 'enabled' : 'disabled';
+  }
+  const normalized = stringValue(value).trim().toLowerCase();
+  if (['true', 'enabled', 'on', 'yes'].includes(normalized)) {
+    return 'enabled';
+  }
+  if (['false', 'disabled', 'off', 'no'].includes(normalized)) {
+    return 'disabled';
+  }
+  return fallback;
+}
+
 function argsFromForm(form: ScanFormState): PortScanArgs {
   const targets = form.targets
     .split(/[,\n]/)
@@ -141,13 +209,16 @@ function argsFromForm(form: ScanFormState): PortScanArgs {
     throw new Error('At least one target is required.');
   }
   return {
+    allow_disruptive_scripts: form.allowDisruptiveScripts === 'enabled',
     dns_resolution: form.dnsResolution === 'enabled',
-    execution_target: 'auto',
+    execution_target: (form.executionTarget || 'auto') as PortScanArgs['execution_target'],
     max_threads: parseInteger(form.maxThreads, 'Max threads', 1, 256),
     os_detection: form.osDetection === 'enabled',
     port_range: form.portRange.trim(),
     scan_engine: 'nmap',
     scan_technique: form.scanTechnique,
+    script_categories: form.scriptScanEnabled === 'enabled' ? form.scriptCategories : [],
+    script_scan_enabled: form.scriptScanEnabled === 'enabled',
     service_detection: form.serviceDetection === 'enabled',
     targets,
     timing_template: parseInteger(form.timingTemplate, 'Timing template', 0, 5),
@@ -275,6 +346,8 @@ export function ReconPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [serviceEnumPending, setServiceEnumPending] = useState('');
   const [activeScanTypeId, setActiveScanTypeId] = useState<ReconScanTypeId | ''>('');
+  const [activeNmapTab, setActiveNmapTab] = useState<NmapModalTabId>('targets');
+  const [scannerWorkers, setScannerWorkers] = useState<InfrastructureWorker[]>([]);
   const [scanChunksByJob, setScanChunksByJob] = useState<Record<string, ScanResultChunk[]>>({});
   const routeModuleId = useMemo(() => new URLSearchParams(location.search).get('module') ?? '', [location.search]);
   const routeModuleArgs = useMemo(() => decodeLaunchArgs(new URLSearchParams(location.search).get('args')), [location.search]);
@@ -324,16 +397,19 @@ export function ReconPage() {
     if (!connection) {
       setModules([]);
       setJobs([]);
+      setScannerWorkers([]);
       return;
     }
     setIsLoading(true);
     try {
-      const [moduleResponse, jobResponse] = await Promise.all([
+      const [moduleResponse, jobResponse, workerResponse] = await Promise.all([
         getModules(connection.baseUrl, connection.accessToken),
         getScanJobs(connection.baseUrl, connection.accessToken, { limit: 25 }),
+        getInfrastructureWorkers(connection.baseUrl, connection.accessToken),
       ]);
       setModules(moduleResponse.items);
       setJobs(jobResponse.items);
+      setScannerWorkers(workerResponse.items.filter((worker) => worker.kind === 'scanner'));
       setError('');
       setSelectedJobId((current) => {
         if (current && jobResponse.items.some((job) => job.id === current)) {
@@ -360,12 +436,19 @@ export function ReconPage() {
     const handle = window.setTimeout(() => {
       setActiveScanTypeId('nmap');
       setForm((current) => ({
-        dnsResolution: stringValue(routeModuleArgs.dns_resolution) || current.dnsResolution,
+        allowDisruptiveScripts: toggleValue(routeModuleArgs.allow_disruptive_scripts, current.allowDisruptiveScripts),
+        dnsResolution: toggleValue(routeModuleArgs.dns_resolution, current.dnsResolution),
+        executionTarget: stringValue(routeModuleArgs.execution_target) || current.executionTarget,
         maxThreads: stringValue(routeModuleArgs.max_threads) || current.maxThreads,
-        osDetection: stringValue(routeModuleArgs.os_detection) || current.osDetection,
+        osDetection: toggleValue(routeModuleArgs.os_detection, current.osDetection),
         portRange: stringValue(routeModuleArgs.port_range) || current.portRange,
+        scriptCategories: (() => {
+          const categories = stringArrayValue(routeModuleArgs.script_categories);
+          return categories.length > 0 ? categories : current.scriptCategories;
+        })(),
+        scriptScanEnabled: toggleValue(routeModuleArgs.script_scan_enabled, current.scriptScanEnabled),
         scanTechnique: stringValue(routeModuleArgs.scan_technique) || current.scanTechnique,
-        serviceDetection: stringValue(routeModuleArgs.service_detection) || current.serviceDetection,
+        serviceDetection: toggleValue(routeModuleArgs.service_detection, current.serviceDetection),
         targets: stringValue(routeModuleArgs.targets) || current.targets,
         timingTemplate: stringValue(routeModuleArgs.timing_template) || current.timingTemplate,
         timeoutMs: stringValue(routeModuleArgs.timeout_ms) || current.timeoutMs,
@@ -554,37 +637,48 @@ export function ReconPage() {
     );
   }
 
-  function renderScanTypeModal() {
-    if (!activeScanType) {
-      return null;
-    }
+  function toggleScriptCategory(category: string, isChecked: boolean): void {
+    setForm((current) => {
+      const nextCategories = isChecked
+        ? [...current.scriptCategories, category]
+        : current.scriptCategories.filter((item) => item !== category);
+      return { ...current, scriptCategories: Array.from(new Set(nextCategories)) };
+    });
+  }
 
-    const ActiveIcon = activeScanType.icon;
-    const isNmap = activeScanType.id === 'nmap';
+  function renderNmapScannerModal() {
     return (
-      <ModalShell
-        ariaLabel={`${activeScanType.label} launcher`}
-        onClose={() => setActiveScanTypeId('')}
-        subtitle={activeScanType.capability}
-        title={activeScanType.label}
-        variant="wide"
-      >
-        <div className="recon-scanner-modal">
-          <div className="recon-scanner-modal-head">
-            <div className="panel-icon" aria-hidden="true">
-              <ActiveIcon size={18} strokeWidth={2} />
-            </div>
-            <p>{activeScanType.description}</p>
-          </div>
+      <form className="recon-nmap-modal" onSubmit={handleSubmit}>
+        <div className="recon-modal-tabs" role="tablist" aria-label="NMAP configuration">
+          {nmapModalTabs.map((tab) => {
+            const TabIcon = tab.icon;
+            const isSelected = activeNmapTab === tab.id;
+            return (
+              <button
+                aria-controls={`nmap-tab-${tab.id}`}
+                aria-selected={isSelected}
+                className={`recon-modal-tab ${isSelected ? 'is-selected' : ''}`}
+                key={tab.id}
+                onClick={() => setActiveNmapTab(tab.id)}
+                role="tab"
+                type="button"
+              >
+                <TabIcon aria-hidden="true" size={14} strokeWidth={2.1} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
 
-          {isNmap ? (
-            <form className="recon-scan-form recon-scan-form--modal" onSubmit={handleSubmit}>
+        <div className="recon-modal-body recon-scrollbar">
+          {activeNmapTab === 'targets' ? (
+            <div className="recon-tab-panel recon-field-grid" id="nmap-tab-targets" role="tabpanel">
               <label className="recon-wide-field">
                 Targets
                 <textarea
                   aria-label="Scan targets"
                   onChange={(event) => setForm((current) => ({ ...current, targets: event.target.value }))}
-                  rows={3}
+                  rows={4}
                   value={form.targets}
                 />
               </label>
@@ -639,59 +733,188 @@ export function ReconPage() {
                   value={form.maxThreads}
                 />
               </label>
-              <label>
-                Service detection
-                <select
-                  aria-label="NMAP service detection"
-                  onChange={(event) => setForm((current) => ({ ...current, serviceDetection: event.target.value }))}
-                  value={form.serviceDetection}
-                >
-                  <option value="disabled">Off</option>
-                  <option value="enabled">On</option>
-                </select>
+            </div>
+          ) : null}
+
+          {activeNmapTab === 'detection' ? (
+            <div className="recon-tab-panel recon-toggle-list" id="nmap-tab-detection" role="tabpanel">
+              <label className="recon-toggle-row">
+                <input
+                  checked={form.serviceDetection === 'enabled'}
+                  onChange={(event) => setForm((current) => ({ ...current, serviceDetection: event.target.checked ? 'enabled' : 'disabled' }))}
+                  type="checkbox"
+                />
+                <span>
+                  <strong>Service discovery</strong>
+                  <small>NMAP -sV probes and version hints.</small>
+                </span>
               </label>
-              <label>
-                OS detection
-                <select
-                  aria-label="NMAP OS detection"
-                  onChange={(event) => setForm((current) => ({ ...current, osDetection: event.target.value }))}
-                  value={form.osDetection}
-                >
-                  <option value="disabled">Off</option>
-                  <option value="enabled">On</option>
-                </select>
+              <label className="recon-toggle-row">
+                <input
+                  checked={form.osDetection === 'enabled'}
+                  onChange={(event) => setForm((current) => ({ ...current, osDetection: event.target.checked ? 'enabled' : 'disabled' }))}
+                  type="checkbox"
+                />
+                <span>
+                  <strong>OS fingerprinting</strong>
+                  <small>NMAP -O fingerprint collection.</small>
+                </span>
               </label>
-              <label>
-                DNS resolution
-                <select
-                  aria-label="NMAP DNS resolution"
-                  onChange={(event) => setForm((current) => ({ ...current, dnsResolution: event.target.value }))}
-                  value={form.dnsResolution}
-                >
-                  <option value="disabled">Off</option>
-                  <option value="enabled">On</option>
-                </select>
+              <label className="recon-toggle-row">
+                <input
+                  checked={form.dnsResolution === 'enabled'}
+                  onChange={(event) => setForm((current) => ({ ...current, dnsResolution: event.target.checked ? 'enabled' : 'disabled' }))}
+                  type="checkbox"
+                />
+                <span>
+                  <strong>DNS resolution</strong>
+                  <small>Resolve names instead of forcing numeric output.</small>
+                </span>
               </label>
-              <label>
-                Execution
-                <select aria-label="Execution target" value="auto" disabled>
-                  <option value="auto">Auto / embedded C2</option>
-                </select>
+            </div>
+          ) : null}
+
+          {activeNmapTab === 'scripts' ? (
+            <div className="recon-tab-panel recon-script-panel" id="nmap-tab-scripts" role="tabpanel">
+              <label className="recon-toggle-row">
+                <input
+                  checked={form.scriptScanEnabled === 'enabled'}
+                  onChange={(event) => setForm((current) => ({ ...current, scriptScanEnabled: event.target.checked ? 'enabled' : 'disabled' }))}
+                  type="checkbox"
+                />
+                <span>
+                  <strong>Enable NSE scripts</strong>
+                  <small>Run selected NMAP script categories after discovery.</small>
+                </span>
               </label>
-              <div className="recon-form-actions">
-                <button className="primary-button" disabled={isSubmitting} type="submit">
-                  <Play aria-hidden="true" size={15} strokeWidth={2.1} />
-                  <span>{isSubmitting ? 'Queueing' : 'Run scan'}</span>
-                </button>
-                <button className="secondary-button" disabled={isLoading} onClick={() => void loadReconState()} type="button">
-                  <RefreshCw aria-hidden="true" size={15} strokeWidth={2.1} />
-                  <span>{isLoading ? 'Refreshing' : 'Refresh'}</span>
-                </button>
+              <div className="recon-script-grid" aria-label="NMAP script categories">
+                {scriptCategoryOptions.map((option) => (
+                  <label className="recon-script-option" key={option.value}>
+                    <input
+                      checked={form.scriptCategories.includes(option.value)}
+                      disabled={form.scriptScanEnabled !== 'enabled'}
+                      onChange={(event) => toggleScriptCategory(option.value, event.target.checked)}
+                      type="checkbox"
+                    />
+                    <span>
+                      <strong>{option.label}</strong>
+                      <small>{option.description}</small>
+                    </span>
+                  </label>
+                ))}
               </div>
-              {error ? <p className="task-queue-error recon-wide-field" role="alert">{error}</p> : null}
-              {message ? <p className="profile-status-message recon-wide-field">{message}</p> : null}
-            </form>
-          ) : (
+              <label className="recon-toggle-row recon-toggle-row--danger">
+                <input
+                  checked={form.allowDisruptiveScripts === 'enabled'}
+                  disabled={form.scriptScanEnabled !== 'enabled'}
+                  onChange={(event) => setForm((current) => ({ ...current, allowDisruptiveScripts: event.target.checked ? 'enabled' : 'disabled' }))}
+                  type="checkbox"
+                />
+                <span>
+                  <strong>Allow disruptive script categories</strong>
+                  <small>Required for intrusive, DoS, exploit, and similar categories.</small>
+                </span>
+              </label>
+            </div>
+          ) : null}
+
+          {activeNmapTab === 'routing' ? (
+            <div className="recon-tab-panel recon-field-grid" id="nmap-tab-routing" role="tabpanel">
+              <label className="recon-wide-field">
+                Scanner routing
+                <select
+                  aria-label="Scanner routing"
+                  onChange={(event) => setForm((current) => ({ ...current, executionTarget: event.target.value }))}
+                  value={form.executionTarget}
+                >
+                  <option value="auto">Auto load-balanced</option>
+                  <option value="distributed">Distribute across scanners</option>
+                  {scannerWorkers.map((worker) => (
+                    <option key={worker.id} value={`scanner:${worker.id}`}>
+                      {worker.name} / {worker.status} / load {worker.current_load}/{worker.capacity}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="recon-routing-summary">
+                <div>
+                  <span>Available scanners</span>
+                  <strong>{scannerWorkers.length}</strong>
+                </div>
+                <div>
+                  <span>Online</span>
+                  <strong>{scannerWorkers.filter((worker) => worker.status === 'online').length}</strong>
+                </div>
+                <div>
+                  <span>Mode</span>
+                  <strong>{form.executionTarget === 'distributed' ? 'Distributed' : form.executionTarget.startsWith('scanner:') ? 'Specific' : 'Auto'}</strong>
+                </div>
+              </div>
+              <div className="recon-scanner-roster recon-scrollbar" aria-label="Scanner workers">
+                {scannerWorkers.length === 0 ? (
+                  <div className="recon-scanner-roster-row">
+                    <strong>No scanners registered</strong>
+                    <span>Embedded scanner will be created by the C2 API.</span>
+                    <em>pending</em>
+                  </div>
+                ) : (
+                  scannerWorkers.map((worker) => (
+                    <div className="recon-scanner-roster-row" key={worker.id}>
+                      <strong>{worker.name}</strong>
+                      <span>{worker.origin} / {worker.version ?? 'unknown'}</span>
+                      <small>{worker.current_load}/{worker.capacity}</small>
+                      <em className={`is-${worker.status}`}>{worker.status}</em>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="recon-modal-footer">
+          <div className="recon-modal-status">
+            {error ? <p className="task-queue-error" role="alert">{error}</p> : null}
+            {message ? <p className="profile-status-message">{message}</p> : null}
+          </div>
+          <div className="recon-modal-actions">
+            <button className="secondary-button" onClick={() => setActiveScanTypeId('')} type="button">
+              Close
+            </button>
+            <button className="primary-button" disabled={isSubmitting} type="submit">
+              <Play aria-hidden="true" size={15} strokeWidth={2.1} />
+              <span>{isSubmitting ? 'Queueing' : 'Run scan'}</span>
+            </button>
+          </div>
+        </div>
+      </form>
+    );
+  }
+
+  function renderScanTypeModal() {
+    if (!activeScanType) {
+      return null;
+    }
+
+    const ActiveIcon = activeScanType.icon;
+    const isNmap = activeScanType.id === 'nmap';
+    return (
+      <ModalShell
+        ariaLabel={`${activeScanType.label} launcher`}
+        onClose={() => setActiveScanTypeId('')}
+        subtitle={activeScanType.capability}
+        title={activeScanType.label}
+        variant="wide"
+      >
+        <div className="recon-scanner-modal">
+          <div className="recon-scanner-modal-head">
+            <div className="panel-icon" aria-hidden="true">
+              <ActiveIcon size={18} strokeWidth={2} />
+            </div>
+            <p>{activeScanType.description}</p>
+          </div>
+
+          {isNmap ? renderNmapScannerModal() : (
             renderPlannedScannerModal(activeScanType)
           )}
         </div>
@@ -704,7 +927,7 @@ export function ReconPage() {
       {!connection ? (
         <C2RequiredPanel />
       ) : (
-        <div className="recon-workspace">
+        <div aria-busy={isLoading} className="recon-workspace">
           <section className="workspace-panel recon-scan-types-panel" aria-label="Recon scan types">
             <div className="panel-header">
               <div>
@@ -726,6 +949,9 @@ export function ReconPage() {
                     key={scanType.id}
                     onClick={() => {
                       setActiveScanTypeId(scanType.id);
+                      if (scanType.id === 'nmap') {
+                        setActiveNmapTab('targets');
+                      }
                       setError('');
                       setMessage('');
                     }}
@@ -772,7 +998,7 @@ export function ReconPage() {
                     onClick={() => setSelectedJobId(job.id)}
                     type="button"
                   >
-                    <span>
+                    <span className="recon-job-main">
                       <strong>{scanJobTitle(job)}</strong>
                       <em>{job.module === 'builtin.serviceenum' ? 'Service enum' : 'Port scan'} / {scanJobSubtitle(job)}</em>
                     </span>
@@ -783,10 +1009,10 @@ export function ReconPage() {
             </div>
           </section>
 
-          <section className="workspace-panel recon-result-panel" aria-label="Scan result">
+          <section className="workspace-panel recon-result-panel" aria-label="Quick scan results">
             <div className="panel-header">
               <div>
-                <h2>Result</h2>
+                <h2>Quick results</h2>
                 <p className="muted-text">{selectedJob ? `${selectedJob.module} / ${selectedJob.id}` : 'No job selected'}</p>
               </div>
             </div>

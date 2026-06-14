@@ -24,7 +24,6 @@ export type ShellSection =
   | 'health'
   | 'home'
   | 'loot'
-  | 'modules'
   | 'payloads'
   | 'projects'
   | 'recon'
@@ -58,19 +57,10 @@ export interface SectionDefinition {
   shortLabel: string;
   tabs: SectionTab[];
   to: string;
-  /** When true, section uses in-content side nav instead of top sub-nav. */
-  usesSideNav?: boolean;
 }
 
-function tab(
-  id: string,
-  label: string,
-  to: string,
-  icon: LucideIcon,
-  requiresC2 = false,
-  enabled = true,
-): SectionTab {
-  return { enabled, icon, id, label, requiresC2, to };
+function tab(id: string, label: string, to: string, icon: LucideIcon, requiresC2 = false): SectionTab {
+  return { enabled: true, icon, id, label, requiresC2, to };
 }
 
 export const sectionDefinitions: Record<ShellSection, SectionDefinition> = {
@@ -83,12 +73,13 @@ export const sectionDefinitions: Record<ShellSection, SectionDefinition> = {
     shortLabel: 'Assets',
     tabs: [
       tab('inventory', 'Inventory', '/assets', Layers3, true),
-      tab('hosts', 'Hosts', '/assets/hosts', Boxes, true, false),
-      tab('services', 'Services', '/assets/services', ListChecks, true, false),
-      tab('vulnerabilities', 'Vulnerabilities', '/assets/vulnerabilities', ShieldCheck, true, false),
-      tab('domains', 'Domains', '/assets/domains', Crosshair, true, false),
-      tab('cloud-resources', 'Cloud Resources', '/assets/cloud-resources', Boxes, true, false),
-      tab('relationships', 'Relationships', '/assets/relationships', Activity, true, false),
+      tab('hosts', 'Hosts', '/assets/hosts', Boxes, true),
+      tab('services', 'Services', '/assets/services', ListChecks, true),
+      tab('vulnerabilities', 'Vulnerabilities', '/assets/vulnerabilities', ShieldCheck, true),
+      tab('domains', 'Domains', '/assets/domains', Crosshair, true),
+      tab('cloud-resources', 'Cloud Resources', '/assets/cloud-resources', Boxes, true),
+      tab('relationships', 'Relationships', '/assets/relationships', Activity, true),
+      tab('modules', 'Modules', '/modules', ListChecks, true),
     ],
     to: '/assets',
   },
@@ -99,10 +90,10 @@ export const sectionDefinitions: Record<ShellSection, SectionDefinition> = {
     requiresC2: true,
     shortLabel: 'Beacons',
     tabs: [
-      tab('roster', 'Roster', '/beacons', RadioTower, true),
+      tab('overview', 'Overview', '/beacons', RadioTower, true),
       tab('sessions', 'Sessions', '/beacons/sessions', TerminalSquare, true),
-      tab('groups', 'Groups', '/beacons/groups', Layers3, true, false),
-      tab('profiles', 'Profiles', '/beacons/profiles', Settings, true, false),
+      tab('groups', 'Groups', '/beacons/groups', Layers3, true),
+      tab('profiles', 'Profiles', '/beacons/profiles', Settings, true),
       tab('deploy', 'Deploy', '/beacons/deploy', Cable, true),
     ],
     to: '/beacons',
@@ -115,10 +106,10 @@ export const sectionDefinitions: Record<ShellSection, SectionDefinition> = {
     requiresProject: true,
     shortLabel: 'Exploits',
     tabs: [
-      tab('browser', 'Browser', '/exploits', ShieldCheck, true, false),
-      tab('suggestions', 'Suggestions', '/exploits/suggestions', Activity, true, false),
-      tab('execution', 'Execution', '/exploits/execution', TerminalSquare, true, false),
-      tab('results', 'Results', '/exploits/results', ListChecks, true, false),
+      tab('browser', 'Browser', '/exploits', ShieldCheck, true),
+      tab('suggestions', 'Suggestions', '/exploits/suggestions', Activity, true),
+      tab('execution', 'Execution', '/exploits/execution', TerminalSquare, true),
+      tab('results', 'Results', '/exploits/results', ListChecks, true),
     ],
     to: '/exploits',
   },
@@ -129,7 +120,7 @@ export const sectionDefinitions: Record<ShellSection, SectionDefinition> = {
     shortLabel: 'Health',
     tabs: [
       tab('readiness', 'Readiness', '/health', HeartPulse),
-      tab('liveness', 'Liveness', '/health/live', Activity, false, false),
+      tab('liveness', 'Liveness', '/health/live', Activity),
     ],
     to: '/health',
   },
@@ -138,7 +129,11 @@ export const sectionDefinitions: Record<ShellSection, SectionDefinition> = {
     icon: Home,
     label: 'Home',
     shortLabel: 'Home',
-    tabs: [tab('overview', 'Overview', '/home', Home)],
+    tabs: [
+      tab('overview', 'Overview', '/home', Home),
+      tab('activity-feed', 'Activity Feed', '/home/activity', Activity),
+      tab('quick-actions', 'Quick Actions', '/home/actions', ListChecks),
+    ],
     to: '/home',
   },
   loot: {
@@ -149,22 +144,13 @@ export const sectionDefinitions: Record<ShellSection, SectionDefinition> = {
     requiresProject: true,
     shortLabel: 'Loot',
     tabs: [
-      tab('credentials', 'Credentials', '/loot', KeyRound, true, false),
-      tab('files', 'Files', '/loot/files', FileArchive, true, false),
-      tab('secrets', 'Secrets', '/loot/secrets', ShieldCheck, true, false),
-      tab('quick-save', 'Quick Save', '/loot/quick-save', Boxes, true, false),
-      tab('search', 'Search', '/loot/search', Crosshair, true, false),
+      tab('credentials', 'Credentials', '/loot', KeyRound, true),
+      tab('files', 'Files', '/loot/files', FileArchive, true),
+      tab('secrets', 'Secrets', '/loot/secrets', ShieldCheck, true),
+      tab('quick-save', 'Quick Save', '/loot/quick-save', Boxes, true),
+      tab('search', 'Search', '/loot/search', Crosshair, true),
     ],
     to: '/loot',
-  },
-  modules: {
-    description: 'Module catalog and launch paths',
-    icon: ListChecks,
-    label: 'Modules',
-    requiresC2: true,
-    shortLabel: 'Modules',
-    tabs: [tab('catalog', 'Catalog', '/modules', ListChecks, true)],
-    to: '/modules',
   },
   payloads: {
     description: 'Payload generation, encryption, obfuscation, and output staging',
@@ -174,13 +160,13 @@ export const sectionDefinitions: Record<ShellSection, SectionDefinition> = {
     requiresProject: true,
     shortLabel: 'Payloads',
     tabs: [
-      tab('generator', 'Generator', '/payloads', Boxes, true, false),
-      tab('encrypter', 'Encrypter', '/payloads/encrypter', ShieldCheck, true, false),
-      tab('obfuscator', 'Obfuscator', '/payloads/obfuscator', TerminalSquare, true, false),
+      tab('generator', 'Generator', '/payloads', Boxes, true),
+      tab('encrypter', 'Encrypter', '/payloads/encrypter', ShieldCheck, true),
+      tab('obfuscator', 'Obfuscator', '/payloads/obfuscator', TerminalSquare, true),
       tab('traffic-patterns', 'Traffic Patterns', '/payloads/traffic-patterns', Cable, true),
-      tab('output', 'Output', '/payloads/output', FileArchive, true, false),
+      tab('output', 'Output', '/payloads/output', FileArchive, true),
     ],
-    to: '/payloads/traffic-patterns',
+    to: '/payloads',
   },
   projects: {
     description: 'Scoped target management',
@@ -191,8 +177,8 @@ export const sectionDefinitions: Record<ShellSection, SectionDefinition> = {
     tabs: [
       tab('projects', 'Projects', '/projects', FolderKanban, true),
       tab('scope', 'Scope', '/projects/scope', ShieldCheck, true),
-      tab('timeline', 'Timeline', '/projects/timeline', Activity, true, false),
-      tab('team', 'Team', '/projects/team', Settings, true, false),
+      tab('timeline', 'Timeline', '/projects/timeline', Activity, true),
+      tab('team', 'Team', '/projects/team', Settings, true),
     ],
     to: '/projects',
   },
@@ -203,7 +189,12 @@ export const sectionDefinitions: Record<ShellSection, SectionDefinition> = {
     requiresC2: true,
     requiresProject: true,
     shortLabel: 'Recon',
-    tabs: [tab('launch', 'Launch', '/recon', Crosshair, true)],
+    tabs: [
+      tab('tools', 'Tools', '/recon', Crosshair, true),
+      tab('runs', 'Runs', '/recon/runs', ListChecks, true),
+      tab('results', 'Results', '/recon/results', Boxes, true),
+      tab('activity', 'Activity', '/recon/activity', Activity, true),
+    ],
     to: '/recon',
   },
   reports: {
@@ -214,11 +205,11 @@ export const sectionDefinitions: Record<ShellSection, SectionDefinition> = {
     requiresProject: true,
     shortLabel: 'Reports',
     tabs: [
-      tab('notes', 'Notes', '/reports', ListChecks, true, false),
-      tab('campaign-reports', 'Campaign Reports', '/reports/campaign', FileArchive, true, false),
-      tab('host-reports', 'Host Reports', '/reports/hosts', Boxes, true, false),
-      tab('vulnerability-reports', 'Vulnerability Reports', '/reports/vulnerabilities', ShieldCheck, true, false),
-      tab('exports', 'Exports', '/reports/exports', FileArchive, true, false),
+      tab('notes', 'Notes', '/reports', ListChecks, true),
+      tab('campaign-reports', 'Campaign Reports', '/reports/campaign', FileArchive, true),
+      tab('host-reports', 'Host Reports', '/reports/hosts', Boxes, true),
+      tab('vulnerability-reports', 'Vulnerability Reports', '/reports/vulnerabilities', ShieldCheck, true),
+      tab('exports', 'Exports', '/reports/exports', FileArchive, true),
     ],
     to: '/reports',
   },
@@ -227,18 +218,19 @@ export const sectionDefinitions: Record<ShellSection, SectionDefinition> = {
     icon: Settings,
     label: 'Settings',
     shortLabel: 'Settings',
-    tabs: [],
+    tabs: [
+      tab('connection', 'Connection', '/settings', Settings),
+      tab('infrastructure', 'Infrastructure', '/settings/infrastructure', RadioTower, true),
+      tab('grouping', 'Grouping', '/settings/grouping', Layers3, true),
+      tab('api-keys', 'API Keys', '/settings/api-keys', KeyRound),
+      tab('access', 'Access', '/settings/access', ShieldCheck),
+      tab('bff', 'BFF', '/settings/bff', Layers3),
+      tab('plugins', 'Plugins', '/settings/plugins', Boxes),
+      tab('notifications', 'Notifications', '/settings/notifications', Activity),
+    ],
     to: '/settings',
-    usesSideNav: true,
   },
 };
-
-export const settingsSideNav: SectionTab[] = [
-  tab('connection', 'Connection', '/settings', Settings),
-  tab('infrastructure', 'Infrastructure', '/settings/infrastructure', RadioTower, true),
-  tab('grouping', 'Grouping', '/settings/grouping', Layers3, true),
-  tab('api-keys', 'API Keys', '/settings/api-keys', KeyRound, false, false),
-];
 
 export const primaryNav: NavItem[] = [
   sectionDefinitions.home,
@@ -247,7 +239,6 @@ export const primaryNav: NavItem[] = [
   sectionDefinitions.beacons,
   sectionDefinitions.exploits,
   sectionDefinitions.payloads,
-  sectionDefinitions.modules,
   sectionDefinitions.assets,
   sectionDefinitions.reports,
   sectionDefinitions.loot,
@@ -273,18 +264,7 @@ export function getSectionDefinition(section: ShellSection): SectionDefinition {
   return sectionDefinitions[section];
 }
 
-export function getVisibleTabs(section: ShellSection): SectionTab[] {
-  return getSectionDefinition(section).tabs.filter((item) => item.enabled);
-}
-
 export function getSectionTab(section: ShellSection, tabId?: string): SectionTab {
   const definition = getSectionDefinition(section);
   return definition.tabs.find((tabItem) => tabItem.id === tabId) ?? definition.tabs[0];
-}
-
-/** Routes that must exist in App.tsx for every enabled tab. */
-export function enabledTabRoutes(): Array<{ section: ShellSection; tab: SectionTab }> {
-  return (Object.keys(sectionDefinitions) as ShellSection[]).flatMap((section) =>
-    getVisibleTabs(section).map((tabItem) => ({ section, tab: tabItem })),
-  );
 }

@@ -1,8 +1,6 @@
 import { ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
-import { BeaconWorkspacePage, BeaconWorkspaceRedirectPage } from './pages/BeaconWorkspacePage';
-import { BeaconsSessionsPage } from './pages/BeaconsSessionsPage';
 import { HealthPage } from './pages/HealthPage';
 import { BeaconsDeployPage } from './pages/BeaconsDeployPage';
 import { BeaconsPage } from './pages/BeaconsPage';
@@ -13,9 +11,7 @@ import { InventoryPage } from './pages/InventoryPage';
 import { LoginPage } from './pages/LoginPage';
 import { ModulesPage } from './pages/ModulesPage';
 import { NotFoundPage } from './pages/NotFoundPage';
-import { PlannedSectionPage } from './pages/PlannedSectionPage';
 import { ProjectsPage } from './pages/ProjectsPage';
-import { ProjectsScopePage, ProjectsScopeRedirectPage } from './pages/ProjectsScopePage';
 import { ReconPage } from './pages/ReconPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { StubSectionPage } from './pages/StubSectionPage';
@@ -47,8 +43,22 @@ export function App() {
           </ProtectedRoute>
         }
       />
-      <Route path="/home/activity" element={<Navigate to="/home" replace />} />
-      <Route path="/home/actions" element={<Navigate to="/home" replace />} />
+      <Route
+        path="/home/activity"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="home" tabId="activity-feed" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/home/actions"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="home" tabId="quick-actions" />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/projects"
         element={
@@ -61,20 +71,26 @@ export function App() {
         path="/projects/scope"
         element={
           <ProtectedRoute>
-            <ProjectsScopeRedirectPage />
+            <ProjectsPage />
           </ProtectedRoute>
         }
       />
       <Route
-        path="/projects/:projectId/scope"
+        path="/projects/timeline"
         element={
           <ProtectedRoute>
-            <ProjectsScopePage />
+            <StubSectionPage section="projects" tabId="timeline" />
           </ProtectedRoute>
         }
       />
-      <Route path="/projects/timeline" element={<Navigate to="/projects" replace />} />
-      <Route path="/projects/team" element={<Navigate to="/projects" replace />} />
+      <Route
+        path="/projects/team"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="projects" tabId="team" />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/recon"
         element={
@@ -83,9 +99,30 @@ export function App() {
           </ProtectedRoute>
         }
       />
-      <Route path="/recon/runs" element={<Navigate to="/recon" replace />} />
-      <Route path="/recon/results" element={<Navigate to="/recon" replace />} />
-      <Route path="/recon/activity" element={<Navigate to="/recon" replace />} />
+      <Route
+        path="/recon/runs"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="recon" tabId="runs" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/recon/results"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="recon" tabId="results" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/recon/activity"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="recon" tabId="activity" />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/beacons"
         element={
@@ -98,12 +135,26 @@ export function App() {
         path="/beacons/sessions"
         element={
           <ProtectedRoute>
-            <BeaconsSessionsPage />
+            <StubSectionPage section="beacons" tabId="sessions" />
           </ProtectedRoute>
         }
       />
-      <Route path="/beacons/groups" element={<Navigate to="/beacons" replace />} />
-      <Route path="/beacons/profiles" element={<Navigate to="/payloads/traffic-patterns" replace />} />
+      <Route
+        path="/beacons/groups"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="beacons" tabId="groups" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/beacons/profiles"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="beacons" tabId="profiles" />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/beacons/deploy"
         element={
@@ -113,33 +164,61 @@ export function App() {
         }
       />
       <Route
-        path="/beacons/:beaconId"
-        element={
-          <ProtectedRoute>
-            <BeaconWorkspaceRedirectPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/beacons/:beaconId/:operation"
-        element={
-          <ProtectedRoute>
-            <BeaconWorkspacePage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
         path="/exploits"
         element={
           <ProtectedRoute>
-            <PlannedSectionPage section="exploits" />
+            <StubSectionPage section="exploits" tabId="browser" />
           </ProtectedRoute>
         }
       />
-      <Route path="/exploits/*" element={<Navigate to="/exploits" replace />} />
-      <Route path="/payloads" element={<Navigate to="/payloads/traffic-patterns" replace />} />
-      <Route path="/payloads/encrypter" element={<Navigate to="/payloads/traffic-patterns" replace />} />
-      <Route path="/payloads/obfuscator" element={<Navigate to="/payloads/traffic-patterns" replace />} />
+      <Route
+        path="/exploits/suggestions"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="exploits" tabId="suggestions" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/exploits/execution"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="exploits" tabId="execution" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/exploits/results"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="exploits" tabId="results" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/payloads"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="payloads" tabId="generator" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/payloads/encrypter"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="payloads" tabId="encrypter" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/payloads/obfuscator"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="payloads" tabId="obfuscator" />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/payloads/traffic-patterns"
         element={
@@ -149,7 +228,14 @@ export function App() {
         }
       />
       <Route path="/payloads/traffic-shaping" element={<Navigate to="/payloads/traffic-patterns" replace />} />
-      <Route path="/payloads/output" element={<Navigate to="/payloads/traffic-patterns" replace />} />
+      <Route
+        path="/payloads/output"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="payloads" tabId="output" />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/assets"
         element={
@@ -166,25 +252,134 @@ export function App() {
           </ProtectedRoute>
         }
       />
-      <Route path="/assets/*" element={<Navigate to="/assets" replace />} />
+      <Route
+        path="/assets/hosts"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="assets" tabId="hosts" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/assets/services"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="assets" tabId="services" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/assets/vulnerabilities"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="assets" tabId="vulnerabilities" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/assets/domains"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="assets" tabId="domains" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/assets/cloud-resources"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="assets" tabId="cloud-resources" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/assets/relationships"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="assets" tabId="relationships" />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/reports"
         element={
           <ProtectedRoute>
-            <PlannedSectionPage section="reports" />
+            <StubSectionPage section="reports" tabId="notes" />
           </ProtectedRoute>
         }
       />
-      <Route path="/reports/*" element={<Navigate to="/reports" replace />} />
+      <Route
+        path="/reports/campaign"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="reports" tabId="campaign-reports" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/reports/hosts"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="reports" tabId="host-reports" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/reports/vulnerabilities"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="reports" tabId="vulnerability-reports" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/reports/exports"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="reports" tabId="exports" />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/loot"
         element={
           <ProtectedRoute>
-            <PlannedSectionPage section="loot" />
+            <StubSectionPage section="loot" tabId="credentials" />
           </ProtectedRoute>
         }
       />
-      <Route path="/loot/*" element={<Navigate to="/loot" replace />} />
+      <Route
+        path="/loot/files"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="loot" tabId="files" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/loot/secrets"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="loot" tabId="secrets" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/loot/quick-save"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="loot" tabId="quick-save" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/loot/search"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="loot" tabId="search" />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/health"
         element={
@@ -193,7 +388,14 @@ export function App() {
           </ProtectedRoute>
         }
       />
-      <Route path="/health/live" element={<Navigate to="/health" replace />} />
+      <Route
+        path="/health/live"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="health" tabId="liveness" />
+          </ProtectedRoute>
+        }
+      />
       <Route path="/settings/health" element={<Navigate to="/health" replace />} />
       <Route
         path="/settings"
@@ -220,10 +422,38 @@ export function App() {
           </ProtectedRoute>
         }
       />
-      <Route path="/settings/access" element={<Navigate to="/settings" replace />} />
-      <Route path="/settings/bff" element={<Navigate to="/settings" replace />} />
-      <Route path="/settings/plugins" element={<Navigate to="/settings" replace />} />
-      <Route path="/settings/notifications" element={<Navigate to="/settings" replace />} />
+      <Route
+        path="/settings/access"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="settings" tabId="access" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/bff"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="settings" tabId="bff" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/plugins"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="settings" tabId="plugins" />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/notifications"
+        element={
+          <ProtectedRoute>
+            <StubSectionPage section="settings" tabId="notifications" />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/settings/infrastructure"
         element={

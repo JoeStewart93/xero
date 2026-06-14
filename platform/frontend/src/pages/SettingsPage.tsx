@@ -1,9 +1,8 @@
 import { FormEvent, useState } from 'react';
 import { Cable, Settings } from 'lucide-react';
 
-import { SettingsLayout } from '../components/SettingsLayout';
-import { AppShell } from '../components/AppShell';
 import { DEFAULT_C2_BASE_URL } from '../api';
+import { AppShell } from '../components/AppShell';
 import { SHODAN_API_KEY_STORAGE_KEY } from '../settingsStorage';
 import { useC2Connection } from '../useC2Connection';
 
@@ -38,7 +37,6 @@ export function SettingsPage() {
 
   return (
     <AppShell description="Workspace preferences" section="settings" title="Settings">
-      <SettingsLayout>
       <div className="settings-grid">
         <section className="workspace-panel settings-panel" aria-label="Xero C2 backend connection">
           <div className="panel-header">
@@ -153,7 +151,6 @@ export function SettingsPage() {
           {integrationMessage ? <p className="profile-status-message">{integrationMessage}</p> : null}
         </section>
       </div>
-      </SettingsLayout>
     </AppShell>
   );
 }

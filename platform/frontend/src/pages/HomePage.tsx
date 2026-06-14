@@ -38,6 +38,31 @@ function taskCommand(task: Task): string {
   return typeof command === 'string' && command.trim() ? command.trim() : task.module;
 }
 
+function SummaryCard({
+  icon: Icon,
+  label,
+  support,
+  testId,
+  value,
+}: {
+  icon: typeof RadioTower;
+  label: string;
+  support: string;
+  testId: string;
+  value: number;
+}) {
+  return (
+    <div className="dashboard-summary-card">
+      <div>
+        <span>{label}</span>
+        <strong data-testid={testId}>{value}</strong>
+        <em>{support}</em>
+      </div>
+      <Icon aria-hidden="true" size={18} strokeWidth={2} />
+    </div>
+  );
+}
+
 function LoadingRows({ label }: { label: string }) {
   return (
     <div aria-label={label} className="dashboard-skeleton-list" data-testid="dashboard-loading-skeleton">
@@ -70,18 +95,14 @@ function RecentTasks({ state }: { state: DashboardState }) {
   return (
     <div className="dashboard-task-list">
       {tasks.map((task) => (
-        <Link
-          className="dashboard-task-row"
-          key={task.id}
-          to={`/beacons/${task.beacon_id}/commands?task_id=${encodeURIComponent(task.id)}`}
-        >
+        <div className="dashboard-task-row" key={task.id}>
           <div>
             <strong>{taskCommand(task)}</strong>
             <span>{task.module} on {task.beacon_id.slice(0, 8)}</span>
           </div>
           <span>{formatDateTime(taskTime(task))}</span>
           <strong className="dashboard-status-pill">{task.status}</strong>
-        </Link>
+        </div>
       ))}
     </div>
   );
@@ -171,14 +192,23 @@ export function HomePage() {
   return (
     <AppShell description="C2 dashboard overview" section="home" title="Home" wide>
       <div className="dashboard-overview-grid">
-        <section className="workspace-panel workspace-panel--flat dashboard-summary-panel" aria-label="Beacon summary">
+        <section className="workspace-panel dashboard-summary-panel" aria-label="Beacon summary">
+          <div className="panel-header">
+            <div>
+              <h2>Beacon summary</h2>
+              <p className="muted-text">Counts reflect the connected C2 backend and realtime stream.</p>
+            </div>
+            <div className="panel-icon" aria-hidden="true">
+              <RadioTower size={18} strokeWidth={2} />
+            </div>
+          </div>
           {dashboard.kind === 'loading' ? (
             <LoadingRows label="Loading beacon summary" />
           ) : (
-            <div className="dashboard-kpi-strip">
-              <span><strong data-testid="dashboard-total-beacons">{counts.total}</strong> total</span>
-              <span><strong data-testid="dashboard-online-beacons">{counts.online}</strong> online</span>
-              <span><strong data-testid="dashboard-offline-beacons">{counts.offline}</strong> offline</span>
+            <div className="dashboard-summary-cards">
+              <SummaryCard icon={RadioTower} label="Total" support="registered beacons" testId="dashboard-total-beacons" value={counts.total} />
+              <SummaryCard icon={Activity} label="Online" support="currently reporting" testId="dashboard-online-beacons" value={counts.online} />
+              <SummaryCard icon={Cable} label="Offline" support="needs review" testId="dashboard-offline-beacons" value={counts.offline} />
             </div>
           )}
           {hasNoBeacons ? (
@@ -192,7 +222,16 @@ export function HomePage() {
           ) : null}
         </section>
 
-        <section className="workspace-panel workspace-panel--flat dashboard-connection-panel" aria-label="C2 connection">
+        <section className="workspace-panel dashboard-connection-panel" aria-label="C2 connection">
+          <div className="panel-header">
+            <div>
+              <h2>C2 connection</h2>
+              <p className="muted-text">Current console binding and session expiry.</p>
+            </div>
+            <div className="panel-icon" aria-hidden="true">
+              <Cable size={18} strokeWidth={2} />
+            </div>
+          </div>
           <div className="dashboard-list">
             <div className="dashboard-row">
               <span>State</span>
@@ -207,21 +246,37 @@ export function HomePage() {
               <strong>{formatDateTime(connection?.expiresAt)}</strong>
             </div>
           </div>
-          <Link className="secondary-button dashboard-panel-link" to={connection ? '/settings/infrastructure' : '/settings'}>
+          <Link className="secondary-button dashboard-panel-link" to="/settings">
             <Settings aria-hidden="true" size={15} strokeWidth={2} />
             <span>Settings</span>
           </Link>
         </section>
 
-        <section className="workspace-panel workspace-panel--flat dashboard-tasks-panel" aria-label="Recent tasks">
-          <h2>Recent tasks</h2>
+        <section className="workspace-panel dashboard-tasks-panel" aria-label="Recent tasks">
+          <div className="panel-header">
+            <div>
+              <h2>Recent tasks</h2>
+              <p className="muted-text">Latest queued, running, completed, failed, and cancelled work.</p>
+            </div>
+            <div className="panel-icon" aria-hidden="true">
+              <ListChecks size={18} strokeWidth={2} />
+            </div>
+          </div>
           <div className="dashboard-panel-scroll">
             <RecentTasks state={dashboard} />
           </div>
         </section>
 
-        <section className="workspace-panel workspace-panel--flat dashboard-activity-panel" aria-label="Recent activity">
-          <h2>Recent activity</h2>
+        <section className="workspace-panel dashboard-activity-panel" aria-label="Recent activity">
+          <div className="panel-header">
+            <div>
+              <h2>Recent activity</h2>
+              <p className="muted-text">Task and beacon events normalized for the Home feed.</p>
+            </div>
+            <div className="panel-icon" aria-hidden="true">
+              <Activity size={18} strokeWidth={2} />
+            </div>
+          </div>
           <div className="dashboard-panel-scroll">
             <RecentActivity items={activityItems} state={dashboard} />
           </div>

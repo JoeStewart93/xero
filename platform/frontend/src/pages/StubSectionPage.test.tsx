@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -91,65 +91,85 @@ describe('StubSectionPage', () => {
     renderRoute('/home');
 
     const primaryNav = screen.getByLabelText('Primary');
-    for (const label of ['Home', 'Projects', 'Recon', 'Beacons', 'Modules', 'Assets', 'Settings']) {
+    for (const label of ['Home', 'Projects', 'Recon', 'Beacons', 'Exploits', 'Payloads', 'Assets', 'Reports', 'Loot', 'Settings']) {
       expect(within(primaryNav).getByText(label)).toBeTruthy();
     }
+    expect(within(primaryNav).queryByText('Inventory')).toBeNull();
+    expect(within(primaryNav).queryByText('Reporting')).toBeNull();
   });
 
-  it('uses Roster and Sessions under Beacons', async () => {
+  it('uses Overview under Beacons and Infrastructure under Settings', () => {
     seedC2Connection();
 
     renderRoute('/beacons/sessions');
 
-    expect(screen.getByRole('navigation', { name: 'Beacons sections' }).textContent).toContain('Roster');
-    expect(screen.getByRole('navigation', { name: 'Beacons sections' }).textContent).toContain('Sessions');
-    expect(await screen.findByText('No beacons registered.')).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'Beacons sections' }).textContent).toContain('Overview');
+    expect(screen.getByText('Session workspaces')).toBeTruthy();
+    expect(screen.getByText('Active and recent shell, file browser, and Windows Registry Explorer interactions will appear here.')).toBeTruthy();
   });
 
-  it('shows C2-required state on operational planned sections when disconnected', () => {
+  it('shows C2-required state on operational stubs when disconnected', () => {
     renderRoute('/exploits');
 
     expect(screen.getByRole('heading', { name: 'Xero C2 backend required' })).toBeTruthy();
-    expect(screen.queryByRole('navigation', { name: 'Exploits sections' })).toBeNull();
+    expect(screen.getByRole('navigation', { name: 'Exploits sections' }).textContent).toContain('Browser');
   });
 
-  it('renders planned empty states instead of stub tables when connected', () => {
+  it('renders stub rows and opens a planned modal when connected and scoped', () => {
     seedC2Connection();
     seedActiveProject();
 
-    renderRoute('/exploits');
+    renderRoute('/payloads');
 
-    expect(screen.getByText('This section is planned. No operations can be dispatched from this surface yet.')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Payloads' })).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'Payloads sections' }).textContent).toContain('Traffic Patterns');
+    expect(screen.getByText('Generator workspace')).toBeTruthy();
+    expect(within(screen.getByRole('complementary', { name: 'Payloads context' })).getByText('project a')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open builder' }));
+
+    expect(screen.getByRole('dialog', { name: 'Payload builder stub' })).toBeTruthy();
+    expect(screen.getByText('Configure arguments, target scope, and output handling in a later feature.')).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog', { name: 'Payload builder stub' })).toBeNull();
   });
 
   it('keeps traffic profiles out of Settings and redirects legacy profile URLs into Traffic Patterns', async () => {
     seedC2Connection();
     seedActiveProject();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.includes('/traffic-profiles')) {
-          return new Response(JSON.stringify({ items: [] }), { status: 200 });
-        }
-        return new Response(JSON.stringify({ detail: 'Not found' }), { status: 404 });
-      }),
-    );
 
-    renderRoute('/settings');
-    expect(screen.getByRole('navigation', { name: 'Settings sections' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Connection' })).toBeTruthy();
+    const settings = renderRoute('/settings');
+    expect(screen.getByRole('navigation', { name: 'Settings sections' }).textContent).not.toContain('Profiles');
+    settings.unmount();
 
     renderRoute('/settings/profiles');
     expect(await screen.findByRole('heading', { name: 'Traffic Patterns' })).toBeTruthy();
-    expect(await screen.findByRole('dialog', { name: 'Traffic profiles' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Traffic profiles' })).toBeTruthy();
   });
 
-  it('redirects removed asset facet routes back to inventory', async () => {
+  it('uses the side-panel modal variant for asset detail stubs', () => {
     seedC2Connection();
     seedActiveProject();
 
     renderRoute('/assets/hosts');
-    expect(await screen.findByLabelText('Automatic asset groups')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open asset detail' }));
+
+    expect(screen.getByRole('dialog', { name: 'Asset detail stub' })).toBeTruthy();
+    expect(document.querySelector('.modal-shell--side')).toBeTruthy();
+  });
+
+  it('renders Infrastructure from the canonical route and legacy settings route', async () => {
+    seedC2Connection();
+
+    const canonical = renderRoute('/settings/infrastructure');
+    expect(await screen.findByRole('heading', { name: 'C2 infrastructure' })).toBeTruthy();
+    canonical.unmount();
+
+    renderRoute('/settings/c2');
+    expect(await screen.findByRole('heading', { name: 'C2 infrastructure' })).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'Settings sections' }).textContent).toContain('Infrastructure');
   });
 });

@@ -1,11 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Beacon } from '../api';
 import { encodeLaunchArgs } from '../modules/moduleCatalog';
 import type { OperatorRealtimeEvent } from '../operatorRealtime';
-import { BeaconWorkspacePage } from './BeaconWorkspacePage';
 import { BeaconsPage } from './BeaconsPage';
 
 const mocks = vi.hoisted(() => ({
@@ -359,27 +358,13 @@ const registrySession = {
 function renderBeaconsPage(initialEntries = ['/beacons']) {
   return render(
     <MemoryRouter initialEntries={initialEntries}>
-      <Routes>
-        <Route path="/beacons" element={<BeaconsPage />} />
-        <Route path="/beacons/:beaconId/:operation" element={<BeaconWorkspacePage />} />
-      </Routes>
+      <BeaconsPage />
     </MemoryRouter>,
   );
 }
 
-function beaconRoutesTree(initialEntries = ['/beacons']) {
-  return (
-    <MemoryRouter initialEntries={initialEntries}>
-      <Routes>
-        <Route path="/beacons" element={<BeaconsPage />} />
-        <Route path="/beacons/:beaconId/:operation" element={<BeaconWorkspacePage />} />
-      </Routes>
-    </MemoryRouter>
-  );
-}
-
-async function openTaskingPanel(beaconId = beaconOne.id) {
-  fireEvent.click(screen.getByTestId(`beacon-row-${beaconId}`));
+async function openTaskingPanel() {
+  fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
   return screen.findByTestId('task-execution-panel');
 }
 
@@ -611,10 +596,11 @@ describe('BeaconsPage', () => {
   it('shows an empty overview when connected without beacons', () => {
     renderBeaconsPage();
 
+    expect(screen.getByRole('heading', { name: 'Beacon overview' })).toBeTruthy();
     expect(screen.getByTestId('beacons-empty-state').textContent).toContain('No beacons registered.');
   });
 
-  it('renders beacon roster counts in the toolbar', () => {
+  it('renders beacon roster and selected metadata detail', () => {
     mocks.useRealtime.mockReturnValue({
       activeBeaconCount: 1,
       beaconCount: 3,
@@ -631,8 +617,31 @@ describe('BeaconsPage', () => {
     expect(within(roster).getByText('Last Heartbeat')).toBeTruthy();
     expect(within(roster).getByText('beacon-alpha')).toBeTruthy();
     expect(within(roster).getAllByText('Windows 11')).toHaveLength(2);
-    expect(screen.getByTestId('beacons-online-count').textContent).toBe('1 online');
+    expect(within(roster).getByText('10.40.0.8')).toBeTruthy();
+    expect(within(roster).getByText('WebSocket')).toBeTruthy();
+    expect(within(roster).getByText('Long-poll')).toBeTruthy();
+    expect(within(roster).getByText('Connected')).toBeTruthy();
+    expect(screen.getByTestId('beacons-online-count').textContent).toBe('1');
+    expect(screen.getByTestId('beacons-offline-count').textContent).toBe('2');
     expect(screen.getByTestId(`beacon-relative-${beaconOne.id}`).textContent).toBe('5m ago');
+    expect(screen.getByTestId('beacon-detail-hostname').textContent).toBe('beacon-alpha');
+    expect(screen.getByTestId('beacon-detail-os').textContent).toBe('Windows 11');
+    expect(screen.getByText('Protocol version').parentElement?.textContent).toContain('v1');
+    expect(screen.getByTestId('beacon-detail-transport-mode').textContent).toBe('WebSocket');
+    expect(screen.getByTestId('beacon-detail-transport-state').textContent).toBe('Connected');
+
+    fireEvent.click(screen.getByTestId(`beacon-row-${beaconTwo.id}`));
+
+    expect(screen.getByTestId('beacon-detail-hostname').textContent).toBe('beacon-bravo');
+    expect(screen.getByTestId('beacon-detail-os').textContent).toBe('Ubuntu 24.04');
+    expect(screen.getByTestId('beacon-detail-transport-mode').textContent).toBe('REST');
+    expect(screen.getByTestId('beacon-detail-transport-state').textContent).toBe('Disconnected');
+
+    fireEvent.click(screen.getByTestId(`beacon-row-${beaconThree.id}`));
+
+    expect(screen.getByTestId('beacon-detail-hostname').textContent).toBe('beacon-charlie');
+    expect(screen.getByTestId('beacon-detail-transport-mode').textContent).toBe('Long-poll');
+    expect(screen.getByTestId('beacon-detail-transport-state').textContent).toBe('Disconnected');
   });
 
   it('assigns a traffic profile from the beacon operations modal', async () => {
@@ -646,7 +655,10 @@ describe('BeaconsPage', () => {
       status: 'connected',
     });
 
-    renderBeaconsPage([`/beacons/${beaconOne.id}/controls`]);
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    fireEvent.click(screen.getByRole('button', { name: /Host controls/ }));
 
     await waitFor(() => {
       expect(apiMocks.getTrafficProfiles).toHaveBeenCalledWith('http://localhost:18001', 'c2-token');
@@ -760,7 +772,7 @@ describe('BeaconsPage', () => {
     expect(csv).not.toContain('beacon-alpha');
   });
 
-  it('navigates to the beacon workspace when a roster row is clicked', async () => {
+  it('keeps the beacon detail sidebar metadata-only', async () => {
     mocks.useRealtime.mockReturnValue({
       activeBeaconCount: 1,
       beaconCount: 1,
@@ -773,10 +785,10 @@ describe('BeaconsPage', () => {
 
     renderBeaconsPage();
 
-    fireEvent.click(screen.getByTestId(`beacon-row-${beaconOne.id}`));
-
-    expect(await screen.findByTestId('task-execution-panel')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'beacon-alpha' })).toBeTruthy();
+    expect((await screen.findByTestId('beacon-detail-hostname')).textContent).toBe('beacon-alpha');
+    expect(screen.queryByLabelText('Beacon traffic profile')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Tasking' })).toBeNull();
+    expect(screen.queryByText('Activity timeline')).toBeNull();
   });
 
   it('kills a beacon after confirmation and removes it from the active list', async () => {
@@ -790,14 +802,16 @@ describe('BeaconsPage', () => {
       status: 'connected',
     });
 
-    renderBeaconsPage([`/beacons/${beaconOne.id}/controls`]);
+    renderBeaconsPage();
 
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    fireEvent.click(screen.getByRole('button', { name: /Host controls/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Kill beacon' }));
 
     let dialog = screen.getByRole('dialog', { name: 'Kill beacon confirmation' });
     expect(dialog.textContent).toContain('Remove beacon-alpha from active inventory');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    expect(screen.getByRole('button', { name: 'Kill beacon' })).toBeTruthy();
+    expect(screen.getByTestId(`beacon-row-${beaconOne.id}`)).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Kill beacon' }));
     dialog = screen.getByRole('dialog', { name: 'Kill beacon confirmation' });
@@ -807,11 +821,12 @@ describe('BeaconsPage', () => {
       expect(apiMocks.killBeacon).toHaveBeenCalledWith('http://localhost:18001', 'c2-token', beaconOne.id);
     });
     await waitFor(() => {
-      expect(screen.getByText('Beacon not found')).toBeTruthy();
+      expect(screen.queryByTestId(`beacon-row-${beaconOne.id}`)).toBeNull();
     });
+    expect(screen.getByText('Removed beacon-alpha; closed 0 sessions and cancelled 1 tasks.')).toBeTruthy();
   });
 
-  it('opens host operations from a beacon row click', async () => {
+  it('opens host operations from a beacon row double-click', () => {
     mocks.useRealtime.mockReturnValue({
       activeBeaconCount: 1,
       beaconCount: 2,
@@ -824,15 +839,19 @@ describe('BeaconsPage', () => {
 
     renderBeaconsPage();
 
-    fireEvent.click(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
 
-    expect(await screen.findByTestId('beacon-operation-detail')).toBeTruthy();
-    expect(screen.getByRole('link', { name: /Command queue/ })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Host operations for beacon-alpha' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Command queue/ })).toBeTruthy();
     expect(screen.getByTestId('beacon-operation-detail').textContent).toContain('Prepare a scoped command');
 
-    fireEvent.click(screen.getByRole('link', { name: /Interactive session/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Credentials/ }));
 
-    expect(screen.getByTestId('beacon-operation-detail').textContent).toContain('Attach to a live shell');
+    expect(screen.getByTestId('beacon-operation-detail').textContent).toContain('Review credential material');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close host operations' }));
+
+    expect(screen.queryByRole('dialog', { name: 'Host operations for beacon-alpha' })).toBeNull();
   });
 
   it('opens an interactive shell session and streams terminal data', async () => {
@@ -846,7 +865,10 @@ describe('BeaconsPage', () => {
       status: 'connected',
     });
 
-    renderBeaconsPage([`/beacons/${beaconOne.id}/session`]);
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    fireEvent.click(screen.getByRole('button', { name: /Interactive session/ }));
     fireEvent.change(screen.getByLabelText('Interactive shell type'), { target: { value: 'powershell' } });
     fireEvent.click(screen.getByRole('button', { name: 'Open' }));
 
@@ -889,7 +911,10 @@ describe('BeaconsPage', () => {
       status: 'connected',
     });
 
-    renderBeaconsPage([`/beacons/${beaconOne.id}/files`]);
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    fireEvent.click(screen.getByRole('button', { name: /Files/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Open' }));
 
     await waitFor(() => {
@@ -974,7 +999,10 @@ describe('BeaconsPage', () => {
       offlineBeaconCount: 0,
       status: 'connected',
     });
-    renderBeaconsPage([`/beacons/${beaconOne.id}/files`]);
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    fireEvent.click(screen.getByRole('button', { name: /Files/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Open' }));
     await waitFor(() => {
       expect(apiMocks.createFileBrowserSession).toHaveBeenCalled();
@@ -1098,7 +1126,10 @@ describe('BeaconsPage', () => {
     Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
     Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
     const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    renderBeaconsPage([`/beacons/${beaconOne.id}/files`]);
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    fireEvent.click(screen.getByRole('button', { name: /Files/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Open' }));
     await waitFor(() => {
       expect(apiMocks.createFileBrowserSession).toHaveBeenCalled();
@@ -1174,7 +1205,10 @@ describe('BeaconsPage', () => {
       status: 'connected',
     });
 
-    renderBeaconsPage([`/beacons/${beaconOne.id}/registry`]);
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconOne.id}`));
+    fireEvent.click(screen.getByRole('button', { name: /Registry/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Open' }));
 
     await waitFor(() => {
@@ -1310,7 +1344,10 @@ describe('BeaconsPage', () => {
       status: 'connected',
     });
 
-    renderBeaconsPage([`/beacons/${beaconTwo.id}/registry`]);
+    renderBeaconsPage();
+
+    fireEvent.doubleClick(screen.getByTestId(`beacon-row-${beaconTwo.id}`));
+    fireEvent.click(screen.getByRole('button', { name: /Registry/ }));
 
     expect(screen.getByText('Registry unavailable.')).toBeTruthy();
     expect(screen.getByText('Windows registry sessions require a Windows beacon.')).toBeTruthy();
@@ -1366,7 +1403,7 @@ describe('BeaconsPage', () => {
     });
     const args = encodeLaunchArgs({ command: 'hostname', shell_type: 'powershell', timeout_seconds: 15 });
 
-    renderBeaconsPage([`/beacons/${beaconOne.id}/commands?module=shell&args=${args}`]);
+    renderBeaconsPage([`/beacons?module=shell&args=${args}`]);
 
     expect(await screen.findByRole('option', { name: 'Shell Command' })).toBeTruthy();
     expect(((await screen.findByLabelText('Shell command')) as HTMLInputElement).value).toBe('hostname');
@@ -1375,7 +1412,7 @@ describe('BeaconsPage', () => {
     expect(screen.getByTestId('beacon-task-target-chip').textContent).toContain('beacon-alpha');
   });
 
-  it('keeps workspace tasking locked to the opened beacon', async () => {
+  it('keeps modal tasking locked to the opened beacon', async () => {
     apiMocks.getTasks.mockResolvedValueOnce({ items: [] }).mockResolvedValueOnce({ items: [queuedTask] });
     mocks.useRealtime.mockReturnValue({
       activeBeaconCount: 1,
@@ -1387,12 +1424,12 @@ describe('BeaconsPage', () => {
       status: 'connected',
     });
 
-    renderBeaconsPage([`/beacons/${beaconOne.id}/commands`]);
-    await screen.findByTestId('task-execution-panel');
+    renderBeaconsPage();
+    await openTaskingPanel();
 
     expect(await screen.findByRole('option', { name: 'Shell Command' })).toBeTruthy();
     const dataTransfer = makeDataTransfer();
-    dataTransfer.setData('application/x-xero-beacon-id', beaconTwo.id);
+    fireEvent.dragStart(screen.getByTestId(`beacon-row-${beaconTwo.id}`), { dataTransfer });
     fireEvent.drop(screen.getByTestId('beacon-task-drop-target'), { dataTransfer });
 
     expect(screen.getByTestId('beacon-task-target-chip').textContent).toContain('beacon-alpha');
@@ -1672,7 +1709,11 @@ describe('BeaconsPage', () => {
       type: 'task.result.completed',
       version: 1,
     };
-    rendered.rerender(beaconRoutesTree([`/beacons/${beaconOne.id}/commands`]));
+    rendered.rerender(
+      <MemoryRouter>
+        <BeaconsPage />
+      </MemoryRouter>,
+    );
 
     expect(await screen.findByText('updated output')).toBeTruthy();
     expect(apiMocks.getTaskResult.mock.calls.length).toBeGreaterThanOrEqual(2);
@@ -1713,7 +1754,11 @@ describe('BeaconsPage', () => {
       type: 'task.result.chunk',
       version: 1,
     };
-    rendered.rerender(beaconRoutesTree([`/beacons/${beaconOne.id}/commands`]));
+    rendered.rerender(
+      <MemoryRouter>
+        <BeaconsPage />
+      </MemoryRouter>,
+    );
 
     expect(await screen.findByText('line one')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Clear stream buffer' }));

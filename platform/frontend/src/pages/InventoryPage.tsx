@@ -1,6 +1,5 @@
 import { Database, Layers3, RefreshCw, Search, Server, Wifi } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 
 import type { Asset, AssetGroup, AssetSource, AssetType } from '../api';
 import { getAsset, getAssetGroups, getAssets } from '../api';
@@ -203,9 +202,7 @@ function AssetDetail({ asset, error, isLoading }: { asset: Asset | null; error: 
             {linkedBeacons.map((link) => (
               <div className="asset-detail-row" key={link.id}>
                 <span>{link.hostname ?? link.status ?? 'beacon'}</span>
-                <Link className="asset-beacon-link" to={`/beacons/${link.beacon_id}/commands`}>
-                  {link.beacon_id.slice(0, 8)}
-                </Link>
+                <strong>{link.beacon_id}</strong>
               </div>
             ))}
           </div>
@@ -461,7 +458,6 @@ export function InventoryPage() {
               <Layers3 aria-hidden="true" size={18} strokeWidth={2.1} />
             </div>
             {groupError ? <p className="task-queue-error" role="alert">{groupError}</p> : null}
-            <Link className="inventory-grouping-link" to="/settings/grouping">Edit grouping rules</Link>
             <div className="asset-group-list">
               <button
                 className={!selectedGroupId ? 'asset-group-button is-selected' : 'asset-group-button'}

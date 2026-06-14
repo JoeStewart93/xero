@@ -162,7 +162,7 @@ describe('LoginPage', () => {
     seedAuthenticatedSession();
     vi.stubGlobal('fetch', mockReadyUnauthorized());
 
-    renderApp('/health');
+    renderApp('/home');
 
     await waitFor(() => {
       expect(screen.getByRole('region', { name: 'Xero operator login' })).toBeTruthy();

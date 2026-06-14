@@ -1,15 +1,9 @@
 # Xero UI Architecture and Information Design
 
-**Version:** 2.0.0  
-**Date:** June 13, 2026  
-**Status:** Active — post-restructure baseline  
-**Purpose:** Define the operator UI structure, navigation hierarchy, and implementation surfaces for the Xero C2 platform.
-
-Detailed navigation, component dimensions, and restructure rationale live in:
-
-- [docs/ui/navigation-spec.md](../../docs/ui/navigation-spec.md)
-- [docs/ui/component-dimensions.md](../../docs/ui/component-dimensions.md)
-- [docs/ui/restructure-rationale.md](../../docs/ui/restructure-rationale.md)
+**Version:** 1.1.0
+**Date:** June 10, 2026
+**Status:** Draft - Shell Refactor Baseline
+**Purpose:** Define the operator UI structure, navigation hierarchy, and stubbed shell surfaces for the Xero C2 platform.
 
 ---
 
@@ -208,12 +202,15 @@ Purpose: Manage active and historical beacons.
 
 Primary surfaces:
 
-- **Roster** (`/beacons`) — full-width beacon table; row opens routed workspace.
-- **Sessions** (`/beacons/sessions`) — cross-beacon session index.
-- **Deploy** (`/beacons/deploy`) — beacon build wizard (full page).
-- **Beacon workspace** (`/beacons/:beaconId/:operation`) — commands, session, files, registry, controls (replaces operations modal).
+- Overview table with sortable/filterable controlled-system rows.
+- Sessions placeholder for shell, file browser, and Windows Registry Explorer interactions.
+- Groups placeholder.
+- C2 profiles placeholder.
+- Deploy builder placeholder.
 
-Modals: kill beacon confirm only.
+Stub modal:
+
+- Beacon operations modal with command queue, interactive session, files/artifacts, credentials, and inventory actions.
 
 ### 5.5 Exploits
 

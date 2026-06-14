@@ -229,7 +229,7 @@ export function ModulesPage() {
   }
 
   return (
-    <AppShell description="C2 module catalog and launch schemas" section="modules" title="Modules" wide>
+    <AppShell description="C2 module catalog and launch schemas" section="assets" title="Modules" wide>
       {!connection ? (
         <C2RequiredPanel />
       ) : (

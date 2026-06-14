@@ -23,7 +23,7 @@ function taskBeaconLabel(task: Task | undefined, beaconId: string, realtimeBeaco
 }
 
 function shouldNotifyAwayFromTask(pathname: string): boolean {
-  return !pathname.startsWith('/beacons/') || document.hidden;
+  return pathname !== '/beacons' || document.hidden;
 }
 
 export function TaskCompletionNotifier() {
@@ -35,7 +35,7 @@ export function TaskCompletionNotifier() {
   const [toast, setToast] = useState<TaskCompletionToast | null>(null);
 
   const navigateToTask = useCallback((nextToast: TaskCompletionToast): void => {
-    navigate(`/beacons/${nextToast.beaconId}/commands?task_id=${encodeURIComponent(nextToast.taskId)}`);
+    navigate(`/beacons?beacon_id=${encodeURIComponent(nextToast.beaconId)}&task_id=${encodeURIComponent(nextToast.taskId)}`);
     setToast(null);
   }, [navigate]);
 

@@ -845,8 +845,6 @@ export function TaskExecutionPanel({
         </button>
       </div>
 
-      <div className="task-execution-layout">
-        <div className="task-execution-queue">
       <form className="task-command-form" onSubmit={handleSubmitTask}>
         <div className="task-command-grid task-command-grid--module">
           <ModulePicker isLoading={isLoadingModules} modules={taskModules} onChange={handleModuleChange} selectedModuleId={moduleId} />
@@ -896,9 +894,7 @@ export function TaskExecutionPanel({
 
       {moduleError ? <p className="task-queue-error" role="alert">{moduleError}</p> : null}
       {taskError ? <p className="task-queue-error" role="alert">{taskError}</p> : null}
-        </div>
 
-        <div className="task-execution-list">
       <div className="task-queue-toolbar">
         <div className="task-history-count">
           <strong>{queuedTaskCount}</strong>
@@ -942,9 +938,7 @@ export function TaskExecutionPanel({
           tasks={tasks}
         />
       </div>
-        </div>
 
-        <div className="task-execution-stream">
       <TaskDetailPanel
         downloadingResultStream={downloadingResultStream}
         isLoadingTaskResult={isLoadingTaskResult}
@@ -957,8 +951,6 @@ export function TaskExecutionPanel({
         setResultStream={setTaskResultStream}
         streamBuffer={selectedTaskId ? streamForTask(selectedTaskId) : null}
       />
-        </div>
-      </div>
     </div>
   );
 }

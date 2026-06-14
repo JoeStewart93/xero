@@ -948,9 +948,9 @@ h2 {
   grid-template-columns: minmax(0, 1fr) minmax(168px, 250px) minmax(0, 1fr);
   align-items: center;
   gap: 12px;
-  min-height: 56px;
+  min-height: 64px;
   border-bottom: 1px solid rgba(0, 231, 255, 0.2);
-  padding: 8px 16px;
+  padding: 9px 18px;
   background: rgba(3, 6, 9, 0.88);
   backdrop-filter: blur(14px);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
@@ -1257,7 +1257,7 @@ h2 {
 .shell-content {
   width: min(100%, 1200px);
   margin: 0 auto;
-  padding: 14px;
+  padding: 16px;
 }
 
 .shell-content--wide {
@@ -7443,207 +7443,5 @@ h2 {
 
   .deploy-build-button {
     width: 100%;
-  }
-}
-
-/* UI restructure v2 — density, flat panels, new layouts */
-.workspace-panel--flat::before,
-.workspace-panel--flat::after {
-  display: none;
-}
-
-.workspace-panel--flat {
-  padding: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.side-nav-tab {
-  min-height: 48px;
-}
-
-.sub-nav-tab {
-  min-width: 72px;
-  height: 32px;
-}
-
-.primary-button,
-.secondary-button,
-.danger-button {
-  min-height: 32px;
-  padding: 0 12px;
-}
-
-.dashboard-kpi-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  font-size: 13px;
-  color: var(--xero-muted);
-}
-
-.dashboard-kpi-strip strong {
-  color: var(--xero-text);
-  font-size: 15px;
-  font-weight: 760;
-  margin-right: 4px;
-}
-
-.dashboard-task-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 10px;
-  align-items: center;
-  padding: 8px 0;
-  border-bottom: 1px solid rgba(0, 231, 255, 0.1);
-  color: inherit;
-  text-decoration: none;
-}
-
-.beacons-roster-layout {
-  width: 100%;
-}
-
-.beacon-toolbar-stat {
-  font-size: 12px;
-  color: var(--xero-muted-strong);
-}
-
-.beacon-workspace-page {
-  display: grid;
-  gap: 12px;
-}
-
-.beacon-workspace-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-}
-
-.beacon-workspace-header h2 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 850;
-}
-
-.beacon-workspace-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid rgba(0, 231, 255, 0.22);
-  border-radius: 5px;
-  color: var(--xero-muted-strong);
-  font-size: 12px;
-  text-decoration: none;
-}
-
-.beacon-workspace-body {
-  display: grid;
-  grid-template-columns: minmax(220px, 220px) minmax(0, 1fr);
-  min-height: calc(100vh - 180px);
-  border: 1px solid rgba(0, 231, 255, 0.18);
-  border-radius: 6px;
-  overflow: hidden;
-  background: rgba(2, 7, 12, 0.72);
-}
-
-.beacon-operation-rail .beacon-operation-option {
-  text-decoration: none;
-  color: inherit;
-}
-
-.settings-layout {
-  display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
-  gap: 14px;
-  align-items: start;
-}
-
-.settings-side-nav {
-  display: grid;
-  gap: 4px;
-}
-
-.settings-side-nav-link {
-  display: block;
-  padding: 8px 10px;
-  border-radius: 5px;
-  color: var(--xero-muted);
-  font-size: 13px;
-  font-weight: 720;
-  text-decoration: none;
-}
-
-.settings-side-nav-link.is-active {
-  background: rgba(0, 231, 255, 0.12);
-  color: var(--xero-primary);
-}
-
-.settings-side-nav-link--disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.planned-section-empty h2 {
-  margin: 0 0 8px;
-  font-size: 14px;
-  font-weight: 760;
-}
-
-.planned-section-note {
-  margin-top: 12px;
-  color: var(--xero-muted);
-  font-size: 12px;
-}
-
-.inventory-grouping-link {
-  display: inline-block;
-  margin-bottom: 10px;
-  color: var(--xero-primary);
-  font-size: 12px;
-  text-decoration: none;
-}
-
-.asset-beacon-link {
-  color: var(--xero-primary);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
-  text-decoration: none;
-}
-
-.recon-inline-scan-config {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(0, 231, 255, 0.14);
-}
-
-.recon-workspace {
-  grid-template-columns: minmax(200px, 200px) minmax(0, 0.8fr) minmax(0, 1.2fr);
-}
-
-.task-execution-layout {
-  display: grid;
-  grid-template-columns: minmax(260px, 280px) minmax(280px, 320px) minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
-}
-
-.task-execution-queue,
-.task-execution-list,
-.task-execution-stream {
-  min-width: 0;
-}
-
-@media (max-width: 1200px) {
-  .task-execution-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .beacon-workspace-body {
-    grid-template-columns: 1fr;
-  }
-
-  .settings-layout {
-    grid-template-columns: 1fr;
   }
 }

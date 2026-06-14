@@ -26,7 +26,8 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { createPortal } from 'react-dom';
+import { useLocation } from 'react-router-dom';
 
 import {
   assignBeaconTrafficProfile,
@@ -61,6 +62,7 @@ import { useRealtime } from '../useRealtime';
 import { ShellSessionClient } from '../shellSessionClient';
 import type { FileBrowserEntry, ShellSessionConnectionStatus, ShellSessionMessage } from '../shellSessionClient';
 import { RegistrySessionPanel } from './RegistrySessionPanel';
+import { TaskExecutionPanel } from './TaskExecutionPanel';
 import { writeBeaconDragData } from './taskDrag';
 import {
   DEFAULT_BEACON_SORT_DIRECTION,
@@ -87,7 +89,7 @@ function DetailRow({ label, testId, value }: { label: string; testId?: string; v
   );
 }
 
-export function KillBeaconModal({
+function KillBeaconModal({
   beacon,
   error,
   isKilling,
@@ -127,7 +129,7 @@ export function KillBeaconModal({
   );
 }
 
-export const hostOperations = [
+const hostOperations = [
   {
     description: 'Prepare a scoped command or module task for this beacon.',
     icon: TerminalSquare,
@@ -327,7 +329,7 @@ function decodeTerminalData(message: ShellSessionMessage): string {
   }
 }
 
-export function ShellSessionPanel({
+function ShellSessionPanel({
   beacon,
   connection,
 }: {
@@ -547,7 +549,7 @@ export function ShellSessionPanel({
   );
 }
 
-export function FileBrowserPanel({
+function FileBrowserPanel({
   beacon,
   connection,
 }: {
@@ -1239,7 +1241,7 @@ export function FileBrowserPanel({
   );
 }
 
-export function BeaconControlsPanel({
+function BeaconControlsPanel({
   assigningProfile,
   beacon,
   isLoadingProfiles,
@@ -1318,9 +1320,175 @@ export function BeaconControlsPanel({
   );
 }
 
+function BeaconOperationsModal({
+  beacon,
+  beacons,
+  assigningProfile,
+  connection,
+  initialArgs,
+  initialModuleId,
+  initialTaskId,
+  isLoadingProfiles,
+  latestEvent,
+  onAssignProfile,
+  onClose,
+  onLoadProfiles,
+  onRequestKill,
+  profileError,
+  profileMessage,
+  realtimeStatus,
+  trafficProfiles,
+}: {
+  beacon: Beacon;
+  beacons: Beacon[];
+  assigningProfile: boolean;
+  connection: C2Connection;
+  initialArgs?: Record<string, unknown>;
+  initialModuleId?: string;
+  initialTaskId?: string;
+  isLoadingProfiles: boolean;
+  latestEvent: OperatorRealtimeEvent | null;
+  onAssignProfile: (beaconId: string, profileId: string) => void;
+  onClose: () => void;
+  onLoadProfiles: () => void;
+  onRequestKill: (beacon: Beacon) => void;
+  profileError: string;
+  profileMessage: string;
+  realtimeStatus: ReturnType<typeof useRealtime>['status'];
+  trafficProfiles: TrafficProfile[];
+}) {
+  const [selectedOperation, setSelectedOperation] = useState<HostOperationKey>('commands');
+  const activeOperation = hostOperations.find((operation) => operation.key === selectedOperation) ?? hostOperations[0];
+  const ActiveIcon = activeOperation.icon;
+
+  useEffect(() => {
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  function handleBackdropMouseDown(event: MouseEvent<HTMLDivElement>): void {
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
+  }
+
+  return createPortal(
+    <div className="beacon-operations-backdrop" onMouseDown={handleBackdropMouseDown} role="presentation">
+      <section aria-label={`Host operations for ${beacon.hostname}`} aria-modal="true" className="beacon-operations-modal" role="dialog">
+        <div className="beacon-operations-header">
+          <div>
+            <span className="beacon-operations-kicker">Host operation center</span>
+            <h2>{beacon.hostname}</h2>
+            <p>
+              {beacon.os} / {beacon.internal_ip} / last heartbeat {formatRelativeTime(beacon.last_seen)}
+            </p>
+          </div>
+          <button aria-label="Close host operations" className="beacon-modal-close" onClick={onClose} type="button">
+            <X aria-hidden="true" size={17} strokeWidth={2.2} />
+          </button>
+        </div>
+
+        <div className="beacon-operations-body">
+          <nav aria-label="Host operations" className="beacon-operation-rail">
+            {hostOperations.map((operation) => {
+              const Icon = operation.icon;
+              const selected = operation.key === activeOperation.key;
+              return (
+                <button
+                  aria-pressed={selected}
+                  className={`beacon-operation-option ${selected ? 'is-selected' : ''}`}
+                  key={operation.key}
+                  onClick={() => setSelectedOperation(operation.key)}
+                  type="button"
+                >
+                  <Icon aria-hidden="true" size={16} strokeWidth={2.1} />
+                  <span>
+                    <strong>{operation.label}</strong>
+                    <small>{operation.status}</small>
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="beacon-operation-detail" data-testid="beacon-operation-detail">
+            <div className="beacon-operation-detail-head">
+              <div className="panel-icon" aria-hidden="true">
+                <ActiveIcon size={18} strokeWidth={2} />
+              </div>
+              <div>
+                <h3>{activeOperation.label}</h3>
+                <p>{activeOperation.description}</p>
+              </div>
+            </div>
+
+            {activeOperation.key === 'commands' ? (
+              <TaskExecutionPanel
+                beacons={[beacon]}
+                connection={connection}
+                initialArgs={initialArgs}
+                initialBeaconId={beacon.id}
+                initialModuleId={initialModuleId}
+                initialTaskId={initialTaskId}
+                latestEvent={latestEvent}
+                lockTargetBeacon
+                realtimeStatus={realtimeStatus}
+                title="Command queue"
+              />
+            ) : activeOperation.key === 'controls' ? (
+              <BeaconControlsPanel
+                assigningProfile={assigningProfile}
+                beacon={beacon}
+                isLoadingProfiles={isLoadingProfiles}
+                onAssignProfile={onAssignProfile}
+                onLoadProfiles={onLoadProfiles}
+                onRequestKill={onRequestKill}
+                profileError={profileError}
+                profileMessage={profileMessage}
+                trafficProfiles={trafficProfiles}
+              />
+            ) : activeOperation.key === 'session' ? (
+              <ShellSessionPanel beacon={beacon} connection={connection} />
+            ) : activeOperation.key === 'files' ? (
+              <FileBrowserPanel beacon={beacon} connection={connection} />
+            ) : activeOperation.key === 'registry' ? (
+              <RegistrySessionPanel beacon={beacon} connection={connection} />
+            ) : (
+              <>
+                <div className="beacon-operation-host-grid">
+                  <DetailRow label="Hostname" value={beacon.hostname} />
+                  <DetailRow label="Operating system" value={beacon.os} />
+                  <DetailRow label="Internal IP" value={beacon.internal_ip} />
+                  <DetailRow label="External IP" value={beacon.external_ip} />
+                  <DetailRow label="Process ID" value={beacon.pid} />
+                  <DetailRow label="Architecture" value={beacon.architecture} />
+                </div>
+
+                <div className="beacon-operation-locked">
+                  <ShieldCheck aria-hidden="true" size={17} strokeWidth={2} />
+                  <div>
+                    <strong>Selection staged.</strong>
+                    <span>No operation has been dispatched to this host.</span>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
 export function BeaconsPage() {
   const location = useLocation();
-  const navigate = useNavigate();
   const { connection } = useC2Connection();
   const realtime = useRealtime();
   const routeBeaconId = useMemo(() => new URLSearchParams(location.search).get('beacon_id') ?? '', [location.search]);
@@ -1329,14 +1497,28 @@ export function BeaconsPage() {
   const routeTaskId = useMemo(() => new URLSearchParams(location.search).get('task_id') ?? '', [location.search]);
   const routeTaskingRequested = routeModuleId || routeTaskId || Object.keys(routeModuleArgs).length > 0;
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedBeaconId, setSelectedBeaconId] = useState('');
+  const [operationBeaconId, setOperationBeaconId] = useState('');
   const [statusFilter, setStatusFilter] = useState<BeaconStatusFilter>(() => initialBeaconStatusFilter(location.search));
   const [removedBeaconIds, setRemovedBeaconIds] = useState<Set<string>>(() => new Set());
+  const [profileOverrides, setProfileOverrides] = useState<Record<string, Beacon>>({});
+  const [trafficProfiles, setTrafficProfiles] = useState<TrafficProfile[]>([]);
+  const [profileError, setProfileError] = useState('');
+  const [profileMessage, setProfileMessage] = useState('');
+  const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
+  const [assigningProfile, setAssigningProfile] = useState(false);
+  const [killTarget, setKillTarget] = useState<Beacon | null>(null);
+  const [killError, setKillError] = useState('');
+  const [isKillingBeacon, setIsKillingBeacon] = useState(false);
   const [sortKey, setSortKey] = useState<BeaconSortKey>(DEFAULT_BEACON_SORT_KEY);
   const [sortDirection, setSortDirection] = useState<BeaconSortDirection>(DEFAULT_BEACON_SORT_DIRECTION);
+  const openedRouteTaskingRef = useRef('');
 
   const visibleBeacons = useMemo(
-    () => realtime.beacons.filter((beacon) => !beacon.removed_at && !removedBeaconIds.has(beacon.id)),
-    [realtime.beacons, removedBeaconIds],
+    () => realtime.beacons
+      .filter((beacon) => !beacon.removed_at && !removedBeaconIds.has(beacon.id))
+      .map((beacon) => profileOverrides[beacon.id] ?? beacon),
+    [profileOverrides, realtime.beacons, removedBeaconIds],
   );
   const beacons = useMemo(
     () => sortBeacons(
@@ -1349,32 +1531,50 @@ export function BeaconsPage() {
     ),
     [searchQuery, sortDirection, sortKey, statusFilter, visibleBeacons],
   );
+  const selectedBeacon = beacons.find((beacon) => beacon.id === selectedBeaconId) ?? beacons[0] ?? null;
+  const operationBeacon = beacons.find((beacon) => beacon.id === operationBeaconId) ?? null;
   const activeBeaconCount = visibleBeacons.filter((beacon) => beacon.status.toLowerCase() === 'online').length;
   const offlineBeaconCount = visibleBeacons.filter((beacon) => beacon.status.toLowerCase() === 'offline').length;
 
-  useEffect(() => {
-    if (!routeTaskingRequested && !routeBeaconId) {
+  const loadTrafficProfiles = useCallback(async () => {
+    if (!connection) {
+      setTrafficProfiles([]);
       return;
+    }
+    setIsLoadingProfiles(true);
+    try {
+      const response = await getTrafficProfiles(connection.baseUrl, connection.accessToken);
+      setTrafficProfiles(response.items);
+      setProfileError('');
+    } catch (caught) {
+      setProfileError(caught instanceof Error ? caught.message : 'Unable to load traffic profiles.');
+    } finally {
+      setIsLoadingProfiles(false);
+    }
+  }, [connection]);
+
+  useEffect(() => {
+    if (routeBeaconId && visibleBeacons.some((beacon) => beacon.id === routeBeaconId)) {
+      const handle = window.setTimeout(() => setSelectedBeaconId(routeBeaconId), 0);
+      return () => window.clearTimeout(handle);
+    }
+    return undefined;
+  }, [routeBeaconId, visibleBeacons]);
+
+  useEffect(() => {
+    if (!routeTaskingRequested || !selectedBeacon) {
+      return undefined;
+    }
+    if (openedRouteTaskingRef.current === location.search) {
+      return undefined;
     }
     const targetBeaconId = routeBeaconId && visibleBeacons.some((beacon) => beacon.id === routeBeaconId)
       ? routeBeaconId
-      : visibleBeacons[0]?.id;
-    if (!targetBeaconId) {
-      return;
-    }
-    const params = new URLSearchParams();
-    if (routeModuleId) {
-      params.set('module', routeModuleId);
-    }
-    if (routeTaskId) {
-      params.set('task_id', routeTaskId);
-    }
-    if (Object.keys(routeModuleArgs).length > 0) {
-      params.set('args', new URLSearchParams(location.search).get('args') ?? '');
-    }
-    const query = params.toString();
-    navigate(`/beacons/${targetBeaconId}/commands${query ? `?${query}` : ''}`, { replace: true });
-  }, [location.search, navigate, routeBeaconId, routeModuleArgs, routeModuleId, routeTaskId, routeTaskingRequested, visibleBeacons]);
+      : selectedBeacon.id;
+    openedRouteTaskingRef.current = location.search;
+    const handle = window.setTimeout(() => setOperationBeaconId(targetBeaconId), 0);
+    return () => window.clearTimeout(handle);
+  }, [location.search, routeBeaconId, routeTaskingRequested, selectedBeacon, visibleBeacons]);
 
   function handleSort(nextSortKey: BeaconSortKey): void {
     if (nextSortKey === sortKey) {
@@ -1412,8 +1612,9 @@ export function BeaconsPage() {
     );
   }
 
-  function openBeaconWorkspace(beacon: Beacon): void {
-    navigate(`/beacons/${beacon.id}/commands`);
+  function openBeaconOperations(beacon: Beacon): void {
+    setSelectedBeaconId(beacon.id);
+    setOperationBeaconId(beacon.id);
   }
 
   function handleExportCsv(): void {
@@ -1423,9 +1624,56 @@ export function BeaconsPage() {
     downloadBeaconCsv(beacons);
   }
 
+  async function handleConfirmKillBeacon(): Promise<void> {
+    if (!connection || !killTarget) {
+      return;
+    }
+    setIsKillingBeacon(true);
+    setKillError('');
+    try {
+      const response = await killBeacon(connection.baseUrl, connection.accessToken, killTarget.id);
+      setRemovedBeaconIds((current) => new Set(current).add(response.beacon.id));
+      setProfileOverrides((current) => {
+        const next = { ...current };
+        delete next[response.beacon.id];
+        return next;
+      });
+      setSelectedBeaconId('');
+      setOperationBeaconId('');
+      setKillTarget(null);
+      setProfileMessage(
+        `Removed ${response.beacon.hostname}; closed ${response.closed_sessions} sessions and cancelled ${response.cancelled_tasks} tasks.`,
+      );
+    } catch (caught) {
+      setKillError(caught instanceof Error ? caught.message : 'Unable to kill beacon.');
+    } finally {
+      setIsKillingBeacon(false);
+    }
+  }
+
+  async function handleAssignProfile(beaconId: string, profileId: string): Promise<void> {
+    if (!connection) {
+      return;
+    }
+    setAssigningProfile(true);
+    setProfileError('');
+    setProfileMessage('');
+    try {
+      const updated = profileId
+        ? await assignBeaconTrafficProfile(connection.baseUrl, connection.accessToken, beaconId, profileId)
+        : await clearBeaconTrafficProfile(connection.baseUrl, connection.accessToken, beaconId);
+      setProfileOverrides((current) => ({ ...current, [updated.id]: updated }));
+      setProfileMessage(profileId ? `Assigned ${updated.profile_name ?? 'traffic profile'}.` : 'Cleared traffic profile assignment.');
+    } catch (caught) {
+      setProfileError(caught instanceof Error ? caught.message : 'Unable to update beacon profile.');
+    } finally {
+      setAssigningProfile(false);
+    }
+  }
+
   function handleRowKeyDown(event: KeyboardEvent<HTMLTableRowElement>, beacon: Beacon): void {
     if (event.key === 'Enter') {
-      openBeaconWorkspace(beacon);
+      openBeaconOperations(beacon);
     }
   }
 
@@ -1434,7 +1682,35 @@ export function BeaconsPage() {
       {!connection ? (
         <C2RequiredPanel />
       ) : (
-        <section className="workspace-panel workspace-panel--flat beacons-roster-panel beacons-roster-layout" aria-label="Beacon roster">
+        <div className="beacons-workspace-grid">
+          <section className="workspace-panel beacons-roster-panel" aria-label="Beacon overview">
+            <div className="panel-header">
+              <div>
+                <h2>Beacon overview</h2>
+                <p className="muted-text">Controlled systems reporting through the active C2 backend.</p>
+              </div>
+              <div className="panel-icon" aria-hidden="true">
+                <RadioTower size={18} strokeWidth={2} />
+              </div>
+            </div>
+
+            <div className="beacon-summary-strip">
+              <div>
+                <span>Total</span>
+                <strong>{visibleBeacons.length}</strong>
+              </div>
+              <div>
+                <span>Online</span>
+                <strong data-testid="beacons-online-count">{activeBeaconCount}</strong>
+              </div>
+              <div>
+                <span>Offline</span>
+                <strong data-testid="beacons-offline-count">{offlineBeaconCount}</strong>
+              </div>
+            </div>
+            {profileError && !operationBeacon ? <p className="task-queue-error" role="alert">{profileError}</p> : null}
+            {profileMessage && !operationBeacon ? <p className="profile-status-message">{profileMessage}</p> : null}
+
             {visibleBeacons.length === 0 ? (
               <div className="beacon-empty-state" data-testid="beacons-empty-state">
                 <RadioTower aria-hidden="true" size={20} strokeWidth={2} />
@@ -1468,8 +1744,6 @@ export function BeaconsPage() {
                       </button>
                     ))}
                   </div>
-                  <span className="beacon-toolbar-stat" data-testid="beacons-online-count">{activeBeaconCount} online</span>
-                  <span className="beacon-toolbar-stat" data-testid="beacons-offline-count">{offlineBeaconCount} offline</span>
                   <button
                     aria-label="Toggle beacon sort direction"
                     className="beacon-sort-direction"
@@ -1517,63 +1791,82 @@ export function BeaconsPage() {
                     <table className="beacon-registry-table">
                       <thead>
                         <tr>
-                          <th scope="col">{renderSortHeader('hostname', 'Host')}</th>
-                          <th scope="col">{renderSortHeader('os', 'Operating system')}</th>
-                          <th scope="col">{renderSortHeader('internal_ip', 'Internal IP')}</th>
-                          <th scope="col">{renderSortHeader('external_ip', 'External IP')}</th>
-                          <th scope="col"><span className="table-head-label">PID / Arch</span></th>
-                          <th scope="col">{renderSortHeader('last_seen', 'Last Heartbeat')}</th>
-                          <th scope="col">{renderSortHeader('transport_mode', 'Transport')}</th>
-                          <th scope="col">{renderSortHeader('status', 'Status')}</th>
+                          <th scope="col">
+                            {renderSortHeader('hostname', 'Host')}
+                          </th>
+                          <th scope="col">
+                            {renderSortHeader('os', 'Operating system')}
+                          </th>
+                          <th scope="col">
+                            {renderSortHeader('internal_ip', 'Internal IP')}
+                          </th>
+                          <th scope="col">
+                            {renderSortHeader('external_ip', 'External IP')}
+                          </th>
+                          <th scope="col">
+                            <span className="table-head-label">PID / Arch</span>
+                          </th>
+                          <th scope="col">
+                            {renderSortHeader('last_seen', 'Last Heartbeat')}
+                          </th>
+                          <th scope="col">
+                            {renderSortHeader('transport_mode', 'Transport')}
+                          </th>
+                          <th scope="col">
+                            {renderSortHeader('status', 'Status')}
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
-                        {beacons.map((beacon) => (
-                          <tr
-                            aria-label={`Host ${beacon.hostname}`}
-                            className="beacon-registry-row"
-                            data-testid={`beacon-row-${beacon.id}`}
-                            draggable
-                            key={beacon.id}
-                            onClick={() => openBeaconWorkspace(beacon)}
-                            onDoubleClick={() => openBeaconWorkspace(beacon)}
-                            onDragStart={(event) => writeBeaconDragData(event, beacon)}
-                            onKeyDown={(event) => handleRowKeyDown(event, beacon)}
-                            tabIndex={0}
-                          >
-                            <td>
-                              <div className="beacon-host-cell">
-                                <strong>{beacon.hostname}</strong>
-                                <span>{beacon.machine_fingerprint_hash}</span>
-                              </div>
-                            </td>
-                            <td>{beacon.os}</td>
-                            <td>{beacon.internal_ip}</td>
-                            <td>{beacon.external_ip ?? '-'}</td>
-                            <td>
-                              <span className="beacon-mono">
-                                {beacon.pid} / {beacon.architecture}
-                              </span>
-                            </td>
-                            <td>
-                              <span className="beacon-relative-time" data-testid={`beacon-relative-${beacon.id}`}>
-                                {formatRelativeTime(beacon.last_seen)}
-                              </span>
-                              <small className="beacon-absolute-time">{compactDateTime(beacon.last_seen)}</small>
-                            </td>
-                            <td>
-                              <div className="beacon-transport-cell">
-                                <strong>{transportLabel(beacon.transport_mode)}</strong>
-                                <span className={statusClass(beacon.transport_connected ? 'online' : 'offline')}>
-                                  {transportState(beacon)}
+                        {beacons.map((beacon) => {
+                          const selected = beacon.id === selectedBeacon?.id;
+                          return (
+                            <tr
+                              aria-label={`Host ${beacon.hostname}`}
+                              className={selected ? 'is-selected' : ''}
+                              data-testid={`beacon-row-${beacon.id}`}
+                              draggable
+                              key={beacon.id}
+                              onClick={() => setSelectedBeaconId(beacon.id)}
+                              onDoubleClick={() => openBeaconOperations(beacon)}
+                              onDragStart={(event) => writeBeaconDragData(event, beacon)}
+                              onKeyDown={(event) => handleRowKeyDown(event, beacon)}
+                              tabIndex={0}
+                            >
+                              <td>
+                                <div className="beacon-host-cell">
+                                  <strong>{beacon.hostname}</strong>
+                                  <span>{beacon.machine_fingerprint_hash}</span>
+                                </div>
+                              </td>
+                              <td>{beacon.os}</td>
+                              <td>{beacon.internal_ip}</td>
+                              <td>{beacon.external_ip ?? '-'}</td>
+                              <td>
+                                <span className="beacon-mono">
+                                  {beacon.pid} / {beacon.architecture}
                                 </span>
-                              </div>
-                            </td>
-                            <td>
-                              <span className={statusClass(beacon.status)}>{beacon.status}</span>
-                            </td>
-                          </tr>
-                        ))}
+                              </td>
+                              <td>
+                                <span className="beacon-relative-time" data-testid={`beacon-relative-${beacon.id}`}>
+                                  {formatRelativeTime(beacon.last_seen)}
+                                </span>
+                                <small className="beacon-absolute-time">{compactDateTime(beacon.last_seen)}</small>
+                              </td>
+                              <td>
+                                <div className="beacon-transport-cell">
+                                  <strong>{transportLabel(beacon.transport_mode)}</strong>
+                                  <span className={statusClass(beacon.transport_connected ? 'online' : 'offline')}>
+                                    {transportState(beacon)}
+                                  </span>
+                                </div>
+                              </td>
+                              <td>
+                                <span className={statusClass(beacon.status)}>{beacon.status}</span>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -1581,6 +1874,138 @@ export function BeaconsPage() {
               </>
             )}
           </section>
+
+          <section className="workspace-panel beacon-detail-panel" aria-label="Beacon detail">
+            <div className="panel-header">
+              <div>
+                <h2>{selectedBeacon?.hostname ?? 'No beacon selected'}</h2>
+                <p className="muted-text">
+                  {selectedBeacon ? 'Registration metadata captured during the latest check-in.' : 'Select a beacon to inspect metadata.'}
+                </p>
+              </div>
+              <div className="panel-icon" aria-hidden="true">
+                <Server size={18} strokeWidth={2} />
+              </div>
+            </div>
+            {selectedBeacon ? (
+              <>
+                <div className="beacon-identity-strip">
+                  <div>
+                    <ShieldCheck aria-hidden="true" size={17} strokeWidth={2} />
+                    <span className={statusClass(selectedBeacon.status)}>{selectedBeacon.status}</span>
+                  </div>
+                  <strong>{selectedBeacon.id}</strong>
+                </div>
+
+                <div className="beacon-detail-grid">
+                  <DetailRow label="Hostname" value={selectedBeacon.hostname} />
+                  <DetailRow label="Operating system" value={selectedBeacon.os} />
+                  <DetailRow label="Architecture" value={selectedBeacon.architecture} />
+                  <DetailRow label="Process ID" value={selectedBeacon.pid} />
+                  <DetailRow
+                    label="Protocol version"
+                    testId="beacon-detail-protocol-version"
+                    value={selectedBeacon.protocol_version ? `v${selectedBeacon.protocol_version}` : null}
+                  />
+                  <DetailRow
+                    label="Transport"
+                    testId="beacon-detail-transport-mode"
+                    value={transportLabel(selectedBeacon.transport_mode)}
+                  />
+                  <DetailRow
+                    label="Transport state"
+                    testId="beacon-detail-transport-state"
+                    value={transportState(selectedBeacon)}
+                  />
+                  <DetailRow label="Traffic profile" value={selectedBeacon.profile_name ?? 'Default bootstrap'} />
+                  <DetailRow
+                    label="Profile applied"
+                    value={selectedBeacon.applied_profile_version ? `v${selectedBeacon.applied_profile_version}` : null}
+                  />
+                  <DetailRow
+                    label="Sleep / jitter"
+                    value={`${selectedBeacon.sleep_seconds ?? 30}s / ${Math.round((selectedBeacon.jitter ?? 0.1) * 100)}%`}
+                  />
+                  <DetailRow label="Internal IP" value={selectedBeacon.internal_ip} />
+                  <DetailRow label="External IP" value={selectedBeacon.external_ip} />
+                  <DetailRow label="First seen" value={formatDateTime(selectedBeacon.first_seen)} />
+                  <DetailRow
+                    label="Transport last seen"
+                    value={selectedBeacon.transport_last_seen ? formatDateTime(selectedBeacon.transport_last_seen) : null}
+                  />
+                  <DetailRow label="Last heartbeat" value={formatRelativeTime(selectedBeacon.last_seen)} />
+                  <DetailRow label="Last seen" value={formatDateTime(selectedBeacon.last_seen)} />
+                </div>
+
+                <div className="beacon-fingerprint-panel">
+                  <div>
+                    <Fingerprint aria-hidden="true" size={16} strokeWidth={2} />
+                    <strong>Machine fingerprint</strong>
+                  </div>
+                  <span>{selectedBeacon.machine_fingerprint_hash}</span>
+                </div>
+
+                <div className="beacon-metadata-band">
+                  <div>
+                    <Network aria-hidden="true" size={16} strokeWidth={2} />
+                    <span data-testid="beacon-detail-hostname">{selectedBeacon.hostname}</span>
+                  </div>
+                  <div>
+                    <Cpu aria-hidden="true" size={16} strokeWidth={2} />
+                    <span data-testid="beacon-detail-os">{selectedBeacon.os}</span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="beacon-empty-state beacon-empty-state--detail">
+                <RadioTower aria-hidden="true" size={20} strokeWidth={2} />
+                <div>
+                  <strong>No beacon selected.</strong>
+                  <span>Register a beacon through the C2 API to populate this panel.</span>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {operationBeacon ? (
+            <BeaconOperationsModal
+              assigningProfile={assigningProfile}
+              beacon={operationBeacon}
+              beacons={visibleBeacons}
+              connection={connection}
+              initialArgs={routeModuleArgs}
+              initialModuleId={routeModuleId || undefined}
+              initialTaskId={operationBeacon.id === routeBeaconId ? routeTaskId : undefined}
+              isLoadingProfiles={isLoadingProfiles}
+              latestEvent={realtime.latestEvent}
+              onAssignProfile={(beaconId, profileId) => void handleAssignProfile(beaconId, profileId)}
+              onClose={() => setOperationBeaconId('')}
+              onLoadProfiles={() => void loadTrafficProfiles()}
+              onRequestKill={(beacon) => {
+                setKillError('');
+                setKillTarget(beacon);
+              }}
+              profileError={profileError}
+              profileMessage={profileMessage}
+              realtimeStatus={realtime.status}
+              trafficProfiles={trafficProfiles}
+            />
+          ) : null}
+          {killTarget ? (
+            <KillBeaconModal
+              beacon={killTarget}
+              error={killError}
+              isKilling={isKillingBeacon}
+              onCancel={() => {
+                if (!isKillingBeacon) {
+                  setKillTarget(null);
+                  setKillError('');
+                }
+              }}
+              onConfirm={() => void handleConfirmKillBeacon()}
+            />
+          ) : null}
+        </div>
       )}
     </AppShell>
   );

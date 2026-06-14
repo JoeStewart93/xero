@@ -112,6 +112,6 @@ describe('TaskCompletionNotifier', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Open completed task' }));
 
-    expect(screen.getByTestId('location').textContent).toBe('/beacons/beacon-one/commands?task_id=task-one');
+    expect(screen.getByTestId('location').textContent).toBe('/beacons?beacon_id=beacon-one&task_id=task-one');
   });
 });
